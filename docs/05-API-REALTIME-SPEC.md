@@ -81,10 +81,21 @@ Requires KYC tier ≥ 1 and a `bank_accounts` row with `name_match_verified = tr
 ### `POST /functions/v1/post-status`
 
 ```jsonc
-{ "media_url": "...", "caption": "optional text" }
+// Request — at least one of media_url/caption required
+{ "media_url": "optional url", "caption": "optional text" }
+
+// Response 200
+{ "status_id": "uuid", "credits_charged": 6, "payer_balance_after": 92 }
+
+// Response 400
+{ "error": "empty_status" | "invalid_request" }
+// Response 402 (insufficient balance — same shape as send-message)
+{ "error": "insufficient_credit", "credits_required": 6, "credits_available": 2 }
+// Response 403
+{ "error": "wallet_frozen" }
 ```
 
-Debits `status_upload_credits_*` from `topup_credit`, inserts `status_updates` row with `expires_at = now() + 24h`.
+Debits `status_upload_credits_media` if `media_url` is present, else `status_upload_credits_text`, from `topup_credit` — no escrow, no earning (see `docs/03-ECONOMY-LEDGER.md` §7). Inserts a `status_updates` row with `expires_at = now() + 24h`. All billing/validation happens inside `fn_post_status`, called by the `post-status` Edge Function (built — see `docs/00-SESSION-HANDOFF.md`); the client's request never carries a computed credit amount.
 
 ### `GET /functions/v1/estimate-message-cost?words=N` (or computed client-side from public `pricing_config` for instant UI feedback — server remains authoritative at actual send time regardless)
 
