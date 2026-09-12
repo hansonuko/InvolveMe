@@ -12,7 +12,12 @@
     "preview": {
       "distribution": "internal",
       "channel": "preview",
-      "env": { "EXPO_PUBLIC_APP_ENV": "staging" }
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ekotjsmgfluufsoralmf.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVrb3Rqc21nZmx1dWZzb3JhbG1mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzE1MTcsImV4cCI6MjEwNDc0NzUxN30.ZtlyVo9B8aM3ut168Xf9azQsYmKYXYByhiFlWtuG_TA"
+      },
+      "android": { "buildType": "apk" }
     },
     "production": {
       "channel": "production",

@@ -7,21 +7,29 @@
 //
 // Routes two event families to the DB functions that already handle their
 // idempotency: `charge.completed` → fn_confirm_topup (buy-credit
-// confirmation), `transfer.completed`/`transfer.failed` →
-// fn_complete_withdrawal / fn_fail_withdrawal (withdrawal completion —
-// see the new migration's header comment for why fn_complete_withdrawal
-// exists). Both `reference` fields are assumed to equal the corresponding
-// `topups.id` / `withdrawals.id` — the convention this project's own code
-// sets when creating those objects at Flutterwave (buy-credit isn't built
-// yet to actually do that; withdraw, in this same PR, does).
+// confirmation, only when data.status is 'succeeded' — this event fires for
+// every terminal charge state, not just successful ones, per
+// developer.flutterwave.com/reference/charges_post's status list), and
+// `transfer.disburse`/`transfer.reversal` → fn_complete_withdrawal /
+// fn_fail_withdrawal (withdrawal completion — see the batch-2 migration's
+// header comment for why fn_complete_withdrawal exists). Both `reference`
+// fields are assumed to equal the corresponding `topups.id` /
+// `withdrawals.id` — the convention this project's own code sets when
+// creating those objects at Flutterwave.
 //
-// The exact event `type` strings and payload shape (`data.reference`,
-// `data.id`) are Flutterwave's documented v4 webhook convention as far as
-// could be confirmed without a live account — see
-// packages/payments/flutterwave.ts's header comment for what's confirmed
-// vs. assumed.
+// Corrected this session (see docs/00-SESSION-HANDOFF.md's session-3
+// section for the live research): the event names were originally
+// `transfer.completed`/`transfer.failed`, a v3-era guess never confirmed
+// against v4's actual docs — the real names are `transfer.disburse` and
+// `transfer.reversal`, per developer.flutterwave.com/reference (API
+// overview's webhook-events list). Still not confirmed against a live
+// transfer's actual payload shape (no real payout has been triggered from
+// this app yet) — an unmapped/wrong event type is acknowledged with 200 and
+// no DB action either way (see the bottom of this handler), so a residual
+// naming mismatch fails safe rather than crashing or double-processing.
 
 import { serviceRoleClient } from '../_shared/auth.ts';
+import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
 interface FlutterwaveWebhookPayload {
@@ -30,6 +38,7 @@ interface FlutterwaveWebhookPayload {
   data?: {
     id?: string | number;
     reference?: string;
+    status?: string;
   };
 }
 
@@ -84,8 +93,7 @@ Deno.serve(async (req) => {
   const rawBody = await req.text();
   const signature = req.headers.get('flutterwave-signature');
 
-  const webhookSecretHash = Deno.env.get('FLW_WEBHOOK_SECRET_HASH') ?? '';
-  const provider = createFlutterwaveProvider({ webhookSecretHash });
+  const provider = createFlutterwaveProvider(loadFlutterwaveConfig());
   const verification = provider.verifyWebhook(rawBody, signature);
 
   if (!verification.isValid) {
@@ -115,8 +123,9 @@ Deno.serve(async (req) => {
   const type = payload.type ?? '';
   const reference = payload.data?.reference;
   const providerRef = payload.data?.id != null ? String(payload.data.id) : '';
+  const status = payload.data?.status;
 
-  if (type === 'charge.completed' && reference) {
+  if (type === 'charge.completed' && reference && status === 'succeeded') {
     const { error } = await db.rpc('fn_confirm_topup', {
       p_topup_id: reference,
       p_provider_ref: providerRef,
@@ -126,7 +135,20 @@ Deno.serve(async (req) => {
       // wouldn't resolve itself, and Flutterwave still needs its 200.
       console.error('webhook-flutterwave: fn_confirm_topup failed:', error.message);
     }
-  } else if (type === 'transfer.completed' && reference) {
+  } else if (type === 'charge.completed' && reference) {
+    // completed but not succeeded (failed/voided) — mark the topup failed
+    // directly. No balance was ever touched for a pending topup (per
+    // fn_buy_credit's own header comment), so this is a plain status
+    // update, not something that needs a SECURITY DEFINER function.
+    const { error } = await db
+      .from('topups')
+      .update({ status: 'failed' })
+      .eq('id', reference)
+      .eq('status', 'pending');
+    if (error) {
+      console.error('webhook-flutterwave: marking topup failed errored:', error.message);
+    }
+  } else if (type === 'transfer.disburse' && reference) {
     const { error } = await db.rpc('fn_complete_withdrawal', {
       p_withdrawal_id: reference,
       p_provider_ref: providerRef,
@@ -134,15 +156,15 @@ Deno.serve(async (req) => {
     if (error) {
       console.error('webhook-flutterwave: fn_complete_withdrawal failed:', error.message);
     }
-  } else if (type === 'transfer.failed' && reference) {
+  } else if (type === 'transfer.reversal' && reference) {
     const { error } = await db.rpc('fn_fail_withdrawal', { p_withdrawal_id: reference });
     if (error) {
       console.error('webhook-flutterwave: fn_fail_withdrawal failed:', error.message);
     }
   }
-  // Every other event type (charge.failed, unrecognized future types,
-  // etc.): acknowledged, no DB action — not a failure, just nothing to do
-  // yet at this end.
+  // Every other event type (order.authorization, refund.completed,
+  // unrecognized future types, etc.): acknowledged, no DB action — not a
+  // failure, just nothing to do yet at this end.
 
   return json(200, { status: 'processed' });
 });
