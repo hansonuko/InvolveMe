@@ -28,6 +28,17 @@ mapping (401 unauthorized, 400 empty/invalid, 404 recipient not found, 400
 message too long, 402 insufficient_credit with the structured
 `credits_required`/`credits_available` shape).
 
+## `post-status-function.test.js`
+
+End-to-end test of the `post-status` Edge Function (`supabase/functions/post-status/`),
+same `deno run` approach and rationale as above — no Flutterwave dependency
+at all, so every path here runs against the real thing rather than a stub.
+Covers: text vs. media status charging the right `pricing_config` rate,
+`expires_at` landing at `created_at + 24h`, ledger conservation on the
+caller's `topup_credit` wallet, and the documented error mapping (401,
+400 `empty_status`/`invalid_request`, 402 `insufficient_credit` with the
+structured amounts, 403 `wallet_frozen`).
+
 # Database concurrency & ledger-conservation tests
 
 Phase 1 item 6. These test the `SECURITY DEFINER` functions directly against
