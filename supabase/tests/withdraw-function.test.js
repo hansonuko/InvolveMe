@@ -3,13 +3,16 @@
 // See README.md for the deno-run-instead-of-functions-serve rationale
 // (unchanged from send-message-function.test.js).
 //
-// The Flutterwave payout call is currently a stub (see
-// packages/payments/flutterwave.ts) pending an API-generation decision, so
-// every "provider call" here fails by design — which means what's actually
-// under test is the DB validation chain up to fn_initiate_withdrawal, AND
-// the compensating fn_fail_withdrawal path on provider failure, which is
-// the safety-critical half of this function regardless of which
-// Flutterwave API eventually backs the real call.
+// initiatePayout now calls the REAL (live/production, see
+// docs/00-SESSION-HANDOFF.md session-3) Flutterwave /transfers endpoint.
+// The `insertBankAccount` fixture below uses a made-up
+// `provider_account_id` ('rcb_test_1') rather than a real
+// `/transfers/recipients` id — bank-account linking isn't built yet — so
+// Flutterwave genuinely rejects every transfer here (unknown recipient),
+// which is what's actually under test: the DB validation chain up to
+// fn_initiate_withdrawal, AND the compensating fn_fail_withdrawal path on a
+// real provider rejection, the safety-critical half of this function
+// regardless of which recipient it's ever pointed at for real.
 
 const { Client } = require('pg');
 const { spawn } = require('node:child_process');

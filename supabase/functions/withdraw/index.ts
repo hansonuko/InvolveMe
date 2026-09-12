@@ -16,6 +16,7 @@
 // eventually backs it.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
 interface WithdrawRequestBody {
@@ -143,9 +144,7 @@ Deno.serve(async (req) => {
 
   const withdrawal = withdrawalRow as FnInitiateWithdrawalRow;
 
-  const provider = createFlutterwaveProvider({
-    webhookSecretHash: Deno.env.get('FLW_WEBHOOK_SECRET_HASH') ?? '',
-  });
+  const provider = createFlutterwaveProvider(loadFlutterwaveConfig());
 
   try {
     await provider.initiatePayout({

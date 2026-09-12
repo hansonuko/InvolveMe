@@ -32,32 +32,48 @@ Error codes: `thread_not_found` (404), `not_a_participant` (403), `thread_blocke
 
 Response now includes `thread_id` — required so the client can continue the conversation. Once a thread exists, replies **must** pass its `thread_id`, not `recipient_id`: `fn_start_thread(payer, payee)` looks up `(participant_a, participant_b)` as an ordered pair, so the payee replying with `recipient_id` set to the payer would look up (and, finding none, create) a second, reversed-role thread rather than continuing the first — participant_a/payer is fixed for the life of a thread and is always whoever opened it.
 
-### `POST /functions/v1/buy-credit` — **not built yet, see docs/00-SESSION-HANDOFF.md**
+### `POST /functions/v1/buy-credit`
 
 ```jsonc
 // Request
-{ "amount_kobo": 100000, "provider": "flutterwave" }
-// Response
-{ "checkout_url": "https://checkout.flutterwave.com/...", "topup_id": "uuid" }
+{ "amount_kobo": 100000 }
+// Response 200
+{
+  "topup_id": "uuid",
+  "amount_kobo_paid": 100000,
+  "platform_fee_kobo": 2000,
+  "credits_issued": 98,
+  "provider": "flutterwave",
+  "bank_transfer": {
+    "account_number": "9495158721",
+    "bank_name": "Flutterwave MFB (Formerly OK MFB)",
+    "account_name": null,
+    "expires_at": "2026-09-12T19:15:26.000Z"
+  }
+}
+// Response 400
+{ "error": "invalid_request" }
+// Response 503 (provider unavailable — topup marked failed, nothing charged)
+{ "error": "payment_provider_unavailable" }
 ```
 
-Creates a `topups` row (`status: pending`) and returns the provider's hosted checkout link (never collect card details in-app — offload PCI scope entirely to the PSP). Credits are issued only on confirmed webhook, not on client return-from-checkout (client return can be spoofed/interrupted; webhook is authoritative).
+**No checkout URL — this is real, not aspirational, per docs/00-SESSION-HANDOFF.md's session-3 research.** Flutterwave v4 has no single "give me a checkout link" call; the real, live-confirmed path is a one-time NGN bank-transfer virtual account (no card tokenization, no PCI scope in the app, no BVN/NIN needed for this dynamic/one-off kind — see `packages/payments/flutterwave.ts`'s `initiateCollection` comment for exactly which endpoint and why). The client displays `bank_transfer.account_number`/`bank_name` and the amount, same UX shape a checkout-link flow would have had. Creates a `topups` row (`status: pending`); credits are issued only on the confirmed `charge.completed` webhook (`fn_confirm_topup`), never on this call returning 200 — a 200 here means "here's where to send the money," not "payment received."
 
-**This response shape is aspirational, not confirmed.** Flutterwave's current live API has no single "give me a checkout URL" call — collections now go through separate Customer → PaymentMethod → Charge/Order objects, and card payment methods need client-side tokenization before the server ever sees a charge request (bigger than one Edge Function). Deferred pending a product/eng decision — see docs/00-SESSION-HANDOFF.md's Phase 2 batch 2 section.
+Card and other payment methods aren't implemented — only NGN bank transfer, matching this project's phone-only, KYC-light v1 scope.
 
 ### `POST /functions/v1/webhook-flutterwave` (and future `webhook-paystack`)
 
 Server-to-server only, not called by the app.
 
-- Verify the `flutterwave-signature` header: HMAC-SHA256 of the raw request body against `FLW_WEBHOOK_SECRET_HASH`, constant-time compared. Reject (401) on missing/mismatched signature, no processing. (Originally documented here as a `verif-hash` direct-string-compare header — that was Flutterwave's older mechanism; corrected to match their current webhook docs while building Phase 2 batch 2.)
+- Verify the `flutterwave-signature` header: HMAC-SHA256 of the raw request body against `FLW_WEBHOOK_SECRET_HASH`, **base64** digest, constant-time compared. Reject (401) on missing/mismatched signature, no processing. (Originally documented here as a `verif-hash` direct-string-compare header — that was Flutterwave's older mechanism. Corrected once to HMAC-SHA256/`flutterwave-signature` in Phase 2 batch 2, then corrected again this session on the digest encoding — batch 2's version used `hex`, but Flutterwave's own webhook-docs verification code sample uses `base64`; would have rejected every real webhook. Caught by reading that sample directly, not assumed.)
 - Check the webhook's own `id` (not the charge/transfer id) against `webhook_events_seen` (`provider`, `provider_event_id` unique); if already claimed, return 200 immediately without reprocessing. Claimed via upsert-ignore-duplicates — the unique constraint is the actual idempotency guarantee, `fn_confirm_topup`/`fn_complete_withdrawal` are independently idempotent too (defense in depth, not either/or).
-- `charge.completed` with `data.reference` = a `topups.id` → `fn_confirm_topup(topup_id, provider_ref)`.
-- `transfer.completed` with `data.reference` = a `withdrawals.id` → `fn_complete_withdrawal(withdrawal_id, provider_ref)` (new function, see the batch 2 migration — a pure status transition to `paid`, the balance mutation already happened at `fn_initiate_withdrawal` time).
-- `transfer.failed` with `data.reference` = a `withdrawals.id` → `fn_fail_withdrawal(withdrawal_id)` (reverses the debit — a transfer can fail asynchronously after our DB already committed it as `processing`).
-- Any other event type: acknowledged (200), no DB action.
-- On failed/reversed charge: no credits issued (topup stays `pending`); if credits were already issued and the charge later reverses (chargeback), see `docs/06-SECURITY-FRAUD-LOOPHOLES.md` §3 for the clawback path (not built).
+- `charge.completed` with `data.reference` = a `topups.id` and `data.status`: `succeeded` → `fn_confirm_topup(topup_id, provider_ref)`. `charge.completed` with any other `data.status` (failed/voided) → the topup row is marked `failed` directly (no balance was ever touched for a `pending` topup, so this doesn't need a `SECURITY DEFINER` function).
+- `transfer.disburse` with `data.reference` = a `withdrawals.id` → `fn_complete_withdrawal(withdrawal_id, provider_ref)` (a pure status transition to `paid`, the balance mutation already happened at `fn_initiate_withdrawal` time). Corrected this session from `transfer.completed` — that name was never confirmed against v4's actual docs; the real event name is `transfer.disburse`, per developer.flutterwave.com's own API-overview reference.
+- `transfer.reversal` with `data.reference` = a `withdrawals.id` → `fn_fail_withdrawal(withdrawal_id)` (reverses the debit — a transfer can fail asynchronously after our DB already committed it as `processing`). Corrected this session from `transfer.failed`, same reason as above.
+- Any other event type (`order.authorization`, `refund.completed`, unrecognized future types): acknowledged (200), no DB action.
+- On failed/reversed charge: no credits issued (topup marked `failed`, see above); if credits were already issued and the charge later reverses (chargeback), see `docs/06-SECURITY-FRAUD-LOOPHOLES.md` §3 for the clawback path (not built).
 
-Event `type` strings and payload shape (`data.reference`, `data.id`) are Flutterwave's documented v4 webhook convention as far as could be confirmed without a live account — see `packages/payments/flutterwave.ts`'s header comment.
+Event `type` strings and payload shape (`data.reference`, `data.id`, `data.status`) are Flutterwave's documented v4 webhook convention, confirmed this session against their live docs and a real `charge.completed` sample payload — see `packages/payments/flutterwave.ts`'s header comment for what's confirmed vs. still-assumed (the transfer event names are corrected from a prior guess but not yet seen fired for real).
 
 ### `POST /functions/v1/withdraw`
 
@@ -74,9 +90,9 @@ Event `type` strings and payload shape (`data.reference`, `data.id`) are Flutter
 { "error": "payment_provider_unavailable" }
 ```
 
-Requires KYC tier ≥ 1 and a `bank_accounts` row with `name_match_verified = true` **and** a non-null `provider_account_id` (checked by the Edge Function before ever calling `fn_initiate_withdrawal`, so an unlinked-but-KYC'd account fails fast rather than debit-then-immediately-reverse). Calls `fn_initiate_withdrawal` (debits `withdrawable_cash` immediately, status `processing`) → `PaymentProvider.initiatePayout({ recipientId: bank_accounts.provider_account_id, ... })` → on provider failure, calls `fn_fail_withdrawal` so the debit doesn't strand, and returns 503 rather than a false `processing`. On provider webhook confirmation (`transfer.completed`/`transfer.failed`, see webhook-flutterwave above), marks `paid` or reverses.
+Requires KYC tier ≥ 1 and a `bank_accounts` row with `name_match_verified = true` **and** a non-null `provider_account_id` (checked by the Edge Function before ever calling `fn_initiate_withdrawal`, so an unlinked-but-KYC'd account fails fast rather than debit-then-immediately-reverse). Calls `fn_initiate_withdrawal` (debits `withdrawable_cash` immediately, status `processing`) → `PaymentProvider.initiatePayout({ recipientId: bank_accounts.provider_account_id, ... })` → on provider failure, calls `fn_fail_withdrawal` so the debit doesn't strand, and returns 503 rather than a false `processing`. On provider webhook confirmation (`transfer.disburse`/`transfer.reversal`, see webhook-flutterwave above), marks `paid` or reverses.
 
-`PaymentProvider.initiatePayout` is currently a stub (Flutterwave API-generation decision pending, same as buy-credit above) — every real call today exercises the `fn_fail_withdrawal` compensating path, which is the safety-critical half of this function regardless of which API eventually backs it.
+`PaymentProvider.initiatePayout` calls the real live Flutterwave `/transfers` endpoint (see `packages/payments/flutterwave.ts`) — confirmed this session by actually calling it: a transfer to a deliberately-fake recipient id came back a real `RECIPIENT_NOT_FOUND` (404), proving the request shape and auth are correct end-to-end up to that point. **Bank-account linking (the flow that would populate a real `bank_accounts.provider_account_id` for a real user via `/transfers/recipients`) still isn't built** — every `bank_accounts` row usable by `withdraw` today is a manually-inserted test fixture, so no withdrawal has actually completed for real yet. That's the next real gap on the payout side, not the provider call itself.
 
 ### `POST /functions/v1/post-status`
 

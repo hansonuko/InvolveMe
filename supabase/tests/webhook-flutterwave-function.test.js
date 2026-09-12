@@ -49,8 +49,11 @@ function log(label, ok, detail) {
   process.stdout.write(`[${ok ? 'PASS' : 'FAIL'}] ${label}${detail ? ' — ' + detail : ''}\n`);
 }
 
+// Base64 digest, not hex — matches packages/payments/flutterwave.ts's
+// verifyWebhook, corrected this session against Flutterwave's actual
+// webhook docs (see that file's header comment for the full story).
 function sign(rawBody) {
-  return crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('hex');
+  return crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('base64');
 }
 
 async function postWebhook(payloadObj, { signature } = {}) {
@@ -162,7 +165,7 @@ async function testChargeCompletedConfirmsTopup(admin) {
   const payload = {
     id: eventId,
     type: 'charge.completed',
-    data: { id: `chg_test_${crypto.randomUUID()}`, reference: topupId },
+    data: { id: `chg_test_${crypto.randomUUID()}`, reference: topupId, status: 'succeeded' },
   };
 
   const first = await postWebhook(payload);
@@ -277,7 +280,7 @@ async function testSignatureVerification(admin) {
 }
 
 // =============================================================================
-// Test 3: transfer.completed / transfer.failed against real withdrawal
+// Test 3: transfer.disburse / transfer.reversal against real withdrawal
 // fixtures created via fn_initiate_withdrawal directly (same fixture
 // pattern wallet-functions.test.js and withdraw-function.test.js use).
 // =============================================================================
@@ -313,11 +316,11 @@ async function testTransferWebhooksCompleteWithdrawals(admin) {
   const completedEventId = `wbk_test_${crypto.randomUUID()}`;
   const completed = await postWebhook({
     id: completedEventId,
-    type: 'transfer.completed',
+    type: 'transfer.disburse',
     data: { id: `trf_test_${crypto.randomUUID()}`, reference: withdrawal1Id },
   });
   log(
-    'transfer.completed -> 200 processed',
+    'transfer.disburse -> 200 processed',
     completed.status === 200 && completed.json?.status === 'processed',
     JSON.stringify(completed.json),
   );
@@ -350,11 +353,11 @@ async function testTransferWebhooksCompleteWithdrawals(admin) {
   const failedEventId = `wbk_test_${crypto.randomUUID()}`;
   const failed = await postWebhook({
     id: failedEventId,
-    type: 'transfer.failed',
+    type: 'transfer.reversal',
     data: { id: `trf_test_${crypto.randomUUID()}`, reference: withdrawal2Id },
   });
   log(
-    'transfer.failed -> 200 processed',
+    'transfer.reversal -> 200 processed',
     failed.status === 200 && failed.json?.status === 'processed',
     JSON.stringify(failed.json),
   );
