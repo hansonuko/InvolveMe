@@ -12,12 +12,14 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:db": "node --env-file=.env supabase/tests/wallet-functions.test.js",
     "prepare": "husky"
   },
   "devDependencies": {
     "eslint": "^9.19.0",
     "husky": "^9.1.7",
     "lint-staged": "^15.2.10",
+    "pg": "^8.13.1",
     "prettier": "^3.9.6",
     "supabase": "^2.117.0",
     "turbo": "^2.3.0",

@@ -16,11 +16,35 @@ Living doc. Read this first in any new session before touching the repo — it's
 | #2             | Supabase CLI linked to the real dev project                                 | Merged              |
 | #3             | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB            | Merged              |
 | #4             | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions | Merged              |
-| (this session) | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement        | Open PR — see below |
+| #5             | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement        | Merged              |
+| (this session) | Phase 1 item 6: concurrency + ledger-conservation test suite                | Open PR — see below |
 
-**The core money path works end-to-end against the real dev database, including its safety nets.** Escrow expiry, auto-withdrawal, and ledger reconciliation all run on a schedule now, and — found and fixed this session — a frozen wallet actually stops money movement instead of just sitting there flagged.
+**Phase 1 is functionally complete.** The core money path works end-to-end against the real dev database, including its safety nets, and now has a committed, re-runnable test suite proving the locking actually holds under genuine concurrent load — not just reasoned about.
 
-Still missing before the _app_ can drive any of this: the Edge Functions that actually call these RPCs (nothing calls `fn_send_message` etc. yet except the verification scripts), real Flutterwave integration, and KYC/bank-linking flows.
+Still missing before the _app_ can drive any of this: the Edge Functions that actually call these RPCs (nothing calls `fn_send_message` etc. yet except the test suite), real Flutterwave integration, and KYC/bank-linking flows. That's Phase 2/3, not Phase 1.
+
+### Phase 1 item 6 — what was verified, not just written
+
+A **permanent, committed** test suite (`supabase/tests/wallet-functions.test.js`, run via `npm run test:db`), not a scratch script — it stays in the repo for the next person (or the next database change) to re-run. Fires genuinely concurrent requests from separate physical connections (a single `pg.Client` processes queries serially even unawaited; real concurrency needs real separate connections) against the real dev database:
+
+- Two simultaneous `fn_send_message` calls against a wallet funded for exactly one message → exactly one succeeds, the other gets `insufficient_credit`, balance never goes negative, ledger reconciles
+- Two simultaneous `fn_confirm_topup` calls for the same topup (a racing duplicate webhook, not a sequential retry) → credits issued exactly once, not twice
+- Two simultaneous `fn_initiate_withdrawal` calls against a wallet funded for exactly one withdrawal → exactly one succeeds
+- Two independent concurrent conversations (4 users, 4 connections, 4 simultaneous sends) → every wallet touched, including both platform wallets, reconciles against its own ledger sum afterward
+
+11/11 passing. All test data cleaned up automatically after each run — confirmed zero rows left anywhere.
+
+### Bugs this test suite caught in itself before it caught anything in the functions
+
+Worth recording because they're exactly the kind of test-infrastructure mistake that quietly invalidates a test suite's results if not caught:
+
+1. **Cross-user cleanup ordering.** A thread's messages can have `sender_id` pointing at _either_ participant, so tearing down "everything belonging to user X" one user at a time left the other participant's messages dangling and blocked the thread delete with an FK violation. Fixed by adding a `deleteTestThread` helper that tears down a thread as a unit, by thread id, before either participant is deleted.
+2. **Platform wallet cleanup drift.** `resetPlatformWallets` zeroed `wallets.balance` directly without deleting the corresponding `ledger_entries` — exactly the bug class `fn_run_reconciliation_check` exists to catch — which leaked a stale mismatch into whichever test ran next. Fixed by deleting the ledger rows too, not just the cached balance.
+3. **Deterministic phone numbers.** Test users originally used a fixed counter (`+234000100005`, etc.) for their phone number. A run that crashed before cleanup (which happened twice, from bugs 1 and 2 above) left those numbers taken, so the next run's `INSERT` failed on `users_phone_key` before the actual test logic even ran. Fixed by randomizing the phone number per run, same as the user ID already was.
+
+None of these were bugs in the database functions themselves — the functions passed every time once the test harness itself was correct. Worth noting: **this suite is intentionally not wired into CI** (it runs real inserts/deletes against whatever `SUPABASE_DB_URL` points at, which should only ever be a dev/staging project) — it's a manual pre-merge check for now, run via `npm run test:db`.
+
+**Operational note, not a code issue:** the dev pooler (`aws-1-eu-west-1.pooler.supabase.com`) dropped connections mid-session and once timed out on auth entirely across several runs while building this suite — always recoverable on retry, never a partial/incorrect result. Added a `client.on('error', ...)` handler so a drop fails the affected test cleanly instead of crashing the whole process with an unhandled exception. Worth keeping an eye on once real traffic exists; not urgent now.
 
 ### Phase 1 item 5 — what was verified, not just written
 
@@ -101,11 +125,11 @@ Real dev credentials are configured locally in `.env` (root, server-only) and `a
 - Service-role key rotation still pending (see hygiene note above).
 - No Edge Functions yet — the RPCs are locked to `service_role` only (verified: `REVOKE EXECUTE ... FROM PUBLIC` on every function), so nothing outside a trusted server context can call them, but nothing _is_ calling them yet either. The mobile app still can't send a real message.
 - No content moderation, no KYC vendor integration, no age gate yet — all required before public launch per `docs/07-COMPLIANCE-LEGAL.md` §6, not required for continued dev-phase work.
-- Concurrency tests (item 6) haven't been written — the functions rely on `SELECT ... FOR UPDATE` row locks for correctness under concurrent calls, which hasn't been load-tested, only reasoned about.
 - `users_select_own_or_thread_partner` policy exposes the full `users` row (including phone number) to thread partners rather than a column-limited subset — documented v1 simplification, see the RLS migration's header comment.
 - The three "notify/page a human" halves of item 5's jobs (bank-account reminder push, on-call paging for reconciliation mismatches) aren't implemented — the detection/enforcement side is real, the human-notification side needs infrastructure that doesn't exist yet (see item 5 section above).
 - `fn_run_auto_withdraw_sweep`'s "how long has this sat" check is a `wallets.updated_at` proxy, not exact per-credit aging (see item 5 section above).
+- `supabase/tests/wallet-functions.test.js` is a manual check (`npm run test:db`), not wired into CI — it runs real inserts/deletes against whatever `SUPABASE_DB_URL` points at. Automating it would need a dedicated ephemeral test database, not the shared dev project.
 
 ## Immediate next step
 
-Phase 1 item 5 is done and verified (see above), sitting in an open PR awaiting merge. Once that's in, Phase 1's remaining item is item 6 (concurrency tests — load-test the `FOR UPDATE` locking under real concurrent calls, not just reason about it). Arguably higher product value right now, though: the actual Edge Functions (`send-message`, `buy-credit`, `withdraw`, the Flutterwave webhook handler) that let the mobile app call any of this for real — everything built in Phase 1 so far is inert from the app's perspective until something calls it. See `docs/08-BUILD-PHASES-ROADMAP.md` Phase 1 and Phase 2.
+**Phase 1 is done.** Everything built across items 1–6 is inert from the app's perspective until something calls it, though — the highest-value next step is the Edge Functions (`send-message`, `buy-credit`, `withdraw`, the Flutterwave webhook handler) that let the mobile app actually drive any of this. That's Phase 2 (chat MVP, per `docs/08-BUILD-PHASES-ROADMAP.md`) and the beginning of Phase 3 (payments) overlapping — waiting on go-ahead before starting.
