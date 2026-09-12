@@ -42,7 +42,7 @@ Built: `supabase/functions/_shared/auth.ts` (JWT verification helper — every E
 
 **Not done, by original scope, not an oversight:** `buy-credit`, `webhook-flutterwave`, `withdraw` (batch 2 — blocked on Flutterwave credentials), `post-status` (needs a new DB function first), `kyc-callback` (no KYC vendor chosen yet), and actually deploying anything (`supabase functions deploy`) — local testing only so far, deploy was explicitly scoped as a later step once more of the batch is verified.
 
-### Phase 2 batch 2 — `withdraw` + `webhook-flutterwave` (PR open, not yet merged), `buy-credit` deferred
+### Phase 2 batch 2 — `withdraw` + `webhook-flutterwave` (PR open, not yet merged — see PR #9), `buy-credit` deferred
 
 **The batch 2 plan changed mid-session, for a real reason, not a whim.** The original plan (see "Immediate next step" below, left as historical reference) assumed Flutterwave's API just needed live credentials to exercise for real. While building, Flutterwave's _current_ live docs (developer.flutterwave.com) turned out to describe a materially different API than this project's `.env`/docs assumed — not just new credentials, a different generation:
 
