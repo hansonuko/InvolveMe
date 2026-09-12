@@ -10,13 +10,23 @@ Living doc. Read this first in any new session before touching the repo — it's
 
 ## What's actually merged into `main`
 
-| PR             | What                                                                        | Status                  |
-| -------------- | --------------------------------------------------------------------------- | ----------------------- |
-| #1             | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring | Merged                  |
-| #2             | Supabase CLI linked to the real dev project                                 | Merged                  |
-| (this session) | Phase 1 item 1: full ledger/wallet schema as migrations                     | In progress — see below |
+| PR             | What                                                                        | Status              |
+| -------------- | --------------------------------------------------------------------------- | ------------------- |
+| #1             | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring | Merged              |
+| #2             | Supabase CLI linked to the real dev project                                 | Merged              |
+| (this session) | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB            | Open PR — see below |
 
-No wallet, chat, or payment **logic** exists yet — Phase 0 was deliberately scaffold-only. As of this session, the database schema is being built (Phase 1), but the `SECURITY DEFINER` functions that actually move money (`fn_send_message`, `fn_release_escrow`, etc.) have not been written yet. **The app cannot send a real paid message yet.**
+No wallet, chat, or payment **logic** exists yet. The database schema now exists and is live on the dev project (all tables, RLS enabled deny-by-default, and the three schema-level triggers below — verified against the real dev DB, not just applied), but the `SECURITY DEFINER` functions that actually move money (`fn_send_message`, `fn_release_escrow`, etc.) have not been written yet. **The app cannot send a real paid message yet.**
+
+### Phase 1 item 1 — what was verified, not just written
+
+Ran against the real dev database (test user created via the Admin API, then fully cleaned up — zero rows left behind, confirmed by count):
+
+- Signup bootstrap chain fires: `auth.users` insert → `public.users` row appears → three wallet rows (`topup_credit`, `earnings_pending`, `withdrawable_cash`) appear, all balance 0
+- Inserting a `ledger_entries` row updates `wallets.balance` automatically via trigger (no application code involved)
+- `UPDATE` and `DELETE` on `ledger_entries` are both rejected outright, by trigger — true even for the table owner, not just RLS-restricted roles
+- `pricing_config` changes are recorded to `pricing_config_history` automatically
+- Anon key gets zero rows on every table (RLS enabled, no policies yet — deny-by-default confirmed live, not just assumed) and a 401 on write attempts
 
 ## Credentials status
 
@@ -44,11 +54,10 @@ Real dev credentials are configured locally in `.env` (root, server-only) and `a
 ## Open risks / known gaps
 
 - Service-role key rotation still pending (see hygiene note above).
-- No `SECURITY DEFINER` functions yet — schema alone doesn't enforce the atomic-transaction rules in `CLAUDE.md` #3/#4 at the application level (the schema does enforce append-only ledger and wallet-balance-derivation at the _trigger_ level as of this session — see PR for Phase 1 item 1).
+- No `SECURITY DEFINER` functions yet — RLS is deny-by-default with zero policies, so **no client can read or write anything yet, including their own data**. That's correct for where we are (nothing should be client-writable before the functions exist to gate it) but means item 2 (RLS policies) and item 3 (functions) need to land together before the app can do anything real against this schema.
 - No content moderation, no KYC vendor integration, no age gate yet — all required before public launch per `docs/07-COMPLIANCE-LEGAL.md` §6, not required for continued dev-phase work.
+- `pricing_config` has no seed data yet (item 4) — the table exists but is empty on the dev DB right now.
 
 ## Immediate next step
 
-Phase 1 item 1 (full schema) is being built this session: `supabase/migrations/*.sql` covering every table in `docs/02-DATA-MODEL.md`, RLS enabled (deny-by-default, no policies yet — that's item 2), and a couple of schema-level integrity guarantees added beyond the doc's literal table list (documented in the PR): an append-only trigger on `ledger_entries`, a trigger that derives `wallets.balance` from `ledger_entries` automatically instead of trusting application code to keep both in sync, and signup bootstrap triggers (`auth.users` → `public.users` → three wallet rows) since nothing currently creates a `public.users` row when someone completes phone/OTP signup.
-
-After this: item 2 (RLS policies), item 3 (`SECURITY DEFINER` functions), item 4 (`pricing_config` seed), item 5 (reconciliation cron), item 6 (concurrency tests) — see `docs/08-BUILD-PHASES-ROADMAP.md` Phase 1.
+Phase 1 item 1 is done and verified (see above), sitting in an open PR awaiting merge. Next up, in order: item 2 (RLS policies — own-row-only reads, zero direct client writes on money tables), item 3 (`SECURITY DEFINER` functions: `fn_send_message`, `fn_release_escrow`, `fn_buy_credit`/`fn_confirm_topup`, `fn_initiate_withdrawal`), item 4 (`pricing_config` seed with the v1 defaults from `docs/03-ECONOMY-LEDGER.md`), item 5 (reconciliation cron), item 6 (concurrency tests) — see `docs/08-BUILD-PHASES-ROADMAP.md` Phase 1.
