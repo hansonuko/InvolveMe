@@ -10,18 +10,18 @@ Living doc. Read this first in any new session before touching the repo — it's
 
 ## What's actually merged into `main`
 
-| PR             | What                                                                        | Status              |
-| -------------- | --------------------------------------------------------------------------- | ------------------- |
-| #1             | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring | Merged              |
-| #2             | Supabase CLI linked to the real dev project                                 | Merged              |
-| #3             | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB            | Merged              |
-| #4             | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions | Merged              |
-| #5             | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement        | Merged              |
-| (this session) | Phase 1 item 6: concurrency + ledger-conservation test suite                | Open PR — see below |
+| PR  | What                                                                        | Status |
+| --- | --------------------------------------------------------------------------- | ------ |
+| #1  | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring | Merged |
+| #2  | Supabase CLI linked to the real dev project                                 | Merged |
+| #3  | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB            | Merged |
+| #4  | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions | Merged |
+| #5  | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement        | Merged |
+| #6  | Phase 1 item 6: concurrency + ledger-conservation test suite                | Merged |
 
-**Phase 1 is functionally complete.** The core money path works end-to-end against the real dev database, including its safety nets, and now has a committed, re-runnable test suite proving the locking actually holds under genuine concurrent load — not just reasoned about.
+**Phase 1 is complete and merged.** The core money path works end-to-end against the real dev database, including its safety nets, and has a committed, re-runnable test suite proving the locking actually holds under genuine concurrent load — not just reasoned about.
 
-Still missing before the _app_ can drive any of this: the Edge Functions that actually call these RPCs (nothing calls `fn_send_message` etc. yet except the test suite), real Flutterwave integration, and KYC/bank-linking flows. That's Phase 2/3, not Phase 1.
+**Nothing built so far is reachable from the app.** Every RPC is locked to `service_role` — that's correct and deliberate, but it means the mobile app still cannot send a real message, buy real credit, or withdraw real cash. That's what Phase 2 (Edge Functions) closes. **Scoped below, not yet built** — this is the next session's starting point.
 
 ### Phase 1 item 6 — what was verified, not just written
 
@@ -123,13 +123,57 @@ Real dev credentials are configured locally in `.env` (root, server-only) and `a
 ## Open risks / known gaps
 
 - Service-role key rotation still pending (see hygiene note above).
-- No Edge Functions yet — the RPCs are locked to `service_role` only (verified: `REVOKE EXECUTE ... FROM PUBLIC` on every function), so nothing outside a trusted server context can call them, but nothing _is_ calling them yet either. The mobile app still can't send a real message.
+- No Edge Functions yet — the RPCs are locked to `service_role` only (verified: `REVOKE EXECUTE ... FROM PUBLIC` on every function), so nothing outside a trusted server context can call them, but nothing _is_ calling them yet either. The mobile app still can't send a real message. **Scoped in "Immediate next step" below — start there, don't re-scope.**
 - No content moderation, no KYC vendor integration, no age gate yet — all required before public launch per `docs/07-COMPLIANCE-LEGAL.md` §6, not required for continued dev-phase work.
 - `users_select_own_or_thread_partner` policy exposes the full `users` row (including phone number) to thread partners rather than a column-limited subset — documented v1 simplification, see the RLS migration's header comment.
 - The three "notify/page a human" halves of item 5's jobs (bank-account reminder push, on-call paging for reconciliation mismatches) aren't implemented — the detection/enforcement side is real, the human-notification side needs infrastructure that doesn't exist yet (see item 5 section above).
 - `fn_run_auto_withdraw_sweep`'s "how long has this sat" check is a `wallets.updated_at` proxy, not exact per-credit aging (see item 5 section above).
 - `supabase/tests/wallet-functions.test.js` is a manual check (`npm run test:db`), not wired into CI — it runs real inserts/deletes against whatever `SUPABASE_DB_URL` points at. Automating it would need a dedicated ephemeral test database, not the shared dev project.
 
-## Immediate next step
+## Immediate next step — Edge Functions (scoped, not yet built)
 
-**Phase 1 is done.** Everything built across items 1–6 is inert from the app's perspective until something calls it, though — the highest-value next step is the Edge Functions (`send-message`, `buy-credit`, `withdraw`, the Flutterwave webhook handler) that let the mobile app actually drive any of this. That's Phase 2 (chat MVP, per `docs/08-BUILD-PHASES-ROADMAP.md`) and the beginning of Phase 3 (payments) overlapping — waiting on go-ahead before starting.
+This is the plan for the next session. Read it, don't re-scope from scratch — go straight to Batch 1 unless something below has changed.
+
+### Why this is split into two batches
+
+Flutterwave and KYC vendor credentials aren't provisioned (see Credentials status above). Batch 1 is everything fully buildable _and testable end-to-end_ against the real dev database with what already exists. Batch 2 needs a payment provider account before it can be tested for real, even though the code can be written against Flutterwave's public API docs in the meantime.
+
+### Batch 1 — build and fully test this session
+
+| Function          | Calls                                                                                   | Notes                                                                                                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `_shared/auth.ts` | —                                                                                       | Shared helper: verify the caller's JWT (via `supabase-js` + the incoming `Authorization` header), return the authenticated user id. Every function below uses this — build it first. |
+| `send-message`    | `fn_start_thread` (if `thread_id` not supplied — see decision below), `fn_send_message` | Core function, highest value, zero external dependencies.                                                                                                                            |
+
+**One contract decision to make when building, not before:** `docs/05-API-REALTIME-SPEC.md`'s `send-message` contract only takes `{ thread_id, body }` — there's no documented "start a new conversation" call. Recommend accepting `{ thread_id? , recipient_id?, body }`: if `thread_id` is missing, call `fn_start_thread(caller_id, recipient_id)` first, then proceed. Update `docs/05-API-REALTIME-SPEC.md` with whatever's decided — don't let the doc drift from what's built, same discipline as every other change this project has made.
+
+**Error mapping** (`fn_send_message` raises these `raise exception` messages — map to HTTP status in the Edge Function, per the convention in `docs/05-API-REALTIME-SPEC.md` §5):
+
+| DB error              | HTTP status                                                        |
+| --------------------- | ------------------------------------------------------------------ |
+| `thread_not_found`    | 404                                                                |
+| `not_a_participant`   | 403                                                                |
+| `thread_blocked`      | 403                                                                |
+| `wallet_frozen`       | 403                                                                |
+| `empty_message`       | 400                                                                |
+| `message_too_long`    | 400                                                                |
+| `insufficient_credit` | 402 (matches the worked example in `docs/05-API-REALTIME-SPEC.md`) |
+
+**Testing without real phone/SMS:** don't wait on OTP delivery to get a real JWT for testing. `SUPABASE_JWT_SECRET` is already in `.env` — mint a test access token directly with a JWT library (`sub` = a real test user's id created via the Admin API, `role: authenticated`, matching Supabase's expected claim shape) rather than trying to receive a real SMS OTP in a dev script. `supabase functions serve` runs the function locally while still talking to the real linked dev project (pass `--env-file` pointing at `.env`) — no separate local Postgres needed, consistent with how everything else this project has been tested.
+
+**Exit criteria:** two real test users can hold a full paid conversation through the actual `send-message` Edge Function (not by calling `fn_send_message` directly, the way `supabase/tests/` does) — top-up balance decrements, escrow releases, earnings land in `withdrawable_cash`, verified via the same kind of test-then-cleanup discipline every other phase this session used. Clean up test data afterward and confirm zero rows left, same standard as every prior PR.
+
+### Batch 2 — build now, mark "written, untested against live Flutterwave"
+
+| Function                           | Calls                                                                                                                 | Notes                                                                                                                                                                                                                                                                           |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/payments/flutterwave.ts` | Flutterwave's public REST API                                                                                         | Implements the `PaymentProvider` interface from `packages/payments/provider.ts`. Can be written against Flutterwave's published API docs without live keys; just can't be exercised end-to-end until an account exists.                                                         |
+| `buy-credit`                       | `fn_buy_credit`, then `PaymentProvider.initiateCollection()`                                                          |                                                                                                                                                                                                                                                                                 |
+| `webhook-flutterwave`              | Signature verification (`PaymentProvider.verifyWebhook()`), `provider_event_id` idempotency check, `fn_confirm_topup` | Signature verification logic can be written and unit-tested with a synthetic secret in `.env` even without a real Flutterwave account — swap the placeholder for the real `FLW_WEBHOOK_SECRET_HASH` once provisioned.                                                           |
+| `withdraw`                         | `fn_initiate_withdrawal`, then `PaymentProvider.initiatePayout()`; on provider failure, `fn_fail_withdrawal`          | The two-step "DB commits the debit, then the provider call happens" sequence is exactly why `fn_fail_withdrawal` exists (see Phase 1 items 2+3 section) — make sure the Edge Function actually calls it on a provider-side failure, don't let that compensating path go unused. |
+
+### Explicitly not in this batch
+
+- **`post-status`** — needs a new DB function (`fn_post_status` or similar) that doesn't exist yet; Phase 1's function set never included status uploads. Small, analogous to `fn_buy_credit` in complexity, but it's new DB work, not just an Edge Function wrapping something that already exists. Scope separately when Status (Phase 6) comes up.
+- **`kyc-callback`** — needs a KYC vendor (Smile Identity, Dojah, VerifyMe, etc.) that isn't chosen or provisioned yet. Fully deferred.
+- **Actually deploying** these functions (`supabase functions deploy`) — local `functions serve` testing first; deploy is a separate, later step once Batch 1 (and ideally Batch 2) are verified.
