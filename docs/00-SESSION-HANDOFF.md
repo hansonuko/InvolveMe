@@ -6,23 +6,24 @@ Living doc. Read this first in any new session before touching the repo — it's
 
 **Repo:** https://github.com/hansonuko/InvolveMe (public, proprietary license)
 **Supabase project:** `InvolveMe`, ref `ekotjsmgfluufsoralmf`, region `eu-west-1`, Postgres 17.6, status `ACTIVE_HEALTHY`, linked locally via the Supabase CLI (`supabase/config.toml`).
-**Payments:** Flutterwave account not yet provisioned — Phase 3 blocker, not needed yet.
+**Payments:** Flutterwave account not yet provisioned. Phase 3 blocker, and now blocked on a real decision, not just an account signup — Flutterwave's current live API is a different generation than this project's docs/`.env` shape assumed (OAuth2 auth, recipient-based transfers, no single checkout-URL collection call). See "Immediate next step" at the bottom of this doc.
 
 ## What's actually merged into `main`
 
-| PR  | What                                                                        | Status |
-| --- | --------------------------------------------------------------------------- | ------ |
-| #1  | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring | Merged |
-| #2  | Supabase CLI linked to the real dev project                                 | Merged |
-| #3  | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB            | Merged |
-| #4  | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions | Merged |
-| #5  | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement        | Merged |
-| #6  | Phase 1 item 6: concurrency + ledger-conservation test suite                | Merged |
-| #8  | Phase 2 batch 1: JWT auth helper + `send-message` Edge Function             | Merged |
+| PR  | What                                                                            | Status |
+| --- | ------------------------------------------------------------------------------- | ------ |
+| #1  | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring     | Merged |
+| #2  | Supabase CLI linked to the real dev project                                     | Merged |
+| #3  | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB                | Merged |
+| #4  | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions     | Merged |
+| #5  | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement            | Merged |
+| #6  | Phase 1 item 6: concurrency + ledger-conservation test suite                    | Merged |
+| #8  | Phase 2 batch 1: JWT auth helper + `send-message` Edge Function                 | Merged |
+| #9  | Phase 2 batch 2: `withdraw` + `webhook-flutterwave` (Flutterwave calls stubbed) | Merged |
 
 **Phase 1 is complete and merged.** The core money path works end-to-end against the real dev database, including its safety nets, and has a committed, re-runnable test suite proving the locking actually holds under genuine concurrent load — not just reasoned about.
 
-**Phase 2 batch 1 (`send-message`) is merged.** Batch 2's DB layer and Edge Functions (`withdraw`, `webhook-flutterwave`) are built and tested, PR open, not yet merged — see the dedicated section below. `buy-credit` is deliberately deferred, not built, pending a product/eng decision on which Flutterwave API generation to target — see that same section.
+**Phase 2 batches 1 and 2 are both merged.** `send-message`, `withdraw`, and `webhook-flutterwave` are all live on `main`, tested against the real dev database. `buy-credit` is deliberately deferred, not built, pending a product/eng decision on which Flutterwave API generation to target — see the batch 2 section below. **This is the actual next decision for whoever picks this up** — see "Immediate next step" at the bottom of this doc.
 
 ### Phase 2 batch 1 — `send-message` Edge Function (merged, PR #8)
 
@@ -42,7 +43,7 @@ Built: `supabase/functions/_shared/auth.ts` (JWT verification helper — every E
 
 **Not done, by original scope, not an oversight:** `buy-credit`, `webhook-flutterwave`, `withdraw` (batch 2 — blocked on Flutterwave credentials), `post-status` (needs a new DB function first), `kyc-callback` (no KYC vendor chosen yet), and actually deploying anything (`supabase functions deploy`) — local testing only so far, deploy was explicitly scoped as a later step once more of the batch is verified.
 
-### Phase 2 batch 2 — `withdraw` + `webhook-flutterwave` (PR open, not yet merged — see PR #9), `buy-credit` deferred
+### Phase 2 batch 2 — `withdraw` + `webhook-flutterwave` (merged, PR #9), `buy-credit` deferred
 
 **The batch 2 plan changed mid-session, for a real reason, not a whim.** The original plan (see "Immediate next step" below, left as historical reference) assumed Flutterwave's API just needed live credentials to exercise for real. While building, Flutterwave's _current_ live docs (developer.flutterwave.com) turned out to describe a materially different API than this project's `.env`/docs assumed — not just new credentials, a different generation:
 
@@ -152,7 +153,7 @@ Real dev credentials are configured locally in `.env` (root, server-only) and `a
 - ✅ `SUPABASE_DB_URL` (pooler connection string) — verified live (`PostgreSQL 17.6`)
 - ✅ `SUPABASE_JWT_SECRET` — populated, not independently verified (nothing signs custom JWTs yet)
 - ✅ `SUPABASE_ACCESS_TOKEN` — verified live (`supabase projects list`, `supabase link`, and every `db push` in this session)
-- ❌ Flutterwave keys — not provisioned (Phase 3)
+- ❌ Flutterwave keys — not provisioned (Phase 3). **Don't provision against the current `.env.example` shape (`FLW_SECRET_KEY`/`FLW_PUBLIC_KEY`/`FLW_ENCRYPTION_KEY`) without first resolving the API-generation question in the batch 2 section below and "Immediate next step" — those names match neither of the two API models found while building batch 2, and provisioning the wrong kind of credential wastes the trip.**
 - ❌ KYC vendor keys — not provisioned (Phase 3)
 
 **Hygiene note carried forward:** the DB password and CLI access token were shared in a chat message. Worth rotating both from the Supabase dashboard at some point as routine practice for a money-moving app — not urgent, hasn't blocked anything.
