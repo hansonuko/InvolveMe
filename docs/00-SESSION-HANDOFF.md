@@ -6,7 +6,7 @@ Living doc. Read this first in any new session before touching the repo — it's
 
 **This session's work:** built `fn_post_status` + the `post-status` Edge Function — the piece the previous session flagged as "fully buildable in the meantime, no Flutterwave dependency at all." **The Flutterwave API-generation decision from the previous session is still open** — that conversation with Flutterwave hasn't happened yet, so `buy-credit` remains unbuilt and `withdraw`/`webhook-flutterwave`'s provider calls remain stubbed, unchanged from before. See "Immediate next step" at the bottom for what's still blocked and why.
 
-### Phase 2 batch 3 — `post-status` (migration `20260912152602_fn_post_status.sql`, not yet a PR number — open one for this)
+### Phase 2 batch 3 — `post-status` (migration `20260912152602_fn_post_status.sql`, PR #11)
 
 - **`fn_post_status(p_user_id, p_media_url, p_caption)`** — new `SECURITY DEFINER` function, same shape as `fn_buy_credit` (single-wallet debit, no escrow/earning per docs/03-ECONOMY-LEDGER.md §7). Locks the caller's `topup_credit` wallet `FOR UPDATE`, checks `is_frozen` (per the guard-frozen-wallets migration's "freeze everywhere" rule), charges `status_upload_credits_media` if `media_url` is present else `status_upload_credits_text` (both already seeded in `pricing_config`), inserts the `status_updates` row with `expires_at = now() + 24h`, and records the debit as a `ledger_entries` row with `reason = 'status_upload_debit'` / `ref_type = 'status_update'` — both values already existed in the item-1 CHECK constraints (foresight from that migration), so no constraint changes were needed here. Locked to `service_role` via the same revoke/grant pattern as every other function.
 - **`supabase/functions/post-status/index.ts`** — authenticates, forwards to `fn_post_status`. No financial logic in the Edge Function itself, per CLAUDE.md rule #1. Error mapping: `empty_status`/`invalid_request` → 400, `insufficient_credit` → 402 (same structured `credits_required`/`credits_available` shape as `send-message`, for a consistent client contract across both credit-spending endpoints), `wallet_frozen` → 403.
@@ -27,17 +27,17 @@ Living doc. Read this first in any new session before touching the repo — it's
 
 ## What's actually merged into `main`
 
-| PR  | What                                                                            | Status                                                    |
-| --- | ------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| #1  | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring     | Merged                                                    |
-| #2  | Supabase CLI linked to the real dev project                                     | Merged                                                    |
-| #3  | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB                | Merged                                                    |
-| #4  | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions     | Merged                                                    |
-| #5  | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement            | Merged                                                    |
-| #6  | Phase 1 item 6: concurrency + ledger-conservation test suite                    | Merged                                                    |
-| #8  | Phase 2 batch 1: JWT auth helper + `send-message` Edge Function                 | Merged                                                    |
-| #9  | Phase 2 batch 2: `withdraw` + `webhook-flutterwave` (Flutterwave calls stubbed) | Merged                                                    |
-| —   | Phase 2 batch 3: `fn_post_status` + `post-status` Edge Function                 | Open (this session — see below for PR number once opened) |
+| PR  | What                                                                            | Status |
+| --- | ------------------------------------------------------------------------------- | ------ |
+| #1  | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring     | Merged |
+| #2  | Supabase CLI linked to the real dev project                                     | Merged |
+| #3  | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB                | Merged |
+| #4  | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions     | Merged |
+| #5  | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement            | Merged |
+| #6  | Phase 1 item 6: concurrency + ledger-conservation test suite                    | Merged |
+| #8  | Phase 2 batch 1: JWT auth helper + `send-message` Edge Function                 | Merged |
+| #9  | Phase 2 batch 2: `withdraw` + `webhook-flutterwave` (Flutterwave calls stubbed) | Merged |
+| #11 | Phase 2 batch 3: `fn_post_status` + `post-status` Edge Function                 | Open   |
 
 **Phase 1 is complete and merged.** The core money path works end-to-end against the real dev database, including its safety nets, and has a committed, re-runnable test suite proving the locking actually holds under genuine concurrent load — not just reasoned about.
 
