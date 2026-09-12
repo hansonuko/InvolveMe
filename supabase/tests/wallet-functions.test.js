@@ -433,6 +433,16 @@ async function main() {
 
   process.stdout.write(`\n${pass} passed, ${fail} failed\n`);
   process.exitCode = fail > 0 ? 1 : 0;
+
+  // Force-exit rather than rely on natural event-loop drain: observed this
+  // suite hang indefinitely after every assertion had already logged and
+  // passed (11/11), with no summary line printed — same root cause as
+  // send-message-function.test.js hit and fixed in Phase 2 batch 1 (a
+  // stray open handle outlives the last `await`, not anything the test
+  // logic is actually still waiting on). Once every test's own cleanup
+  // has run, as it has by this point, there's nothing left worth waiting
+  // on.
+  process.exit(process.exitCode);
 }
 
 main().catch((e) => {

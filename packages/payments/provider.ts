@@ -21,10 +21,26 @@ export interface CollectionResult {
   providerReference: string;
 }
 
+/**
+ * `recipientId` — not a raw account number/bank code. Matches
+ * `bank_accounts.provider_account_id` (docs/02-DATA-MODEL.md: "tokenized by
+ * provider") — InvolveMe deliberately never persists a full bank account
+ * number, only a provider-issued reference, so the interface can't hand an
+ * adapter raw account details to pay out with regardless of which
+ * Flutterwave API generation ends up implementing this. This interface
+ * originally (Phase 0) specified `accountNumber`/`bankCode`, which never
+ * matched that schema decision; changed here since nothing had implemented
+ * against the old shape yet. What exactly populates `recipientId` — and
+ * which concrete Flutterwave endpoint/auth model `flutterwave.ts` calls —
+ * is an open decision (see docs/00-SESSION-HANDOFF.md: their current live
+ * docs describe a materially different API, OAuth2 + recipient objects,
+ * than this project's existing `.env` credential shape assumes). Bank
+ * account *linking* (the flow that would populate `provider_account_id` in
+ * the first place) isn't built yet either.
+ */
 export interface PayoutRequest {
   amountKobo: number;
-  accountNumber: string;
-  bankCode: string;
+  recipientId: string;
   reference: string;
 }
 

@@ -18,12 +18,13 @@ Living doc. Read this first in any new session before touching the repo — it's
 | #4  | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions | Merged |
 | #5  | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement        | Merged |
 | #6  | Phase 1 item 6: concurrency + ledger-conservation test suite                | Merged |
+| #8  | Phase 2 batch 1: JWT auth helper + `send-message` Edge Function             | Merged |
 
 **Phase 1 is complete and merged.** The core money path works end-to-end against the real dev database, including its safety nets, and has a committed, re-runnable test suite proving the locking actually holds under genuine concurrent load — not just reasoned about.
 
-**Phase 2 batch 1 (`send-message`) is built and tested, PR open, not yet merged** — see the dedicated section below. Every other RPC is still locked to `service_role` with nothing calling it — batch 2 (`buy-credit`, `webhook-flutterwave`, `withdraw`) is still unbuilt, blocked on Flutterwave credentials as originally scoped.
+**Phase 2 batch 1 (`send-message`) is merged.** Batch 2's DB layer and Edge Functions (`withdraw`, `webhook-flutterwave`) are built and tested, PR open, not yet merged — see the dedicated section below. `buy-credit` is deliberately deferred, not built, pending a product/eng decision on which Flutterwave API generation to target — see that same section.
 
-### Phase 2 batch 1 — `send-message` Edge Function (PR open, not yet merged — see PR #8)
+### Phase 2 batch 1 — `send-message` Edge Function (merged, PR #8)
 
 Built: `supabase/functions/_shared/auth.ts` (JWT verification helper — every Edge Function that touches money uses this to re-derive the caller's identity server-side, per CLAUDE.md rule #1, rather than trusting a body-supplied user id) and `supabase/functions/send-message/index.ts`.
 
@@ -40,6 +41,35 @@ Built: `supabase/functions/_shared/auth.ts` (JWT verification helper — every E
 **A real bug in the test harness itself, caught before it caught anything in the function:** the first version of `deleteTestUser` in the new test file used the Admin API's `DELETE /admin/users/:id` for cleanup. That works for an _unfunded_ test user, but any wallet with `ledger_entries` against it can't cascade-delete through `auth.users` — `ledger_entries` is deliberately append-only (a trigger blocks deletes, per CLAUDE.md rule #4), and the Admin API's delete hits that FK violation and returns 500 without surfacing it anywhere the test would notice, leaving two funded test users stranded. Caught by directly querying the DB for recently-created rows after a run rather than trusting a clean exit code. Fixed by switching `deleteTestUser` to the same disable-trigger / delete-ledger-entries / re-enable-trigger / delete-dependent-rows sequence `wallet-functions.test.js` already established, rather than reinventing it. Same run also silently hung for two full minutes after every assertion had already logged and passed, with no summary line and no error — root-caused to something not draining Node's event loop after cleanup (most likely the killed `deno` child process's stdio pipes); fixed with an explicit `process.exit()` at the end of `main()` rather than relying on natural event-loop drain. Both fixes verified by rerunning to a clean, fast exit with the same 20/20 result.
 
 **Not done, by original scope, not an oversight:** `buy-credit`, `webhook-flutterwave`, `withdraw` (batch 2 — blocked on Flutterwave credentials), `post-status` (needs a new DB function first), `kyc-callback` (no KYC vendor chosen yet), and actually deploying anything (`supabase functions deploy`) — local testing only so far, deploy was explicitly scoped as a later step once more of the batch is verified.
+
+### Phase 2 batch 2 — `withdraw` + `webhook-flutterwave` (PR open, not yet merged), `buy-credit` deferred
+
+**The batch 2 plan changed mid-session, for a real reason, not a whim.** The original plan (see "Immediate next step" below, left as historical reference) assumed Flutterwave's API just needed live credentials to exercise for real. While building, Flutterwave's _current_ live docs (developer.flutterwave.com) turned out to describe a materially different API than this project's `.env`/docs assumed — not just new credentials, a different generation:
+
+- **Auth:** OAuth2 `client_id`/`client_secret` token exchange against a separate IDP host, not `FLW_SECRET_KEY` as a static Bearer token.
+- **Payouts:** pay by `recipient_id` (create a recipient via `POST /transfers/recipients`, then reference its `id` on the transfer) — this part actually **validated** this project's own schema design (`bank_accounts.provider_account_id`, docs/02's "tokenized by provider" comment), confirmed via live docs, not guessed.
+- **Collections:** no single "give me a checkout URL" call anymore — needs separate `Customer` → `PaymentMethod` → `Charge`/`Order` objects, and card payment methods need client-side tokenization before the server ever sees a request (bigger than an Edge Function; touches the mobile app).
+- **Webhooks:** `flutterwave-signature` header, HMAC-SHA256 over the raw body — not the `verif-hash` direct-compare header this project's docs originally described.
+
+Flagged back to the user rather than guessing at an unfamiliar, evolving vendor API (with real compliance/security weight — CLAUDE.md's "hold behind a flag" guidance for payout paths). **Decision: build the DB layer and Edge Functions now with the actual Flutterwave HTTP calls stubbed**, deferring `buy-credit` entirely and the _provider_ half of `withdraw`/`webhook-flutterwave` until the API-generation question gets a real answer.
+
+**What's actually built and verified against the real dev database:**
+
+- **Migration** (`20260912123949_webhook_events_and_withdrawal_completion.sql`): `webhook_events_seen` table (idempotency claim for inbound webhooks, per docs/06 §9 and CLAUDE.md rule #6) and `fn_complete_withdrawal` (a new `SECURITY DEFINER` function — pure status transition to `paid` once a transfer webhook confirms, idempotent the same way `fn_confirm_topup` is; not a balance mutation, since `fn_initiate_withdrawal` already debited up front).
+- **`packages/payments/provider.ts`:** `PayoutRequest` changed from `accountNumber`/`bankCode` to `recipientId` — the original Phase-0 interface never matched `bank_accounts`' own tokenization design (nothing had implemented against it yet, so fixed rather than left to drift).
+- **`packages/payments/flutterwave.ts`:** `verifyWebhook` is real (HMAC-SHA256, constant-time compare) — self-contained crypto, doesn't depend on which API generation ends up handling collections/payouts. `initiateCollection`/`initiatePayout` throw `PaymentProviderNotImplementedError` — deliberate, documented, not silently faked.
+- **`supabase/functions/withdraw/index.ts`:** auth → validates the bank account is verified _and_ provider-linked (checked before ever debiting, avoiding a pointless debit-then-reverse round trip) → `fn_initiate_withdrawal` → `initiatePayout()` → since that always throws right now, this always reaches `fn_fail_withdrawal` and returns 503 — meaning **every real test run exercises the compensating-transaction path for real**, not just proves it compiles. 12/12 assertions passing: the reversal itself (balance restored exactly, withdrawal marked `failed`, ledger reconciles) plus the full error-mapping chain (auth, validation, unverified/unlinked bank account, `kyc_required`, `below_minimum`).
+- **`supabase/functions/webhook-flutterwave/index.ts`:** signature verification → idempotency claim → routes `charge.completed` → `fn_confirm_topup`, `transfer.completed`/`transfer.failed` → `fn_complete_withdrawal`/`fn_fail_withdrawal`. 17/17 assertions passing: a real topup fixture (via `fn_buy_credit`, which isn't deferred — only its Edge Function wrapper is) confirmed end-to-end through a real signed webhook, replay-safety (identical event id doesn't double-credit), three distinct signature-rejection cases (missing, garbage, valid-signature-for-a-different-body), and both transfer outcomes against real withdrawal fixtures.
+- All test data cleaned up afterward, confirmed zero rows left — same standard as every prior PR. `deno check` and `prettier --check` clean on every new/changed file.
+
+**A second instance of the same test-hang bug Batch 1 found, this time in the pre-existing `wallet-functions.test.js`:** while re-running it to confirm no regressions from the new migration, it hung for several minutes after all 11 assertions had already logged and passed, no summary line, no error — identical symptom to the bug Batch 1 fixed in `send-message-function.test.js`, just never hit there before because nothing had re-run that specific file end-to-end in a while. Same fix applied (`process.exit()` at the end of `main()`), verified by rerunning to a clean, fast exit with the same 11/11 result. Not a regression from anything in this PR, just the first time this particular file's version of the bug got noticed.
+
+**Not done, deliberately:**
+
+- **`buy-credit`** — deferred pending the Flutterwave API-generation decision above. `fn_buy_credit` (the DB function) already exists and works; only the Edge Function wrapper that would call Flutterwave to create the actual charge is missing.
+- **The real Flutterwave HTTP calls** in `initiateCollection`/`initiatePayout` — stubbed, same reason.
+- **Bank-account _linking_** (the flow that would populate `bank_accounts.provider_account_id` for a real user) — not built, not scoped anywhere yet; every test here uses a fixture row inserted directly.
+- **Deploying anything** — local testing only, same as batch 1.
 
 ### Phase 1 item 6 — what was verified, not just written
 
@@ -141,7 +171,9 @@ Real dev credentials are configured locally in `.env` (root, server-only) and `a
 ## Open risks / known gaps
 
 - Service-role key rotation still pending (see hygiene note above).
-- `send-message` is the only Edge Function built so far (batch 1, PR open — see the dedicated section above); `buy-credit`/`webhook-flutterwave`/`withdraw` (batch 2) and `post-status`/`kyc-callback` remain unbuilt, and nothing has been deployed yet (`supabase functions deploy`) — local-only so far. The mobile app still can't buy credit or withdraw cash for real.
+- **`buy-credit` isn't built** — pending a decision on which Flutterwave API generation to target (see the batch 2 section above). This is the actual blocker on the mobile app being able to top up for real, more than "credentials aren't provisioned" (the original framing) — provisioning credentials for the _wrong_ API generation wouldn't unblock anything.
+- **`withdraw`/`webhook-flutterwave` are built but their real Flutterwave HTTP calls are stubbed**, same reason. Bank-account _linking_ (populating `bank_accounts.provider_account_id` for a real user) isn't built either.
+- `post-status`/`kyc-callback` remain unbuilt; nothing has been deployed yet (`supabase functions deploy`) — local-only so far.
 - This dev machine has no Docker/Podman, so `supabase functions serve` can't run locally — worked around this session with a standalone Deno CLI install (see the batch 1 section above). Worth fixing properly (install Docker) before it blocks something bigger than one function.
 - No content moderation, no KYC vendor integration, no age gate yet — all required before public launch per `docs/07-COMPLIANCE-LEGAL.md` §6, not required for continued dev-phase work.
 - `users_select_own_or_thread_partner` policy exposes the full `users` row (including phone number) to thread partners rather than a column-limited subset — documented v1 simplification, see the RLS migration's header comment.
@@ -149,9 +181,7 @@ Real dev credentials are configured locally in `.env` (root, server-only) and `a
 - `fn_run_auto_withdraw_sweep`'s "how long has this sat" check is a `wallets.updated_at` proxy, not exact per-credit aging (see item 5 section above).
 - `supabase/tests/wallet-functions.test.js` is a manual check (`npm run test:db`), not wired into CI — it runs real inserts/deletes against whatever `SUPABASE_DB_URL` points at. Automating it would need a dedicated ephemeral test database, not the shared dev project.
 
-## Immediate next step — Edge Functions batch 2 (scoped, not yet built)
-
-Batch 1 (`_shared/auth.ts` + `send-message`) is **done** — built, tested end-to-end against the real dev database, PR open (see the dedicated section above). This is the plan for the next session: go straight to Batch 2 below unless something has changed.
+## Batch 1 & 2 reference (historical — both done, see the dedicated sections above for current status)
 
 ### Why this was split into two batches
 
@@ -196,3 +226,9 @@ Flutterwave and KYC vendor credentials aren't provisioned (see Credentials statu
 - **`post-status`** — needs a new DB function (`fn_post_status` or similar) that doesn't exist yet; Phase 1's function set never included status uploads. Small, analogous to `fn_buy_credit` in complexity, but it's new DB work, not just an Edge Function wrapping something that already exists. Scope separately when Status (Phase 6) comes up.
 - **`kyc-callback`** — needs a KYC vendor (Smile Identity, Dojah, VerifyMe, etc.) that isn't chosen or provisioned yet. Fully deferred.
 - **Actually deploying** these functions (`supabase functions deploy`) — local `functions serve` testing first; deploy is a separate, later step once Batch 1 (and ideally Batch 2) are verified.
+
+## Immediate next step
+
+**The real blocker on money-in/money-out isn't code anymore, it's a decision:** which Flutterwave API generation to integrate against (see the batch 2 section above — this affects `buy-credit`, the stubbed halves of `withdraw`/`webhook-flutterwave`, _and_ what credentials actually need provisioning, since `.env`'s current `FLW_SECRET_KEY`/`FLW_PUBLIC_KEY`/`FLW_ENCRYPTION_KEY` shape matches neither confirmed model cleanly). Likely needs a real conversation with Flutterwave (sales/docs/support) to confirm what a new integration should target today, not something resolvable by reading more docs solo. Recommend that conversation happens before the next coding session picks a direction here — building further against either API generation without confirming risks real rework.
+
+**What's fully buildable in the meantime, no Flutterwave dependency at all:** `post-status` (needs a new `fn_post_status` DB function, small, same shape as `fn_buy_credit` — debit `topup_credit` for a status-upload cost, insert a `status_updates` row with `expires_at = now() + 24h`, per docs/03-ECONOMY-LEDGER.md §7). This is the most natural next piece of real progress that doesn't wait on the Flutterwave question. `kyc-callback` is next after that but needs a KYC vendor chosen first — a similar external-decision blocker to the Flutterwave one, worth flagging to the user rather than guessing a vendor.
