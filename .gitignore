@@ -53,6 +53,7 @@ apps/mobile/android/
 supabase/.branches/
 supabase/.temp/
 supabase/logs/
+.env.keys
 
 # --- Testing / coverage ---
 coverage/
