@@ -1,0 +1,6 @@
+# Formatting only. ESLint (v9 flat config) doesn't search parent
+# directories for eslint.config.js, so running it from the repo root
+# against apps/mobile files won't find that app's config — lint is
+# enforced authoritatively in CI via `turbo run lint`, which runs each
+# workspace's own lint script from the correct cwd. See CI workflow.
+npx lint-staged

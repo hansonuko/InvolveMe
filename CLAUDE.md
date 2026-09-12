@@ -35,12 +35,12 @@ This product custodies user funds and moves cash between strangers based on mess
 
 ## Where to look for X
 
-| Need | File |
-|---|---|
-| How much a message costs | `docs/03-ECONOMY-LEDGER.md` §Message Billing |
-| Wallet/table schema | `docs/02-DATA-MODEL.md` |
-| Edge Function request/response shapes | `docs/05-API-REALTIME-SPEC.md` |
-| Colors, spacing, motion curves | `docs/04-DESIGN-SYSTEM.md` |
-| "Is this exploitable?" | `docs/06-SECURITY-FRAUD-LOOPHOLES.md` |
-| Folder to put a new screen/module in | `docs/09-PROJECT-STRUCTURE.md` |
-| What phase we're in / what's next | `docs/08-BUILD-PHASES-ROADMAP.md` |
+| Need                                  | File                                         |
+| ------------------------------------- | -------------------------------------------- |
+| How much a message costs              | `docs/03-ECONOMY-LEDGER.md` §Message Billing |
+| Wallet/table schema                   | `docs/02-DATA-MODEL.md`                      |
+| Edge Function request/response shapes | `docs/05-API-REALTIME-SPEC.md`               |
+| Colors, spacing, motion curves        | `docs/04-DESIGN-SYSTEM.md`                   |
+| "Is this exploitable?"                | `docs/06-SECURITY-FRAUD-LOOPHOLES.md`        |
+| Folder to put a new screen/module in  | `docs/09-PROJECT-STRUCTURE.md`               |
+| What phase we're in / what's next     | `docs/08-BUILD-PHASES-ROADMAP.md`            |
