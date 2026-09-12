@@ -4,7 +4,7 @@
 
 InvolveMe is a cross-platform mobile chat app modeled on WhatsApp's UX (1:1 chat, status/stories, groups, calls) with one structural difference: conversations are **pay-per-message**. Anyone who wants to chat with someone else buys **Chat Credit**, and the person they're messaging earns real cash for their time as they reply. InvolveMe takes a cut on both the top-up and the earning side.
 
-This repo's `docs/` folder is the full engineering blueprint. Read it in this order:
+This repo's `docs/` folder is the full engineering blueprint. **Start with [`docs/00-SESSION-HANDOFF.md`](docs/00-SESSION-HANDOFF.md)** — it's the living "what's actually true right now" snapshot; the rest of the docs describe the target design. Then read in this order:
 
 | #   | Doc                                                                          | Covers                                                           |
 | --- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
