@@ -15,11 +15,31 @@ Living doc. Read this first in any new session before touching the repo — it's
 | #1             | Phase 0: monorepo scaffold, design tokens, nav shell, phone/OTP auth wiring | Merged              |
 | #2             | Supabase CLI linked to the real dev project                                 | Merged              |
 | #3             | Phase 1 item 1: full ledger/wallet schema, applied to the dev DB            | Merged              |
-| (this session) | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions | Open PR — see below |
+| #4             | Phase 1 items 2+3: RLS policies + `SECURITY DEFINER` money-moving functions | Merged              |
+| (this session) | Phase 1 item 5: scheduled jobs (pg_cron) + frozen-wallet enforcement        | Open PR — see below |
 
-**The core money path now works end-to-end against the real dev database.** A real two-user scenario was run and verified, not just "it compiled": top up → send message → reply → escrow release → auto-conversion to cash → withdrawal → compensating refund on a failed payout. This is the first point in the project where that's true.
+**The core money path works end-to-end against the real dev database, including its safety nets.** Escrow expiry, auto-withdrawal, and ledger reconciliation all run on a schedule now, and — found and fixed this session — a frozen wallet actually stops money movement instead of just sitting there flagged.
 
-Still missing before the _app_ can drive any of this: the Edge Functions that actually call these RPCs (nothing calls `fn_send_message` etc. yet except the verification scripts), real Flutterwave integration, KYC/bank-linking flows, and the cron wiring for the two sweep jobs + reconciliation check (item 5). The functions those crons need (`fn_refund_expired_escrows`) already exist — only the schedule is missing.
+Still missing before the _app_ can drive any of this: the Edge Functions that actually call these RPCs (nothing calls `fn_send_message` etc. yet except the verification scripts), real Flutterwave integration, and KYC/bank-linking flows.
+
+### Phase 1 item 5 — what was verified, not just written
+
+Ran against the real dev database (fresh test users each time, cleaned up afterward, confirmed zero rows left):
+
+- `pg_cron` enabled successfully on the dev project; all three jobs registered and confirmed via `cron.job` with the right schedules: `escrow-expiry-sweep` (`*/15 * * * *`), `auto-withdraw-sweep` (`0 * * * *`), `reconciliation-check` (`5 * * * *`)
+- `fn_run_reconciliation_check`: a deliberately corrupted wallet (balance set directly, bypassing the ledger — the exact bug class this exists to catch) is detected, frozen, and logged to `fraud_signals` with severity `high`; a clean wallet reports zero mismatches
+- `fn_run_auto_withdraw_sweep`: a below-minimum balance is correctly left alone before the 7-day force window, then correctly swept once past it; a wallet with no verified bank account is excluded entirely (held, not force-paid); a mid-sweep failure (KYC dropped after aging) is caught, logged to `fraud_signals`, and doesn't crash the sweep for other wallets
+- **Frozen-wallet enforcement, added this session after noticing it didn't exist:** `fn_send_message` now rejects a frozen payer wallet, `fn_release_escrow` now rejects a frozen payee wallet (and the whole `fn_send_message` call rolls back — the payer isn't charged for a reply that fails to release), `fn_confirm_topup` and `fn_initiate_withdrawal` reject frozen wallets too; `fn_refund_expired_escrows` skips (not aborts) a frozen payer's escrow so the bulk sweep still processes everyone else
+
+### The gap that made item 5 necessary to extend beyond its original scope
+
+`fn_run_reconciliation_check` sets `wallets.is_frozen` on a mismatch, but nothing anywhere actually _checked_ that flag — freezing a wallet did nothing to stop further activity on it, which defeats the point per `docs/02-DATA-MODEL.md` §4. Added `is_frozen` guards to every wallet lock in every money-moving function (`20260912082046_guard_frozen_wallets.sql`, `CREATE OR REPLACE` — no function signatures changed, so grants/permissions carried over automatically). Not something the roadmap called out as its own item; found while writing this doc's summary of item 5, on the theory that it belongs with the reconciliation check rather than as a separate future fix.
+
+### Two things intentionally left as documented gaps in item 5 (not silent, not blocking)
+
+- **"Notify" half of "hold and notify" isn't implemented.** A user without a verified bank account is correctly excluded from the auto-sweep, but nothing pushes them a reminder to add one — that needs an Edge Function + push service that doesn't exist yet.
+- **Reconciliation "pages on-call" isn't implemented either** — a mismatch freezes the wallet and logs a high-severity `fraud_signals` row, which is the detectable/actionable part, but nothing pages anyone; that needs an external alerting integration.
+- **The auto-sweep's "how long has this sat unwithdrawn" check uses `wallets.updated_at` as a proxy**, which is exact only when withdrawals always take the full balance (which `fn_initiate_withdrawal` defaults to). A partial withdrawal would reset the clock on older money still in the same wallet. Documented in the migration; exact per-credit aging would need dedicated tracking this migration doesn't add.
 
 ### Phase 1 items 2+3 — what was verified, not just written
 
@@ -83,7 +103,9 @@ Real dev credentials are configured locally in `.env` (root, server-only) and `a
 - No content moderation, no KYC vendor integration, no age gate yet — all required before public launch per `docs/07-COMPLIANCE-LEGAL.md` §6, not required for continued dev-phase work.
 - Concurrency tests (item 6) haven't been written — the functions rely on `SELECT ... FOR UPDATE` row locks for correctness under concurrent calls, which hasn't been load-tested, only reasoned about.
 - `users_select_own_or_thread_partner` policy exposes the full `users` row (including phone number) to thread partners rather than a column-limited subset — documented v1 simplification, see the RLS migration's header comment.
+- The three "notify/page a human" halves of item 5's jobs (bank-account reminder push, on-call paging for reconciliation mismatches) aren't implemented — the detection/enforcement side is real, the human-notification side needs infrastructure that doesn't exist yet (see item 5 section above).
+- `fn_run_auto_withdraw_sweep`'s "how long has this sat" check is a `wallets.updated_at` proxy, not exact per-credit aging (see item 5 section above).
 
 ## Immediate next step
 
-Phase 1 items 2+3 are done and verified (see above), sitting in an open PR awaiting merge. Next up: item 5 (wire `fn_refund_expired_escrows`, an auto-withdrawal sweep, and the ledger-vs-balance reconciliation check to `pg_cron`) and item 6 (concurrency tests) — or, arguably higher-value next, the actual Edge Functions (`send-message`, `buy-credit`, `withdraw`) that let the mobile app call any of this for real. See `docs/08-BUILD-PHASES-ROADMAP.md` Phase 1 and Phase 2.
+Phase 1 item 5 is done and verified (see above), sitting in an open PR awaiting merge. Once that's in, Phase 1's remaining item is item 6 (concurrency tests — load-test the `FOR UPDATE` locking under real concurrent calls, not just reason about it). Arguably higher product value right now, though: the actual Edge Functions (`send-message`, `buy-credit`, `withdraw`, the Flutterwave webhook handler) that let the mobile app call any of this for real — everything built in Phase 1 so far is inert from the app's perspective until something calls it. See `docs/08-BUILD-PHASES-ROADMAP.md` Phase 1 and Phase 2.
