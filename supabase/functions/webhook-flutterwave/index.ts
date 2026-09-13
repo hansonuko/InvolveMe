@@ -11,8 +11,9 @@
 // theoretical warning: the first deploy used the default
 // `supabase functions deploy` batch call with no per-function flags, which
 // left Supabase's own platform-level JWT gateway enabled for this function.
-// Flutterwave's real webhook requests (which carry a `flutterwave-signature`
-// header, never a Supabase auth header) were rejected with 401
+// Flutterwave's real webhook requests (which never carry a Supabase auth
+// header, only a `verif-hash` signature header — see below) were rejected
+// with 401
 // `UNAUTHORIZED_NO_AUTH_HEADER` by the gateway itself, before this file's
 // own code ever ran — meaning every real webhook silently failed from the
 // moment this function was first deployed, and `webhook_events_seen` stayed
@@ -31,38 +32,56 @@
 // the gateway. Fixed there; watch for the same unguarded-global pattern in
 // any future Node-compat code added to this file or its imports.
 //
-// Routes two event families to the DB functions that already handle their
-// idempotency: `charge.completed` → fn_confirm_topup (buy-credit
-// confirmation, only when data.status is 'succeeded' — this event fires for
-// every terminal charge state, not just successful ones, per
-// developer.flutterwave.com/reference/charges_post's status list), and
-// `transfer.disburse`/`transfer.reversal` → fn_complete_withdrawal /
-// fn_fail_withdrawal (withdrawal completion — see the batch-2 migration's
-// header comment for why fn_complete_withdrawal exists). Both `reference`
-// fields are assumed to equal the corresponding `topups.id` /
-// `withdrawals.id` — the convention this project's own code sets when
-// creating those objects at Flutterwave.
+// RE-DIAGNOSED AND CORRECTED AGAIN, same day (2026-09-13), after the
+// credit-not-landing bug recurred with both fixes above already deployed
+// and passing: this handler's own field-name assumptions were wrong, on
+// top of `verifyWebhook` checking the wrong header entirely (see that
+// function's header comment for the full story and the live ground-truth
+// check that proved it — two real same-day ₦100 payments stuck pending
+// with `webhook_events_seen` still completely empty). Fetched
+// developer.flutterwave.com/docs/webhooks and .../reference/webhooks fresh
+// this time, twice independently, rather than trusting the previous
+// session's "confirmed live" claim at face value:
 //
-// Corrected this session (see docs/00-SESSION-HANDOFF.md's session-3
-// section for the live research): the event names were originally
-// `transfer.completed`/`transfer.failed`, a v3-era guess never confirmed
-// against v4's actual docs — the real names are `transfer.disburse` and
-// `transfer.reversal`, per developer.flutterwave.com/reference (API
-// overview's webhook-events list). Still not confirmed against a live
-// transfer's actual payload shape (no real payout has been triggered from
-// this app yet) — an unmapped/wrong event type is acknowledged with 200 and
-// no DB action either way (see the bottom of this handler), so a residual
-// naming mismatch fails safe rather than crashing or double-processing.
+//   - The envelope is `{ event, data }`, not `{ type, data }`.
+//   - A charge's merchant reference is `data.tx_ref`, and its terminal
+//     status is lowercase `'successful'` / `'failed'` — not
+//     `data.reference` / `'succeeded'`.
+//   - A transfer's merchant reference IS `data.reference` (transfers and
+//     charges don't share a field-naming convention) and its status is
+//     UPPERCASE `'SUCCESSFUL'` / `'FAILED'`.
+//   - There is exactly one transfer completion event, `transfer.completed`
+//     — not two separate `transfer.disburse`/`transfer.reversal` events as
+//     previously guessed (that guess was never confirmed against a real
+//     transfer payload, since no real payout has ever disbursed from this
+//     app; flagged as unconfirmed in the docs at the time, and it turned
+//     out wrong). Outcome is read from `data.status`, not the event name.
+//
+// Both `reference`/`tx_ref` fields are assumed to equal the corresponding
+// `topups.id` / `withdrawals.id` — the convention this project's own code
+// sets when creating those objects at Flutterwave (buy-credit passes the
+// topup id as `reference` when creating the virtual account; withdraw
+// passes the withdrawal id as `reference` when creating the transfer).
+//
+// An unmapped/unrecognized event or status is acknowledged with 200 and no
+// DB action (see the bottom of this handler) — fails safe rather than
+// crashing or guessing, but see verifyWebhook's logging: an unrecognized
+// *shape* now logs loudly so a future mismatch is visible in
+// `supabase functions logs webhook-flutterwave` within minutes, not
+// silently invisible for weeks the way this exact bug was.
 
 import { serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
 interface FlutterwaveWebhookPayload {
-  id?: string;
-  type?: string;
+  event?: string;
   data?: {
     id?: string | number;
+    /** Charges: merchant reference. */
+    tx_ref?: string;
+    /** Transfers: merchant reference (charges and transfers don't share a
+     * field name for this — confirmed against real doc examples of both). */
     reference?: string;
     status?: string;
   };
@@ -117,7 +136,10 @@ Deno.serve(async (req) => {
   }
 
   const rawBody = await req.text();
-  const signature = req.headers.get('flutterwave-signature');
+  // 'verif-hash', not 'flutterwave-signature' — see verifyWebhook's header
+  // comment. Header names are case-insensitive per the Headers spec, so
+  // Deno normalizes this regardless of how Flutterwave actually cases it.
+  const signature = req.headers.get('verif-hash');
 
   const provider = createFlutterwaveProvider(loadFlutterwaveConfig());
   const verification = provider.verifyWebhook(rawBody, signature);
@@ -136,7 +158,7 @@ Deno.serve(async (req) => {
 
   let isFirstDelivery: boolean;
   try {
-    isFirstDelivery = await claimWebhookEvent(db, eventId, payload.type);
+    isFirstDelivery = await claimWebhookEvent(db, eventId, payload.event);
   } catch {
     return errorResponse(500, 'internal_error', 'Could not record webhook event.');
   }
@@ -146,14 +168,19 @@ Deno.serve(async (req) => {
     return json(200, { status: 'already_processed' });
   }
 
-  const type = payload.type ?? '';
-  const reference = payload.data?.reference;
+  const event = payload.event ?? '';
   const providerRef = payload.data?.id != null ? String(payload.data.id) : '';
-  const status = payload.data?.status;
+  // Case-normalized once here rather than at every comparison site below —
+  // charges document lowercase status strings, transfers uppercase ones
+  // (both confirmed against real doc examples), and a defensive lowercase
+  // compare means a future casing surprise from Flutterwave fails safe
+  // (falls to the unmapped/no-op branch) instead of silently matching or
+  // silently missing.
+  const status = (payload.data?.status ?? '').toLowerCase();
 
-  if (type === 'charge.completed' && reference && status === 'succeeded') {
+  if (event === 'charge.completed' && payload.data?.tx_ref && status === 'successful') {
     const { error } = await db.rpc('fn_confirm_topup', {
-      p_topup_id: reference,
+      p_topup_id: payload.data.tx_ref,
       p_provider_ref: providerRef,
     });
     if (error) {
@@ -161,36 +188,49 @@ Deno.serve(async (req) => {
       // wouldn't resolve itself, and Flutterwave still needs its 200.
       console.error('webhook-flutterwave: fn_confirm_topup failed:', error.message);
     }
-  } else if (type === 'charge.completed' && reference) {
-    // completed but not succeeded (failed/voided) — mark the topup failed
+  } else if (event === 'charge.completed' && payload.data?.tx_ref) {
+    // completed but not successful (failed/voided) — mark the topup failed
     // directly. No balance was ever touched for a pending topup (per
     // fn_buy_credit's own header comment), so this is a plain status
     // update, not something that needs a SECURITY DEFINER function.
     const { error } = await db
       .from('topups')
       .update({ status: 'failed' })
-      .eq('id', reference)
+      .eq('id', payload.data.tx_ref)
       .eq('status', 'pending');
     if (error) {
       console.error('webhook-flutterwave: marking topup failed errored:', error.message);
     }
-  } else if (type === 'transfer.disburse' && reference) {
+  } else if (event === 'transfer.completed' && payload.data?.reference && status === 'successful') {
     const { error } = await db.rpc('fn_complete_withdrawal', {
-      p_withdrawal_id: reference,
+      p_withdrawal_id: payload.data.reference,
       p_provider_ref: providerRef,
     });
     if (error) {
       console.error('webhook-flutterwave: fn_complete_withdrawal failed:', error.message);
     }
-  } else if (type === 'transfer.reversal' && reference) {
-    const { error } = await db.rpc('fn_fail_withdrawal', { p_withdrawal_id: reference });
+  } else if (event === 'transfer.completed' && payload.data?.reference) {
+    const { error } = await db.rpc('fn_fail_withdrawal', {
+      p_withdrawal_id: payload.data.reference,
+    });
     if (error) {
       console.error('webhook-flutterwave: fn_fail_withdrawal failed:', error.message);
     }
+  } else {
+    // Every other event type, or a recognized event whose payload is
+    // missing the reference field it should have: acknowledged, no DB
+    // action. Logged (not just silently ack'd) specifically for the
+    // "recognized event, missing field" case — that combination is exactly
+    // the shape of bug this incident already had once (a real event
+    // arriving in a shape the handler didn't expect) and should be visible
+    // in logs immediately if it happens again, not rediscovered by a user
+    // reporting missing credit weeks later.
+    if (event === 'charge.completed' || event === 'transfer.completed') {
+      console.error(
+        `webhook-flutterwave: recognized event '${event}' but missing expected reference field — payload.data=${JSON.stringify(payload.data)}`,
+      );
+    }
   }
-  // Every other event type (order.authorization, refund.completed,
-  // unrecognized future types, etc.): acknowledged, no DB action — not a
-  // failure, just nothing to do yet at this end.
 
   return json(200, { status: 'processed' });
 });

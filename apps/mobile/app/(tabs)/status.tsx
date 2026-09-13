@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { FlatList, TextInput, View } from 'react-native';
 
+import { AppHeader } from '@/components/ui/AppHeader';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
@@ -27,11 +28,9 @@ export default function StatusScreen() {
 
   return (
     <Screen>
-      <Text variant="display" style={{ marginBottom: spacing.lg }}>
-        Status
-      </Text>
+      <AppHeader title="Status" />
 
-      <View style={{ gap: spacing.sm, marginBottom: spacing.xl }}>
+      <View style={{ gap: spacing.sm, marginTop: spacing.md, marginBottom: spacing.xl }}>
         <TextInput
           value={caption}
           onChangeText={setCaption}

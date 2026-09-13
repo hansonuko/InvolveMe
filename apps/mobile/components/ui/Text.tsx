@@ -7,12 +7,23 @@ type Variant = keyof typeof typography;
 
 interface Props extends TextProps {
   variant?: Variant;
-  color?: 'primary' | 'secondary' | 'brand' | 'success' | 'danger' | 'warning' | 'credit';
+  color?:
+    | 'primary'
+    | 'secondary'
+    | 'tertiary'
+    | 'inverse'
+    | 'brand'
+    | 'success'
+    | 'danger'
+    | 'warning'
+    | 'credit';
 }
 
 const colorTokenMap: Record<NonNullable<Props['color']>, string> = {
   primary: 'textPrimary',
   secondary: 'textSecondary',
+  tertiary: 'textTertiary',
+  inverse: 'textInverse',
   brand: 'brandPrimary',
   success: 'success',
   danger: 'danger',

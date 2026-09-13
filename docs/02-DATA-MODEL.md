@@ -116,6 +116,19 @@ Written only by `fn_transfer_credit` (`SECURITY DEFINER`). The sender's `topup_c
 
 | id, user_id, media_url, caption, credits_charged, expires_at (24h), created_at |
 
+### Group threads — scoping (billing model decided, held behind Phase 5 — not built)
+
+Companion to `docs/03-ECONOMY-LEDGER.md` §10's billing model, decided 2026-09-13. **No migration exists for any of this yet** — sketched here so the eventual migration doesn't have to re-derive the shape, not as a schema that's live. Per §10, this feature does not go live for real users before Phase 5's fraud infra exists, even once built.
+
+Proposed as **new tables, not an extension of `threads`/`messages`**: those two are 1:1-shaped throughout (`participant_a`/`participant_b`, escrow-per-message, `fn_release_escrow` assuming exactly one payee) — forking that logic with `if is_group` branches everywhere would put group chat's much-less-tested code path inside the same functions the real money-moving 1:1 path depends on. A parallel schema keeps the blast radius of a group-chat bug contained to group-chat code.
+
+- `group_threads`: `id, name, avatar_url, created_by, created_at`. `created_by` is the fixed group owner and the sole earner under §10's model — no ownership-transfer path is scoped yet, deliberately, since transferring who earns from a group is its own small design question (does the old owner's still-`pending` earnings follow them or the group?) not worth answering before the base model is even built.
+- `group_members`: `group_thread_id, user_id, role (admin | member), joined_at` — composite PK on `(group_thread_id, user_id)`.
+- `group_messages`: `id, group_thread_id, sender_id, body, word_count, credits_charged, owner_earning_credits, platform_take_credits, created_at` — no `status`/escrow columns (§10's model settles immediately, no pending state); `owner_earning_credits`/`platform_take_credits` both `0` on a self-post (sender == `created_by`), per §10's self-earning block.
+- RLS: `SELECT` on all three gated to `group_members` rows matching `auth.uid()`, same posture as `threads`/`messages` today; no client writes, same `SECURITY DEFINER`-only posture as every other money-touching table.
+
+Still unresolved, blocking any migration: a group size cap and/or a per-message or per-day cap on `owner_earning_credits` (§10 flags both as open), whether creating a group costs anything (a new `pricing_config` key if so — nothing hardcoded, per CLAUDE.md rule #9), and — the actual blocker — Phase 5's collusion-detection/velocity-limit infra needing to exist first per §10's gating decision.
+
 ## 2. Row Level Security posture
 
 - `users`: `SELECT` own row + rows of anyone you share a thread with (limited columns via a view); `UPDATE` own row only, excluding `kyc_tier`/`is_suspended` (service-role only).
