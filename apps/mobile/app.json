@@ -46,6 +46,12 @@
         "projectId": "82b1fa24-53c5-4d32-874b-7d3ac93d4410"
       }
     },
-    "owner": "hansonuko"
+    "owner": "hansonuko",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/82b1fa24-53c5-4d32-874b-7d3ac93d4410"
+    }
   }
 }
