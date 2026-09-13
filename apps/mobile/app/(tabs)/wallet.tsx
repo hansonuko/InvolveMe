@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -21,13 +22,16 @@ import { useSession } from '@/lib/hooks/useSession';
 import { useKycTier } from '@/lib/queries/kyc';
 import { toE164NigerianPhone } from '@/lib/phone';
 import {
+  ledgerEntryLabel,
   useBuyCredit,
+  useLedgerEntries,
   useLinkedBankAccount,
   useTopupStatus,
   useTransferCredit,
   useWallets,
   useWithdraw,
   walletBalance,
+  type LedgerEntry,
 } from '@/lib/queries/wallet';
 import { useTheme } from '@/theme';
 
@@ -525,11 +529,90 @@ function TransferCreditModal({ visible, onClose }: { visible: boolean; onClose: 
   );
 }
 
+/** Same "same-day time, else short date" convention chats.tsx's
+ * ThreadRow uses — kept local rather than shared, matching that file's
+ * own precedent for a screen-specific formatter this small. */
+function formatEntryTimestamp(iso: string) {
+  const date = new Date(iso);
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return isToday
+    ? date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** `withdrawable_cash` is stored in kobo, the other two wallets in whole
+ * credits — the unit shown depends entirely on which wallet the row
+ * landed on, never guessed from the reason string. Converting to ₦ only
+ * at this presentation layer, per CLAUDE.md rule #2. */
+function formatEntryAmount(entry: LedgerEntry): string {
+  const sign = entry.amount > 0 ? '+' : entry.amount < 0 ? '-' : '';
+  const magnitude = Math.abs(entry.amount);
+  return entry.wallet_kind === 'withdrawable_cash'
+    ? `${sign}₦${(magnitude / 100).toLocaleString()}`
+    : `${sign}${magnitude.toLocaleString()} cr`;
+}
+
+function TransactionRow({ entry }: { entry: LedgerEntry }) {
+  const { colors, spacing } = useTheme();
+  return (
+    <View
+      style={[
+        styles.transactionRow,
+        { paddingVertical: spacing.sm, borderBottomColor: colors.borderSubtle },
+      ]}
+    >
+      <View style={{ flex: 1 }}>
+        <Text variant="bodyMedium">{ledgerEntryLabel(entry.reason)}</Text>
+        <Text variant="caption" color="tertiary">
+          {formatEntryTimestamp(entry.created_at)}
+        </Text>
+      </View>
+      <Text variant="bodyMedium" color={entry.amount >= 0 ? 'success' : 'primary'}>
+        {formatEntryAmount(entry)}
+      </Text>
+    </View>
+  );
+}
+
+/** Phase 6 (docs/08-BUILD-PHASES-ROADMAP.md): "full transaction history
+ * rendered from ledger_entries, user-facing labels mapped from reason."
+ * Plain mapped Views inside the screen's existing ScrollView, not a
+ * nested FlatList — consistent with BalanceCard etc. above, and fine at
+ * the 50-row cap useLedgerEntries defaults to. */
+function TransactionHistory({ userId }: { userId: string | undefined }) {
+  const { spacing } = useTheme();
+  const { data: entries, isLoading } = useLedgerEntries(userId);
+
+  return (
+    <View style={{ marginTop: spacing.xl }}>
+      <Text variant="title">Transaction history</Text>
+      <View style={{ marginTop: spacing.sm }}>
+        {isLoading ? (
+          <Text variant="body" color="tertiary">
+            Loading…
+          </Text>
+        ) : !entries?.length ? (
+          <Text variant="body" color="tertiary">
+            No activity yet.
+          </Text>
+        ) : (
+          entries.map((entry) => <TransactionRow key={entry.id} entry={entry} />)
+        )}
+      </View>
+    </View>
+  );
+}
+
 export default function WalletScreen() {
   const { spacing } = useTheme();
   const router = useRouter();
   const { session } = useSession();
   const userId = session?.user.id;
+  const queryClient = useQueryClient();
 
   const { data: wallets, isLoading, refetch: refetchWallets, isRefetching } = useWallets(userId);
   const { data: bankAccount, refetch: refetchBankAccount } = useLinkedBankAccount(userId);
@@ -548,6 +631,7 @@ export default function WalletScreen() {
     void refetchWallets();
     void refetchBankAccount();
     void refetchKycTier();
+    void queryClient.invalidateQueries({ queryKey: ['ledgerEntries', userId] });
   };
 
   return (
@@ -618,6 +702,8 @@ export default function WalletScreen() {
             )}
           </View>
         ) : null}
+
+        <TransactionHistory userId={userId} />
       </ScrollView>
 
       <BuyCreditModal visible={buyModalVisible} onClose={() => setBuyModalVisible(false)} />
@@ -645,4 +731,10 @@ export default function WalletScreen() {
 const styles = StyleSheet.create({
   card: { borderWidth: 1 },
   input: { borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16 },
+  transactionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+  },
 });

@@ -60,6 +60,114 @@ export function walletBalance(wallets: Wallet[] | undefined, kind: Wallet['kind'
   return wallets?.find((w) => w.kind === kind)?.balance ?? 0;
 }
 
+export interface LedgerEntry {
+  id: string;
+  amount: number;
+  reason: string;
+  /** Which of the user's three wallets this line landed on — decides both
+   * the unit (credits vs. kobo) and the sign convention shown, since a
+   * conversion leg (e.g. `earnings_conversion`) produces one row per
+   * wallet it touches, not one merged row. */
+  wallet_kind: Wallet['kind'];
+  created_at: string;
+}
+
+/** User-facing labels for every `ledger_entries.reason` a user could ever
+ * see on their *own* wallets (per docs/03-ECONOMY-LEDGER.md's ledger-reason
+ * list). Reasons that only ever land on the platform's own wallet
+ * (`escrow_release_platform_cut`, `topup_platform_fee`,
+ * `credit_transfer_platform_cut`, `group_message_platform_cut`,
+ * `withdrawal_platform_fee` — the last one declared but never actually
+ * inserted, see the security-definer-functions migration's own comment)
+ * are deliberately omitted: RLS already means a user's own query can never
+ * return one, so there's nothing to label. `escrow_hold` is the same
+ * story for a different reason — that ledger reason is declared but
+ * deliberately never inserted (the `escrows` table is itself the record
+ * of a hold; see that migration's "v1 simplification" comment) — kept out
+ * of this map for the same reason. A reason not in this map falls back to
+ * a humanized version of the raw value rather than rendering blank. */
+const LEDGER_ENTRY_LABELS: Record<string, string> = {
+  topup_purchase: 'Credit purchased',
+  message_debit: 'Message sent',
+  escrow_release_earning: 'Earned from a reply',
+  escrow_refund_unanswered: 'Refunded — no reply',
+  earnings_conversion: 'Converted to cash',
+  withdrawal_payout: 'Withdrawal sent',
+  withdrawal_refund_failed: 'Withdrawal reversed',
+  status_upload_debit: 'Status posted',
+  manual_adjustment: 'Adjustment',
+  credit_transfer_sent: 'Sent credit',
+  credit_transfer_received: 'Received credit',
+  credit_transfer_conversion: 'Converted to cash',
+  group_message_debit: 'Group message sent',
+  group_message_owner_earning: 'Group earning',
+};
+
+export function ledgerEntryLabel(reason: string): string {
+  return LEDGER_ENTRY_LABELS[reason] ?? reason.replace(/_/g, ' ');
+}
+
+/** The current user's most recent ledger activity across all three
+ * wallets, newest first — rendered straight from `ledger_entries` per
+ * docs/04-DESIGN-SYSTEM.md §5's wallet-tab spec ("transaction history
+ * ...rendered straight from ledger_entries, user-facing labels mapped
+ * from reason"), not a separately-computed summary. No explicit
+ * `.eq('user_id', ...)` filter — `ledger_entries` has no direct user_id
+ * column (only `wallet_id`), and `ledger_entries_select_own`'s RLS policy
+ * (a join through `wallets.user_id = auth.uid()`) is what actually scopes
+ * this to the caller's own rows; `userId` here only gates/keys the query. */
+export function useLedgerEntries(userId: string | undefined, limit = 50) {
+  const queryClient = useQueryClient();
+  const queryKey = ['ledgerEntries', userId];
+
+  const query = useQuery({
+    queryKey,
+    enabled: !!userId,
+    queryFn: async (): Promise<LedgerEntry[]> => {
+      const { data, error } = await supabase
+        .from('ledger_entries')
+        .select('id, amount, reason, created_at, wallets(kind)')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return (data ?? []).map((row) => ({
+        id: row.id,
+        amount: row.amount,
+        reason: row.reason,
+        // Embedded one-to-one via the wallet_id FK — always exactly one row.
+        wallet_kind: (row.wallets as unknown as { kind: Wallet['kind'] }).kind,
+        created_at: row.created_at,
+      }));
+    },
+  });
+
+  // ledger_entries itself isn't on the supabase_realtime publication (only
+  // messages/wallets/topups are) — every ledger entry has a corresponding
+  // wallets.balance change, so piggybacking on useWallets' own realtime
+  // channel (same table/filter) keeps this live without adding a second
+  // table to the publication for one more subscriber.
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel(`ledger-entries-via-wallets:${userId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` },
+        () => queryClient.invalidateQueries({ queryKey }),
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  return query;
+}
+
 export interface LinkedBankAccount {
   id: string;
   bank_name: string;
