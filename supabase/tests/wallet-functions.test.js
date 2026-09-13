@@ -78,6 +78,10 @@ async function deleteTestUser(admin, id) {
   await admin.query('delete from public.withdrawals where user_id = $1', [id]);
   await admin.query('delete from public.bank_accounts where user_id = $1', [id]);
   await admin.query('delete from public.topups where user_id = $1', [id]);
+  await admin.query(
+    'delete from public.credit_transfers where sender_id = $1 or recipient_id = $1',
+    [id],
+  );
   await admin.query('delete from public.fraud_signals where user_id = $1', [id]);
   await admin.query('delete from auth.users where id = $1', [id]);
 }
@@ -418,6 +422,162 @@ async function testLedgerConservationUnderConcurrentLoad(admin) {
   }
 }
 
+// =============================================================================
+// Test 5: fn_transfer_credit splits correctly (platform_transfer_take_bps)
+// and every wallet it touches — sender's topup_credit, recipient's
+// earnings_pending pass-through, recipient's withdrawable_cash, and the
+// platform's earnings-cut wallet — reconciles against its ledger.
+// =============================================================================
+
+async function testTransferSplitAndLedgerConservation(admin) {
+  const A = await createTestUser(admin);
+  const B = await createTestUser(admin);
+
+  const aWallet = await walletRow(admin, A, 'topup_credit');
+  await admin.query(
+    `insert into public.ledger_entries (wallet_id, amount, reason) values ($1, 100, 'manual_adjustment')`,
+    [aWallet.id],
+  );
+
+  const transferRes = await admin.query('select public.fn_transfer_credit($1, $2, $3, $4) as id', [
+    A,
+    B,
+    100,
+    'test transfer',
+  ]);
+  const transferId = transferRes.rows[0].id;
+
+  const transferRow = (
+    await admin.query('select * from public.credit_transfers where id = $1', [transferId])
+  ).rows[0];
+
+  // Default platform_transfer_take_bps seed is 2000 (20%): 100 credits in ->
+  // 20 platform cut, 80 to the recipient. Asserted against the config value
+  // actually in the DB, not the seed default, so this doesn't silently
+  // start lying if ops retunes the rate later.
+  const takeBps = Number(
+    (
+      await admin.query(
+        "select value from public.pricing_config where key = 'platform_transfer_take_bps'",
+      )
+    ).rows[0].value,
+  );
+  const expectedCut = Math.round((100 * takeBps) / 10000);
+  const expectedPayee = 100 - expectedCut;
+
+  log(
+    'credit_transfers row records the correct split',
+    Number(transferRow.credits_sent) === 100 &&
+      Number(transferRow.platform_cut_credits) === expectedCut &&
+      Number(transferRow.credits_received) === expectedPayee,
+    JSON.stringify(transferRow),
+  );
+
+  const aWalletAfter = await walletRow(admin, A, 'topup_credit');
+  log(
+    "sender's topup_credit is debited by the full amount sent, not the post-cut amount",
+    Number(aWalletAfter.balance) === 0,
+    `balance=${aWalletAfter.balance}`,
+  );
+
+  const bEarnings = await walletRow(admin, B, 'earnings_pending');
+  log(
+    "recipient's earnings_pending nets to zero (credit then immediate conversion, same shape as an escrow release)",
+    Number(bEarnings.balance) === 0,
+    `balance=${bEarnings.balance}`,
+  );
+
+  const bCash = await walletRow(admin, B, 'withdrawable_cash');
+  const unitKobo = Number(
+    (await admin.query("select value from public.pricing_config where key = 'credit_unit_kobo'"))
+      .rows[0].value,
+  );
+  log(
+    'the post-cut amount lands in withdrawable_cash at the fixed credit_unit_kobo rate',
+    Number(bCash.balance) === expectedPayee * unitKobo,
+    `balance=${bCash.balance} expected=${expectedPayee * unitKobo}`,
+  );
+
+  for (const [label, wallet] of [
+    ['sender topup_credit', aWalletAfter],
+    ['recipient earnings_pending', bEarnings],
+    ['recipient withdrawable_cash', bCash],
+  ]) {
+    const sum = await ledgerSum(admin, wallet.id);
+    log(
+      `ledger conservation holds on ${label}`,
+      sum === Number(wallet.balance),
+      `ledger_sum=${sum} balance=${wallet.balance}`,
+    );
+  }
+
+  await resetPlatformWallets(admin);
+  await deleteTestUser(admin, A);
+  await deleteTestUser(admin, B);
+}
+
+// =============================================================================
+// Test 6: two simultaneous fn_transfer_credit calls against a sender wallet
+// funded for exactly one transfer must not both succeed.
+// =============================================================================
+
+async function testConcurrentTransferPreventsDoubleSpend(admin) {
+  const A = await createTestUser(admin);
+  const B = await createTestUser(admin);
+
+  const aWallet = await walletRow(admin, A, 'topup_credit');
+  await admin.query(
+    `insert into public.ledger_entries (wallet_id, amount, reason) values ($1, 50, 'manual_adjustment')`,
+    [aWallet.id],
+  );
+
+  const c1 = newClient();
+  const c2 = newClient();
+  await c1.connect();
+  await c2.connect();
+
+  const results = await Promise.allSettled([
+    c1.query('select public.fn_transfer_credit($1, $2, $3, $4)', [A, B, 50, null]),
+    c2.query('select public.fn_transfer_credit($1, $2, $3, $4)', [A, B, 50, null]),
+  ]);
+
+  await c1.end();
+  await c2.end();
+
+  const succeeded = results.filter((r) => r.status === 'fulfilled');
+  const failed = results.filter((r) => r.status === 'rejected');
+
+  log(
+    'exactly one of two concurrent transfers succeeds when balance covers only one',
+    succeeded.length === 1 && failed.length === 1,
+    `succeeded=${succeeded.length} failed=${failed.length}`,
+  );
+
+  log(
+    'the loser fails with insufficient_credit, not some other error',
+    failed.length === 1 && /insufficient_credit/.test(failed[0].reason.message),
+    failed[0] ? failed[0].reason.message : 'n/a',
+  );
+
+  const aWalletAfter = await walletRow(admin, A, 'topup_credit');
+  log(
+    "sender's balance never goes negative and matches exactly one debit",
+    Number(aWalletAfter.balance) === 0,
+    `balance=${aWalletAfter.balance}`,
+  );
+
+  const sum = await ledgerSum(admin, aWallet.id);
+  log(
+    'ledger conservation holds on the sender wallet after the race',
+    sum === Number(aWalletAfter.balance),
+    `ledger_sum=${sum} balance=${aWalletAfter.balance}`,
+  );
+
+  await resetPlatformWallets(admin);
+  await deleteTestUser(admin, A);
+  await deleteTestUser(admin, B);
+}
+
 async function main() {
   const admin = newClient();
   await admin.connect();
@@ -427,6 +587,8 @@ async function main() {
     await testConcurrentTopupConfirmationIsIdempotent(admin);
     await testConcurrentWithdrawalPreventsDoubleSpend(admin);
     await testLedgerConservationUnderConcurrentLoad(admin);
+    await testTransferSplitAndLedgerConservation(admin);
+    await testConcurrentTransferPreventsDoubleSpend(admin);
   } finally {
     await admin.end();
   }

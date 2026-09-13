@@ -25,16 +25,18 @@ leftover_kobo  = net_for_credits_kobo − (credits_issued × credit_unit_kobo)  
 ```
 
 Worked example, ₦1,000 top-up:
+
 - `platform_fee_kobo` = ₦20.00
 - `net_for_credits_kobo` = ₦980.00 → `credits_issued` = 98 credits (not 100)
 - `leftover_kobo` = ₦0 (980 divides evenly by 10)
 
 **Important business-model finding — read before treating "2% deposit fee" as pure profit:**
 Flutterwave/Paystack charge InvolveMe a processing fee on every collection, typically ~1.4–1.5% + a fixed naira fee for local cards/transfers (provider-specific, capped on larger amounts). On a ₦1,000 top-up that can be **₦100+**, which is more than the ₦20 InvolveMe collects as its 2% fee. **As specified, the 2% deposit fee likely does not cover the payment gateway's own cost, meaning InvolveMe loses money on the top-up leg before it ever earns its 20% cut on chat activity.** Three options, pick one before launch:
-1. Treat the 2% as a stated *product* fee (marketing: "only 2% to top up") and accept it's a loss-leader subsidized by the 20% earnings take — viable only if per-user chat volume is high enough that the 20% take comfortably covers it. Model this with real numbers before committing.
+
+1. Treat the 2% as a stated _product_ fee (marketing: "only 2% to top up") and accept it's a loss-leader subsidized by the 20% earnings take — viable only if per-user chat volume is high enough that the 20% take comfortably covers it. Model this with real numbers before committing.
 2. Raise the effective top-up fee to cover gateway cost + margin (e.g., 2% platform fee + pass-through of the actual gateway fee, shown to the user as one line).
 3. Only offer top-up amounts high enough that gateway fixed-fee amortizes below 2% (e.g., disable sub-₦500 top-ups).
-This is flagged again in `docs/06-SECURITY-FRAUD-LOOPHOLES.md` as a viability item, not just a security one.
+   This is flagged again in `docs/06-SECURITY-FRAUD-LOOPHOLES.md` as a viability item, not just a security one.
 
 `leftover_kobo` (float/dust from division) is credited to a small `wallet_float_kobo` balance on the user's `topup_credit` wallet rather than discarded, and rolled into the next purchase — never silently absorbed by the platform. This also forecloses a "salami slicing" complaint/audit finding (see loopholes doc §7).
 
@@ -52,13 +54,14 @@ word_count       ≤ message_max_words   // default 500 → max 20 credits/messa
 ```
 
 Examples at defaults (base 2, block 50, cap 500):
-| Words | Blocks | Credits |
-|---|---|---|
-| 1–50 | 1 | 2 |
-| 51–100 | 2 | 4 |
-| 101–150 | 3 | 6 |
-| 500 (cap) | 10 | 20 |
-| 501+ | — | **rejected**, client prompts to split into a follow-up message |
+
+| Words     | Blocks | Credits                                                        |
+| --------- | ------ | -------------------------------------------------------------- |
+| 1–50      | 1      | 2                                                              |
+| 51–100    | 2      | 4                                                              |
+| 101–150   | 3      | 6                                                              |
+| 500 (cap) | 10     | 20                                                             |
+| 501+      | —      | **rejected**, client prompts to split into a follow-up message |
 
 This preserves the brief's stated prices exactly at the two points it specified (≤50 words = 2 credits, just-over-50 = 4 credits) while removing the flat-rate cliff beyond that. Splitting a long message into several shorter ones now costs the same or more than one message of the same total length (never less) — no incentive to game it either direction. See `docs/06-SECURITY-FRAUD-LOOPHOLES.md` §1 for the before/after exploit walkthrough.
 
@@ -80,7 +83,7 @@ All billing is computed server-side inside `fn_send_message`; the client's word-
    - `platform_cut_credits` → the platform's own ledger wallet (reason `escrow_release_platform_cut`).
    - Escrow marked `released`.
 
-Worked example: A sends a 30-word message (2 credits, escrowed). B replies with a 60-word message (4 credits, escrowed for *that* message, and simultaneously releases the earlier 2-credit escrow). Release event distributes: `2 credits × 80% = 1.6 → 2 credits` (round to nearest, remainder banked in platform's favor per rounding policy, documented in `pricing_config_history`) to B's earnings, `0.4 → 0` to platform on that entry — **rounding is applied per-release, not per-thread**, and must be applied with a single consistent rounding rule (round-half-up) recorded in code, because "who absorbs the fractional credit" is exactly the kind of ambiguity that becomes a support/legal complaint at scale.
+Worked example: A sends a 30-word message (2 credits, escrowed). B replies with a 60-word message (4 credits, escrowed for _that_ message, and simultaneously releases the earlier 2-credit escrow). Release event distributes: `2 credits × 80% = 1.6 → 2 credits` (round to nearest, remainder banked in platform's favor per rounding policy, documented in `pricing_config_history`) to B's earnings, `0.4 → 0` to platform on that entry — **rounding is applied per-release, not per-thread**, and must be applied with a single consistent rounding rule (round-half-up) recorded in code, because "who absorbs the fractional credit" is exactly the kind of ambiguity that becomes a support/legal complaint at scale.
 
 ## 6. Converting earnings to cash and withdrawing
 
@@ -95,11 +98,27 @@ Worked example: A sends a 30-word message (2 credits, escrowed). B replies with 
 
 Spending credit on a status upload debits `topup_credit` directly (no escrow, no earning — nobody "responds" to a status the same way), per `status_upload_credits_text` / `status_upload_credits_media` in `pricing_config`. Status media follows the same compression pipeline as chat media (`docs/01-ARCHITECTURE.md` §5) to stay lite.
 
-## 8. Revenue summary (the two fee lines, and only these two)
+## 8. Revenue summary (the fee lines, and only these)
 
-| Fee | Rate | Taken when | Taken from |
-|---|---|---|---|
-| Deposit/top-up fee | 2.00% (`platform_topup_fee_bps`) | Every credit purchase | The amount being deposited, before credits are issued |
-| Earnings take | 20.00% (`platform_earning_take_bps`) | Every escrow release (i.e., every time B's reply "earns" the credit A was charged) | The credit being released to B |
+| Fee                | Rate                                                         | Taken when                                                                         | Taken from                                            |
+| ------------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Deposit/top-up fee | 2.00% (`platform_topup_fee_bps`)                             | Every credit purchase                                                              | The amount being deposited, before credits are issued |
+| Earnings take      | 20.00% (`platform_earning_take_bps`)                         | Every escrow release (i.e., every time B's reply "earns" the credit A was charged) | The credit being released to B                        |
+| Peer-transfer take | 20.00% (`platform_transfer_take_bps`, independently tunable) | Every user-to-user credit transfer (§9)                                            | The credit being transferred                          |
 
 No other implicit fees exist. Any future fee (e.g., a withdrawal processing fee to cover the payout provider's transfer cost) must be added to `pricing_config` explicitly and documented here — never buried in rounding.
+
+## 9. Peer-to-peer credit transfer (built ahead of legal review — see `docs/07-COMPLIANCE-LEGAL.md` §1)
+
+A sends credits directly to B, no chat activity involved. `fn_transfer_credit`:
+
+```
+platform_cut_credits  = round(credits_sent × platform_transfer_take_bps / 10000)   // 20%
+credits_received      = credits_sent − platform_cut_credits
+```
+
+- Debits the sender's `topup_credit` by the full `credits_sent` (reason `credit_transfer_sent`).
+- Credits the recipient's `earnings_pending` with `credits_received`, then immediately converts it to `withdrawable_cash` at `credit_unit_kobo` (reasons `credit_transfer_received` / `credit_transfer_conversion`) — the exact same two-step ledger shape §5's escrow release uses, so the recipient's cash-out inherits the same KYC-gated, name-matched withdrawal path (`docs/03` §6, CLAUDE.md rule #7) rather than a second, parallel one.
+- `credit_transfer_max_credits` (default 1,000 credits / ₦10,000) caps a single transfer — a blast-radius limit on a brand-new money-moving path, not a product decision; raising it should be deliberate.
+
+This is the one mechanic in this document that `docs/07-COMPLIANCE-LEGAL.md` §1 names explicitly as needing a legal check before shipping — it shipped anyway, on an informed product-owner decision, and stays flagged on that document's pre-launch checklist until counsel has actually looked at it.

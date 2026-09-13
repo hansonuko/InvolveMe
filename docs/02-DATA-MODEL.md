@@ -104,6 +104,14 @@ The three `verified_*_name` columns (added when `submit-kyc` was built) are set 
 
 Append-only event log feeding the rules/scoring described in `docs/06-SECURITY-FRAUD-LOOPHOLES.md`: shared device fingerprints between a payer/payee pair, velocity spikes, repeated near-identical message bodies, chargeback history, etc.
 
+### `credit_transfers`
+
+Peer-to-peer chat-credit transfer, convertible to cash on the recipient's side — see `docs/07-COMPLIANCE-LEGAL.md` §1 for why this needed a legal-review flag before it shipped (it shipped anyway, on an explicit product-owner decision; the flag stays on the pre-launch checklist).
+
+| id, sender_id, recipient_id, credits_sent, platform_cut_credits, credits_received, note, created_at |
+
+Written only by `fn_transfer_credit` (`SECURITY DEFINER`). The sender's `topup_credit` is debited by `credits_sent`; the recipient's `earnings_pending` is credited then immediately converted to `withdrawable_cash` (reusing `fn_release_escrow`'s exact ledger-entry shape, not a new cash-conversion path), after a cut at `platform_transfer_take_bps` goes to the `platform_revenue_earnings_cut` wallet. A `credit_transfer_max_credits` config value caps a single transfer's size.
+
 ### `status_updates`
 
 | id, user_id, media_url, caption, credits_charged, expires_at (24h), created_at |
@@ -111,7 +119,7 @@ Append-only event log feeding the rules/scoring described in `docs/06-SECURITY-F
 ## 2. Row Level Security posture
 
 - `users`: `SELECT` own row + rows of anyone you share a thread with (limited columns via a view); `UPDATE` own row only, excluding `kyc_tier`/`is_suspended` (service-role only).
-- `wallets`, `ledger_entries`, `escrows`, `withdrawals`, `topups`, `kyc_records`: `SELECT` own rows only. **No client `INSERT`/`UPDATE`/`DELETE` grants at all** — every write is via `SECURITY DEFINER` functions invoked by Edge Functions using the service role.
+- `wallets`, `ledger_entries`, `escrows`, `withdrawals`, `topups`, `kyc_records`, `credit_transfers`: `SELECT` own rows only (`credit_transfers`: sender or recipient). **No client `INSERT`/`UPDATE`/`DELETE` grants at all** — every write is via `SECURITY DEFINER` functions invoked by Edge Functions using the service role.
 - `messages`, `threads`: `SELECT` if you're a participant; no direct client writes (see above).
 - `pricing_config`: readable by `authenticated` (needed for client-side cost preview before sending), writable only by an internal `ops` role via the Supabase Studio / admin tool, and every write is logged to a `pricing_config_history` audit table.
 
