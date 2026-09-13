@@ -5,6 +5,7 @@ import { StyleSheet, TextInput, View } from 'react-native';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { toE164NigerianPhone } from '@/lib/phone';
 import { supabase } from '@/lib/supabase';
 import { useAuthFlowStore } from '@/store/useAuthFlowStore';
 import { useTheme } from '@/theme';
@@ -22,7 +23,8 @@ export default function PhoneEntryScreen() {
   const handleSendCode = async () => {
     setError(null);
     setIsSubmitting(true);
-    const { error: otpError } = await supabase.auth.signInWithOtp({ phone });
+    const e164Phone = toE164NigerianPhone(phone);
+    const { error: otpError } = await supabase.auth.signInWithOtp({ phone: e164Phone });
     setIsSubmitting(false);
 
     if (otpError) {
@@ -30,7 +32,7 @@ export default function PhoneEntryScreen() {
       return;
     }
 
-    setPendingPhone(phone);
+    setPendingPhone(e164Phone);
     router.push('/(auth)/verify');
   };
 
