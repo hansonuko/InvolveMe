@@ -2,6 +2,25 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Snapshot as of 2026-09-13 (session 3, continued further still — after the wallet-UX/credit-transfer `eas update` shipped)
+
+**Documentation-only update — no code changed this pass.** The `eas update` covering PR #19 (KYC/bank-linking UI) + PR #20 (wallet UX polish + peer-to-peer credit transfer) was published to the `preview` branch/channel and confirmed landed on the user's phone. Testing that immediately surfaced two things that need to be the very first work of the next session — logged here, deliberately not fixed in this pass per the user's explicit instruction.
+
+### 1. TOP PRIORITY — top-up credit is still not landing after a successful payment
+
+The user bought chat credit again post-update: **payment succeeded, credit never arrived.** This is the same user-visible symptom as the "Incident: a real ₦100 top-up stuck unconfirmed" section below — the one where the JWT-gate and missing-`Buffer`-import bugs were found and fixed, and a deployed-smoke-test regression guard (`webhook-flutterwave-deployed-smoke.test.js`) was added specifically so this couldn't silently recur. **It recurred anyway.** That earlier section already flagged one loose end as explicitly unconfirmed: a `POST /resend-webhook` call reported `200 success` twice but never actually produced a row in `webhook_events_seen`, even after both bugs were fixed. This new failure is the strongest evidence yet that the earlier fix was **not** the full/permanent story — either the resend-webhook gap is a real, reproducible delivery problem (not a one-off), or there's a third bug nobody's found yet. Do not assume the previous root-cause writeup is complete; re-diagnose from scratch using the same discipline that found the first two bugs (probe the real deployed URL directly, query Flutterwave's own API for ground truth on the charge, check `webhook_events_seen` directly) rather than re-applying the same fix and assuming it holds. **User's own words: "fix permanently."** Whatever ships next needs a stronger guarantee than "the smoke test passes" — that guard already existed and this still happened.
+
+### 2. Header / navigation UI overhaul (not started)
+
+Requested verbatim, to scope and build next session:
+
+- **Brand the top header**: replace the plain "Chats" screen title with the **InvolveMe** brand name — bold, generous size, thicker weight than current body text. This likely wants a shared header component (currently each tab screen renders its own ad-hoc title `<Text variant="display">`) rather than repeating brand styling per screen.
+- **Safe-area correctness at the top**: pad the header so there's clean, deliberate space between the phone's status/notification bar and where the app's header content starts — and make sure scrolled list/screen content **cannot** scroll up underneath the header into the notification-bar area (content must clip at the header's bottom edge, not bleed above it). Check whether `react-native-safe-area-context`'s insets are being used at all in `(tabs)/_layout.tsx` and each screen — `Screen` (components/ui/Screen.tsx) is the likely place this needs to live centrally rather than per-screen.
+- **Move Settings off the header's top row**: it currently sits inline next to the "+" new-chat button on Chats (see `(tabs)/chats.tsx`) — replace that with a **three-dot overflow icon** on the right side of the header, with Settings as (at least) one item in whatever it opens.
+- **Bottom tab bar boldness**: increase tab label font weight/size and icon weight so the bar reads as more prominent/legible — currently uses whatever Expo Router's default tab bar styling is; check `(tabs)/_layout.tsx` for where to override `tabBarLabelStyle`/`tabBarIconStyle`/icon components.
+
+Cross-check every color/spacing/weight choice against `docs/04-DESIGN-SYSTEM.md` tokens per CLAUDE.md's styling rule (no hardcoded hex/spacing) — if the design system doesn't yet define a "bold brand header" or "bold tab bar" treatment, that's new token surface to add there first, not an excuse to hardcode.
+
 ## Snapshot as of 2026-09-13 (session 3, continued — same session, past midnight)
 
 **Standing rule from the user, going forward: never run `eas build` without an explicit go-ahead in the moment.** EAS free-tier build minutes are limited, and most fixes are JS/TS-only — the previous section already wired up EAS Update (OTA) for exactly this reason. Reach for a native rebuild only when something actually native changed (permissions, icons, native modules, SDK bump), and ask first even then.
@@ -360,7 +379,7 @@ Real dev credentials are configured locally in `.env` (root, server-only) and `a
 
 - Service-role key rotation still pending (see hygiene note above).
 - **Peer-to-peer credit transfer shipped live without the legal review `docs/07-COMPLIANCE-LEGAL.md` §1 says it needs first** — an explicit, informed product-owner decision, not an oversight, but it is the single highest regulatory-risk item in this codebase right now and stays flagged in three places (`docs/07` §1 and its pre-launch checklist, `docs/03-ECONOMY-LEDGER.md` §9, and here) until counsel has actually looked at it. See "Immediate next step" #2.
-- **A real webhook has still never been observed arriving from Flutterwave, even after fixing both bugs that caused this incident** — the endpoint itself is now proven correct (`npm run test:deployed`), but Flutterwave's actual delivery to it hasn't been confirmed by a real event landing in `webhook_events_seen`. See the incident section above and "Immediate next step" #1.
+- **CONFIRMED RECURRING as of this snapshot: a real top-up's credit still doesn't land after a successful payment**, even after the JWT-gate and `Buffer`-import fixes below and even with the deployed-smoke-test regression guard in place and passing. Treat the earlier incident's root-cause writeup as incomplete, not as a closed loop — see the new top section above and "Immediate next step" #1. This is now the single most user-visible bug in the app.
 - **Any future Edge Function meant to be called by something other than this app (webhooks, other server-to-server callers) needs `--no-verify-jwt` on every deploy, and at least one test that hits the real deployed URL** — the local `deno run` test harness this project otherwise relies on cannot catch a platform-gateway misconfiguration or a runtime-specific crash (see the incident section's "Lesson recorded").
 - **Every Prembly BVN/NIN verification costs real money (~₦45/attempt)** — a real operational cost once real users start submitting KYC, not just a test-suite design constraint. Worth knowing when estimating unit economics, alongside the top-up-fee-vs-gateway-cost question already flagged in `docs/03-ECONOMY-LEDGER.md` §3.
 - 10 Edge Functions built and deployed to date: `send-message`, `withdraw`, `webhook-flutterwave`, `post-status`, `buy-credit`, `find-user-by-phone`, `submit-kyc`, `link-bank-account`, `list-banks`, `transfer-credit`.
@@ -419,12 +438,17 @@ Flutterwave and KYC vendor credentials aren't provisioned (see Credentials statu
 
 ## Immediate next step
 
-**Both the Flutterwave and KYC-vendor decisions from earlier are resolved, and every backend piece of the withdraw path now exists and is deployed** (see session-3 sections above). What's left:
+**Start here, in this order — both items below are user-confirmed real, found right after the previous session's `eas update` landed:**
 
-1. **Ship the accumulated mobile UI changes to the user's phone via `eas update`** — ask first each time, per the standing rule. KYC submission, bank-account linking, pull-to-refresh, copyable top-up account number, the top-up congrats screen, and peer-to-peer credit transfer are all built and merged but not yet on the user's device. Confirm `eas env:list --environment preview` still has the right values before every push (see the `eas update` bug section above).
-2. **Get the peer-to-peer credit transfer feature in front of counsel** — it shipped live ahead of the legal review `docs/07-COMPLIANCE-LEGAL.md` §1 calls for, on an explicit product-owner decision. See that section and `docs/03-ECONOMY-LEDGER.md` §9. Not urgent for continued dev-phase work, but must happen before any public launch.
-3. **Confirm a real Flutterwave webhook actually lands now.** Both bugs that blocked every webhook are fixed and the endpoint is proven healthy (`npm run test:deployed`), but the real end-to-end path (a real transaction → a real webhook → `webhook_events_seen` gets a row) still hasn't been _observed_ — the resend attempted during the incident never showed up even after the fixes. The next real top-up or withdrawal is the actual test; if `webhook_events_seen` stays empty after one, double-check the exact URL and secret hash saved in the Flutterwave dashboard character-for-character.
+1. **Fix the top-up-credit-not-landing bug PERMANENTLY.** Reproduced again after the JWT-gate/`Buffer` fixes from the earlier incident — a real payment succeeded and the credit never arrived. Do not assume the earlier root-cause writeup was complete; re-diagnose from first principles (see the new section above, "TOP PRIORITY — top-up credit is still not landing"). This is the user's explicit top priority for the next session, worded as "fix permanently" — a fix that can't be re-confirmed a third time isn't done.
+2. **Header/navigation UI overhaul** (see the new section above for the full verbatim spec): brand the header with "InvolveMe" (bold/thick), fix safe-area padding so header/content never collide with the phone's status/notification bar, move Settings into a three-dot overflow menu instead of sharing the header row with "+", and make the bottom tab bar's labels/icons bolder and more legible.
+
+Once both of those are done and tested, the rest of the backlog:
+
+3. **Get the peer-to-peer credit transfer feature in front of counsel** — it shipped live ahead of the legal review `docs/07-COMPLIANCE-LEGAL.md` §1 calls for, on an explicit product-owner decision. See that section and `docs/03-ECONOMY-LEDGER.md` §9. Not urgent for continued dev-phase work, but must happen before any public launch.
 4. **SMS provider — the user is handling this themselves, via Termii, "toward the ending phase."** Not blocking, not this session's job.
 5. **Presence/typing indicators, read receipts, status media upload** — all explicitly deferred, not oversights.
+
+(The Flutterwave/KYC-vendor decisions and the withdraw-path backend are all resolved and deployed — see the session-3 sections below for that history. Item 1 above is this same webhook path recurring, not a new area.)
 
 **`kyc-callback`** (the name in the original roadmap) turned out not to be needed as scoped — Prembly's BVN/NIN Basic is synchronous, no webhook required. If a future async KYC step is ever added (e.g. Tier 2 liveness), revisit whether a callback function is actually needed then.
