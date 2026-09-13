@@ -31,11 +31,7 @@ export function Button({ label, variant = 'primary', style, disabled, ...rest }:
       ]}
       {...rest}
     >
-      <Text
-        variant="bodyMedium"
-        color={variant === 'primary' ? undefined : 'primary'}
-        style={variant === 'primary' ? styles.onBrand : undefined}
-      >
+      <Text variant="bodyMedium" color={variant === 'primary' ? 'inverse' : 'primary'}>
         {label}
       </Text>
     </Pressable>
@@ -44,5 +40,4 @@ export function Button({ label, variant = 'primary', style, disabled, ...rest }:
 
 const styles = StyleSheet.create({
   base: { alignItems: 'center', justifyContent: 'center' },
-  onBrand: { color: '#FFFFFF' },
 });

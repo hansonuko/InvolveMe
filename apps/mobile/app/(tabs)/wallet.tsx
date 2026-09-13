@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 
+import { AppHeader } from '@/components/ui/AppHeader';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
@@ -551,14 +552,16 @@ export default function WalletScreen() {
 
   return (
     <Screen>
+      {/* Fixed, non-scrolling — a real bug this fixes: the title used to be
+          the ScrollView's first child, so it scrolled away with the rest of
+          the content instead of staying put like a header should (see
+          docs/00-SESSION-HANDOFF.md's header/nav overhaul section). */}
+      <AppHeader title="Wallet" />
       <ScrollView
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={handleRefresh} />}
       >
-        <Text variant="display" style={{ marginBottom: spacing.lg }}>
-          Wallet
-        </Text>
-
         {isLoading ? (
           <Text variant="body" color="secondary">
             Loading…
