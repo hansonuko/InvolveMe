@@ -1,18 +1,24 @@
 export type {
+  Bank,
   CollectionRequest,
   CollectionResult,
+  CreateTransferRecipientRequest,
+  CreateTransferRecipientResult,
   PaymentProvider,
   PayoutRequest,
   PayoutResult,
+  ResolveBankAccountRequest,
+  ResolveBankAccountResult,
+  ResolveCustomerRequest,
   WebhookVerification,
 } from './provider';
 
-// Flutterwave: verifyWebhook is real; initiateCollection/initiatePayout are
-// stubs pending a Flutterwave API-generation decision — see flutterwave.ts's
-// header comment and docs/00-SESSION-HANDOFF.md.
+// Flutterwave: real live-v4 implementation, not a stub — see
+// flutterwave.ts's own header comment for what's confirmed live vs. still
+// assumed, and docs/00-SESSION-HANDOFF.md for the research trail.
 export {
   createFlutterwaveProvider,
-  PaymentProviderNotImplementedError,
+  PaymentProviderError,
   type FlutterwaveConfig,
 } from './flutterwave';
 

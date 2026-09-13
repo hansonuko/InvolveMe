@@ -96,7 +96,9 @@ Tracks credits charged to A that are held until B responds (see `docs/03-ECONOMY
 
 ### `kyc_records`
 
-| id, user_id, tier, provider, provider_ref, bvn_or_nin_hash, status, verified_at, expires_at |
+| id, user_id, tier, provider, provider_ref, bvn_or_nin_hash, status, verified_at, expires_at, verified_first_name, verified_middle_name, verified_last_name |
+
+The three `verified_*_name` columns (added when `submit-kyc` was built) are set only when `status = 'verified'` — used by `link-bank-account` to name-match a bank account against the KYC identity. A legal name is materially less sensitive than the raw BVN/NIN itself (which never gets stored — only `bvn_or_nin_hash`, a peppered one-way hash) and is exactly the retention this table's one compliance function requires.
 
 ### `fraud_signals`
 
