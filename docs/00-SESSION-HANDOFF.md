@@ -2,6 +2,20 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Snapshot as of 2026-09-13 (session 6 — group-chat schema/function built, kill-switched off)
+
+Same session, continued after session 5's rebrand + PR #22 merged to `main` and shipped via `eas update` (group ID `5903f437-fa9c-4680-8ec8-fcd4d92b68d9`). Per the user's explicit "start building the group-chat schema/function," the model decided in session 5 (`docs/03-ECONOMY-LEDGER.md` §10) is now actually built — not just documented.
+
+**New migration `20260913200000_group_chats.sql`:** `group_threads`/`group_members`/`group_messages` tables (RLS: select-if-member, no client writes, same posture as every other money-touching table) and `fn_send_group_message` (`SECURITY DEFINER`). Implements exactly what §10 specifies: same word-count cost formula as 1:1 messages, immediate 70/30 owner/platform split (`platform_group_message_take_bps`, new independently-tunable config key), self-post exception (owner posting to their own group earns nothing, message still costs credits), fixed ascending-wallet-id lock order across sender/owner/platform wallets (same rule `fn_transfer_credit` follows, generalized to three parties). Reuses the existing `platform_revenue_earnings_cut` wallet for the platform's cut rather than inventing a new wallet kind, matching `fn_transfer_credit`'s own precedent for a credit-denominated take.
+
+**The kill switch is real, not just a doc note:** new `pricing_config.group_chat_enabled` ships at `0`, and `fn_send_group_message` checks it itself and refuses to run — so there's no path to bypass the Phase-5 gate by calling the database function directly, only the (not-yet-built) Edge Function.
+
+**Tested per CLAUDE.md's wallet-code requirement:** new `supabase/tests/group-chat-functions.test.js` (`npm run test:group-chat`), **19/19** against the real dev DB — the 70/30 split, ledger conservation across every wallet touched, the self-post exception, a concurrency/double-spend check, and membership/existence validation. Every test flips `group_chat_enabled` to `1` for its own duration and restores it to `0` in a `finally` block (plus a belt-and-suspenders reset in `main()`'s own `finally`) — confirmed directly against the DB after the run that the flag is back at `0`, not just assumed from exit code. Full `npm run test:db` re-run clean afterward (22/22, no regression from the `ledger_entries` check-constraint changes).
+
+**Not built, deliberately, and not blocking anything:** a group-creation/invite flow (nothing writes `group_threads`/`group_members` outside the test file yet) and an Edge Function to expose this to the app — no urgency while the kill switch is off, per the user's own "hold behind Phase 5" call. Both are cheap to add whenever the feature is actually scheduled.
+
+**Not shipped anywhere** (nothing to ship — no Edge Function, no mobile UI, and the DB function is inert while `group_chat_enabled = 0`). The migration itself is already applied to the dev DB (`supabase db push`, confirmed 1 migration applied).
+
 ## Snapshot as of 2026-09-13 (session 5 — "Deep Wine" rebrand + group-chat scoping)
 
 **Requested this session:** update the theme to an exact-hex brief (wine `#5F1B31` / milk `#FFE6D8` / cream canvas `#FBF9F1`) plus a header/search/bottom-nav rework, matched against a supplied mockup image. Two things in that mockup weren't real features yet (a numeric unread badge, and group-chat rows) — checked with the user rather than guessed; see below.
