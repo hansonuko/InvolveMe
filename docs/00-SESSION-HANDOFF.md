@@ -6,7 +6,20 @@ Living doc. Read this first in any new session before touching the repo — it's
 
 **Standing rule from the user, going forward: never run `eas build` without an explicit go-ahead in the moment.** EAS free-tier build minutes are limited, and most fixes are JS/TS-only — the previous section already wired up EAS Update (OTA) for exactly this reason. Reach for a native rebuild only when something actually native changed (permissions, icons, native modules, SDK bump), and ask first even then.
 
-**Two real auth bugs found the moment the user tried the app for real** (see below) got fixed the same session, plus the mobile UI got wired to the backend for the first time — chats, wallet, and status were placeholder screens before this. Later the same session: a real `eas update` misconfiguration was found and fixed (below), and KYC + bank-account linking — the last gap on the withdraw path — got built against a real vendor (Prembly), closing the loop CLAUDE.md rule #7 requires. **Then a real production incident**: a real user top-up sat unconfirmed for over an hour because `webhook-flutterwave` had silently rejected every webhook since its very first deploy — see below for the full incident, root cause, and fix.
+**Two real auth bugs found the moment the user tried the app for real** (see below) got fixed the same session, plus the mobile UI got wired to the backend for the first time — chats, wallet, and status were placeholder screens before this. Later the same session: a real `eas update` misconfiguration was found and fixed (below), and KYC + bank-account linking — the last gap on the withdraw path — got built against a real vendor (Prembly), closing the loop CLAUDE.md rule #7 requires. **Then a real production incident**: a real user top-up sat unconfirmed for over an hour because `webhook-flutterwave` had silently rejected every webhook since its very first deploy — see below for the full incident, root cause, and fix. **Then, once the incident was resolved and the fix verified**, the mobile UI for KYC submission and bank-account linking got built — the piece the earlier KYC/bank-linking section had left as "backend done, UI pending."
+
+### Mobile UI for KYC submission + bank-account linking
+
+`(auth)`-adjacent identity verification lives in Settings (previously an unreachable placeholder screen — nothing linked to `/settings` at all; added a "Settings" link to the Chats header so it's actually reachable now), bank-account linking lives in Wallet alongside buy-credit/withdraw (a wallet action, not an account setting).
+
+- **New `lib/queries/kyc.ts`**: `useKycTier` (plain read, not an Edge Function — reading `kyc_tier` isn't money-affecting), `useSubmitKyc` (wraps `submit-kyc`).
+- **New `lib/queries/banks.ts`**: `useBanks` (wraps `list-banks`, `staleTime` an hour — bank codes don't change often), `useLinkBankAccount` (wraps `link-bank-account`).
+- **`lib/edgeFunctions.ts` extended** to support `GET` (previously POST-only) — needed for `list-banks`; body is omitted entirely for GET rather than sent as an empty object, since some of this project's functions reject a GET carrying one.
+- **Settings screen**: BVN/NIN type picker + number input, submits to `submit-kyc`, shows "Verified ✓" once `kyc_tier >= 1`. No auto-retry or speculative resubmission — every call costs the platform real money (see the KYC section above), so the UI only ever submits on an explicit tap.
+- **Wallet screen**: an "Add bank account" flow (bank search list from `list-banks` → account number → `link-bank-account`) appears once KYC is verified; before that, a "Verify your identity first →" link to Settings instead of a form that would only ever get rejected by the server's own KYC-tier gate.
+- **Not built**: media upload for status (unchanged from earlier), presence/typing/read-receipts (unchanged from earlier).
+
+**Not shipped to the phone yet** — this is pure JS/TS (no native dependency added), so it's an `eas update` away, not a build, once the user asks for it — per the standing rule, not run automatically here.
 
 ### Incident: a real ₦100 top-up stuck unconfirmed for 1+ hour — root cause and fix
 
@@ -385,9 +398,8 @@ Flutterwave and KYC vendor credentials aren't provisioned (see Credentials statu
 **Both the Flutterwave and KYC-vendor decisions from earlier are resolved, and every backend piece of the withdraw path now exists and is deployed** (see session-3 sections above). What's left:
 
 1. **Confirm a real Flutterwave webhook actually lands now.** Both bugs that blocked every webhook are fixed and the endpoint is proven healthy (`npm run test:deployed`), but the real end-to-end path (a real transaction → a real webhook → `webhook_events_seen` gets a row) still hasn't been _observed_ — the resend attempted during the incident never showed up even after the fixes. The next real top-up or withdrawal is the actual test; if `webhook_events_seen` stays empty after one, double-check the exact URL and secret hash saved in the Flutterwave dashboard character-for-character.
-2. **Build the mobile UI for KYC submission + bank-account linking.** `submit-kyc`, `link-bank-account`, and `list-banks` are complete, tested, and deployed — there's no screen calling any of them yet (Settings needs a "Verify your identity" flow, Wallet needs an "Add bank account" flow with a bank picker). This is the natural next piece — same "backend first, ship UI as fast-follow" pattern as chats/wallet/status earlier this session.
-3. **Ship pending mobile changes to the user's phone via `eas update`** — ask first each time, per the standing rule. Confirm `eas env:list --environment preview` still has the right values before every push (see the `eas update` bug section above).
-4. **SMS provider — the user is handling this themselves, via Termii, "toward the ending phase."** Not blocking, not this session's job.
-5. **Presence/typing indicators, read receipts, status media upload** — all explicitly deferred, not oversights.
+2. **Ship the mobile UI changes to the user's phone via `eas update`** — ask first each time, per the standing rule. KYC submission and bank-account linking screens are now built (see the mobile-UI section above) but not yet on the user's device. Confirm `eas env:list --environment preview` still has the right values before every push (see the `eas update` bug section above).
+3. **SMS provider — the user is handling this themselves, via Termii, "toward the ending phase."** Not blocking, not this session's job.
+4. **Presence/typing indicators, read receipts, status media upload** — all explicitly deferred, not oversights.
 
 **`kyc-callback`** (the name in the original roadmap) turned out not to be needed as scoped — Prembly's BVN/NIN Basic is synchronous, no webhook required. If a future async KYC step is ever added (e.g. Tier 2 liveness), revisit whether a callback function is actually needed then.

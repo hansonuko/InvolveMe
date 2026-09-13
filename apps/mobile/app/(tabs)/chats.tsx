@@ -201,11 +201,18 @@ export default function ChatsScreen() {
         }}
       >
         <Text variant="display">Chats</Text>
-        <Pressable onPress={() => setModalVisible(true)} hitSlop={12}>
-          <Text variant="title" color="brand">
-            +
-          </Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: spacing.lg, alignItems: 'center' }}>
+          <Pressable onPress={() => router.push('/settings')} hitSlop={12}>
+            <Text variant="body" color="secondary">
+              Settings
+            </Text>
+          </Pressable>
+          <Pressable onPress={() => setModalVisible(true)} hitSlop={12}>
+            <Text variant="title" color="brand">
+              +
+            </Text>
+          </Pressable>
+        </View>
       </View>
 
       {isLoading ? (
