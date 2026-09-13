@@ -51,17 +51,32 @@
  * reading the doc's own verification code sample rather than assuming the
  * v3-era convention still held.
  *
- * What's still NOT verified end-to-end: no real bank transfer has actually
- * been completed into a virtual account this created, and no real payout
- * has actually disbursed — both would need a human to complete a real bank
- * transfer or wait on a real payout, not something to do from here. The
- * exact webhook event/payload a completed virtual-account transfer produces
- * (assumed to still be `charge.completed`, per Flutterwave's docs framing
- * it as the completion event for every collection method) is the biggest
- * remaining unknown — webhook-flutterwave's handling of it is a documented
- * best-effort, not a confirmed contract, until one actually fires for real.
+ * A second, real bug in this same function, found via a real incident
+ * (2026-09-13): `Buffer.from(...)` here relied on the global `Buffer` with
+ * no explicit import. A local `deno run` tolerates this; Supabase's
+ * deployed edge-runtime does not, and crashed with a 500 on every real
+ * request that reached this code. Fixed with an explicit
+ * `import { Buffer } from 'node:buffer'` — see
+ * supabase/functions/webhook-flutterwave/index.ts's header comment for the
+ * full incident (this bug was masked by an unrelated platform-level JWT
+ * gateway issue that was rejecting every webhook before this code ever ran,
+ * so the two had to be found and fixed in sequence, not simultaneously).
+ *
+ * What's still NOT fully verified end-to-end: a real virtual-account
+ * funding *did* complete for real this session (confirmed independently via
+ * `GET /charges?customer_id=...` returning `status: "succeeded"` for a real
+ * ₦100 transfer) — but the corresponding webhook was never actually
+ * *observed* arriving, only reconstructed and manually confirmed via
+ * `fn_confirm_topup` after the fact, since both bugs above meant it could
+ * never have arrived successfully before they were fixed. A real payout has
+ * also never disbursed. Whether a real webhook actually lands now that both
+ * bugs are fixed is the next thing to watch for, not something already
+ * proven — `supabase/tests/webhook-flutterwave-deployed-smoke.test.js`
+ * proves the endpoint itself is healthy, not that Flutterwave's real
+ * delivery reaches it.
  */
 
+import { Buffer } from 'node:buffer';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   Bank,

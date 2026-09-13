@@ -5,6 +5,32 @@
 // signature check (CLAUDE.md rule #6: "signature-verified, full stop, no
 // exceptions for just testing").
 //
+// MUST be deployed with `--no-verify-jwt`:
+//   supabase functions deploy webhook-flutterwave --use-api --no-verify-jwt
+// This is a REAL incident this project actually had (2026-09-13), not a
+// theoretical warning: the first deploy used the default
+// `supabase functions deploy` batch call with no per-function flags, which
+// left Supabase's own platform-level JWT gateway enabled for this function.
+// Flutterwave's real webhook requests (which carry a `flutterwave-signature`
+// header, never a Supabase auth header) were rejected with 401
+// `UNAUTHORIZED_NO_AUTH_HEADER` by the gateway itself, before this file's
+// own code ever ran — meaning every real webhook silently failed from the
+// moment this function was first deployed, and `webhook_events_seen` stayed
+// empty the whole time. A real user's ₦100 top-up sat unconfirmed for over
+// an hour before this was caught. Confirmed via
+// `supabase/tests/webhook-flutterwave-deployed-smoke.test.js` (`npm run
+// test:deployed`) — the only test in this suite that hits the actual
+// deployed URL rather than a local `deno run`, which is exactly why every
+// other test here passing 87/87 never caught this.
+//
+// A second, unrelated bug surfaced by the same incident once the gateway
+// was fixed: `packages/payments/flutterwave.ts`'s `verifyWebhook` used the
+// global `Buffer` without an explicit `import { Buffer } from 'node:buffer'`
+// — tolerated by a local `deno run` but not by Supabase's deployed
+// edge-runtime, which crashed with a generic 500 on every real request past
+// the gateway. Fixed there; watch for the same unguarded-global pattern in
+// any future Node-compat code added to this file or its imports.
+//
 // Routes two event families to the DB functions that already handle their
 // idempotency: `charge.completed` → fn_confirm_topup (buy-credit
 // confirmation, only when data.status is 'succeeded' — this event fires for
