@@ -113,6 +113,23 @@ Requires KYC tier ≥ 1 and a `bank_accounts` row with `name_match_verified = tr
 
 Debits `status_upload_credits_media` if `media_url` is present, else `status_upload_credits_text`, from `topup_credit` — no escrow, no earning (see `docs/03-ECONOMY-LEDGER.md` §7). Inserts a `status_updates` row with `expires_at = now() + 24h`. All billing/validation happens inside `fn_post_status`, called by the `post-status` Edge Function (built — see `docs/00-SESSION-HANDOFF.md`); the client's request never carries a computed credit amount.
 
+### `POST /functions/v1/find-user-by-phone`
+
+```jsonc
+// Request
+{ "phone": "+2348012345678" }
+// Response 200
+{ "id": "uuid", "display_name": "string | null", "avatar_url": "string | null" }
+// Response 400
+{ "error": "invalid_request" } // missing phone, or looking up your own number
+// Response 404
+{ "error": "user_not_found" }
+```
+
+Added this session — a real gap found wiring up the mobile "start a new chat" flow: `send-message` takes a `recipient_id` (uuid), but nothing resolved a phone number to one, and direct client reads can't fill this (`users_select_own_or_thread_partner`, per the RLS migration, correctly only exposes your own row or an existing thread partner's, not an arbitrary stranger's). This is a narrow, purpose-built lookup — returns only `id`/`display_name`/`avatar_url`, never the phone number back, no financial logic, done via the service-role client the same way any other Edge Function's non-money reads are. **Known gap:** no rate limiting beyond whatever Supabase applies platform-wide, so this is a phone-enumeration surface if automated — not addressed here, not called out in `docs/06-SECURITY-FRAUD-LOOPHOLES.md` either; worth adding if it becomes a real problem.
+
+Client input must be E.164 **with** a leading `+` (matching what's used for `signInWithOtp`) — the function strips it before comparing, since `users.phone` itself is stored without one (see `docs/02-DATA-MODEL.md`'s note on this — found by testing, not by reading the schema comment, which had said plain "E.164").
+
 ### `GET /functions/v1/estimate-message-cost?words=N` (or computed client-side from public `pricing_config` for instant UI feedback — server remains authoritative at actual send time regardless)
 
 ### `POST /functions/v1/kyc-callback`
