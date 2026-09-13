@@ -116,9 +116,9 @@ Written only by `fn_transfer_credit` (`SECURITY DEFINER`). The sender's `topup_c
 
 | id, user_id, media_url, caption, credits_charged, expires_at (24h), created_at |
 
-### Group threads — scoping (billing model decided, held behind Phase 5 — not built)
+### Group threads — built, kill-switched off (Phase 5 still gates going live)
 
-Companion to `docs/03-ECONOMY-LEDGER.md` §10's billing model, decided 2026-09-13. **No migration exists for any of this yet** — sketched here so the eventual migration doesn't have to re-derive the shape, not as a schema that's live. Per §10, this feature does not go live for real users before Phase 5's fraud infra exists, even once built.
+Companion to `docs/03-ECONOMY-LEDGER.md` §10's billing model, decided and then built 2026-09-13 (migration `20260913200000_group_chats.sql`). Per §10, this feature does not go live for real users before Phase 5's fraud infra exists — enforced concretely, not just by convention: `pricing_config.group_chat_enabled` ships at `0`, and `fn_send_group_message` itself checks and refuses to run while it's `0` (not just the eventual Edge Function), so there's no way to bypass the gate by calling the database function directly. Flip it to `1` only once Phase 5 lands.
 
 Proposed as **new tables, not an extension of `threads`/`messages`**: those two are 1:1-shaped throughout (`participant_a`/`participant_b`, escrow-per-message, `fn_release_escrow` assuming exactly one payee) — forking that logic with `if is_group` branches everywhere would put group chat's much-less-tested code path inside the same functions the real money-moving 1:1 path depends on. A parallel schema keeps the blast radius of a group-chat bug contained to group-chat code.
 
@@ -127,7 +127,9 @@ Proposed as **new tables, not an extension of `threads`/`messages`**: those two 
 - `group_messages`: `id, group_thread_id, sender_id, body, word_count, credits_charged, owner_earning_credits, platform_take_credits, created_at` — no `status`/escrow columns (§10's model settles immediately, no pending state); `owner_earning_credits`/`platform_take_credits` both `0` on a self-post (sender == `created_by`), per §10's self-earning block.
 - RLS: `SELECT` on all three gated to `group_members` rows matching `auth.uid()`, same posture as `threads`/`messages` today; no client writes, same `SECURITY DEFINER`-only posture as every other money-touching table.
 
-Still unresolved, blocking any migration: a group size cap and/or a per-message or per-day cap on `owner_earning_credits` (§10 flags both as open), whether creating a group costs anything (a new `pricing_config` key if so — nothing hardcoded, per CLAUDE.md rule #9), and — the actual blocker — Phase 5's collusion-detection/velocity-limit infra needing to exist first per §10's gating decision.
+Written only by `fn_send_group_message` (`SECURITY DEFINER`), same locking discipline as `fn_transfer_credit` (§3: fixed ascending-wallet-id order, since a non-self-post locks the sender's and the owner's wallets together). Tested in `supabase/tests/group-chat-functions.test.js` (`npm run test:group-chat`, 19/19): the 70/30 split, ledger conservation across every wallet touched, the self-post exception, a concurrency/double-spend check, membership/existence validation, and — the one that actually matters for the gating decision — that the kill switch really does refuse the call while `group_chat_enabled = 0`.
+
+Still unresolved, not blocking (schema/function exist regardless): a group size cap and/or a per-message or per-day cap on `owner_earning_credits` (§10 flags both as open), whether creating a group costs anything (a new `pricing_config` key if so — nothing hardcoded, per CLAUDE.md rule #9), group creation/invite flow (nothing writes `group_threads`/`group_members` yet outside tests), and an Edge Function to expose `fn_send_group_message` to the app (not built — no urgency while the kill switch is off). The actual blocker to flipping `group_chat_enabled` to `1` remains Phase 5's collusion-detection/velocity-limit infra, per §10's gating decision.
 
 ## 2. Row Level Security posture
 
