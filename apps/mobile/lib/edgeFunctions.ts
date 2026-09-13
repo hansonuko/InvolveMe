@@ -23,11 +23,15 @@ export class EdgeFunctionError extends Error {
 /**
  * Calls a Supabase Edge Function with the current session's access token.
  * Every money-affecting or otherwise-authenticated action in this app goes
- * through here rather than a bespoke fetch call per screen.
+ * through here rather than a bespoke fetch call per screen. `body` is
+ * omitted entirely for `GET` (e.g. `list-banks`) rather than sent as an
+ * empty JSON object — some of this project's functions reject a GET with
+ * a body outright.
  */
 export async function callEdgeFunction<TResponse>(
   name: string,
-  body: Record<string, unknown>,
+  body?: Record<string, unknown>,
+  method: 'GET' | 'POST' = 'POST',
 ): Promise<TResponse> {
   const {
     data: { session },
@@ -39,12 +43,12 @@ export async function callEdgeFunction<TResponse>(
 
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const res = await fetch(`${supabaseUrl}/functions/v1/${name}`, {
-    method: 'POST',
+    method,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${session.access_token}`,
     },
-    body: JSON.stringify(body),
+    body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
   });
 
   const json = await res.json().catch(() => null);

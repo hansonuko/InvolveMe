@@ -1,10 +1,13 @@
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { useBanks, useLinkBankAccount, type Bank } from '@/lib/queries/banks';
 import { useSession } from '@/lib/hooks/useSession';
+import { useKycTier } from '@/lib/queries/kyc';
 import {
   useBuyCredit,
   useLinkedBankAccount,
@@ -193,16 +196,160 @@ function WithdrawModal({
   );
 }
 
+/** Add-bank-account flow: pick a bank -> enter account number -> server
+ * resolves the name, matches it against the KYC-verified identity, and
+ * only then links it. See supabase/functions/link-bank-account's own
+ * header comment — a name mismatch is a hard rejection, not something
+ * this screen can override. */
+function LinkBankAccountModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { colors, spacing, radius } = useTheme();
+  const { data: banks, isLoading: banksLoading } = useBanks();
+  const linkBankAccount = useLinkBankAccount();
+
+  const [search, setSearch] = useState('');
+  const [selectedBank, setSelectedBank] = useState<Bank | null>(null);
+  const [accountNumber, setAccountNumber] = useState('');
+
+  const reset = () => {
+    setSearch('');
+    setSelectedBank(null);
+    setAccountNumber('');
+    linkBankAccount.reset();
+  };
+
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const handleLink = () => {
+    if (!selectedBank) return;
+    linkBankAccount.mutate({
+      bankCode: selectedBank.code,
+      bankName: selectedBank.name,
+      accountNumber,
+    });
+  };
+
+  const filteredBanks = (banks ?? []).filter((b) =>
+    b.name.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
+      <Screen>
+        <View
+          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+        >
+          <Text variant="title">Add bank account</Text>
+          <Pressable onPress={handleClose} hitSlop={12}>
+            <Text variant="body" color="secondary">
+              Close
+            </Text>
+          </Pressable>
+        </View>
+
+        {linkBankAccount.isSuccess ? (
+          <View style={{ marginTop: spacing.xl, gap: spacing.sm }}>
+            <Text variant="bodyMedium" color="success">
+              Linked {linkBankAccount.data.bank_name} ····
+              {linkBankAccount.data.account_number_last4}
+            </Text>
+            <Text variant="body" color="secondary">
+              {linkBankAccount.data.account_name}
+            </Text>
+          </View>
+        ) : !selectedBank ? (
+          <View style={{ marginTop: spacing.xl, gap: spacing.sm, flex: 1 }}>
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search for your bank…"
+              placeholderTextColor={colors.textSecondary}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.bgSurfaceAlt,
+                  color: colors.textPrimary,
+                  borderRadius: radius.card,
+                  borderColor: colors.borderSubtle,
+                },
+              ]}
+            />
+            {banksLoading ? (
+              <Text variant="body" color="secondary">
+                Loading banks…
+              </Text>
+            ) : (
+              <FlatList
+                data={filteredBanks}
+                keyExtractor={(b) => b.code}
+                renderItem={({ item }) => (
+                  <Pressable
+                    onPress={() => setSelectedBank(item)}
+                    style={{ paddingVertical: spacing.md }}
+                  >
+                    <Text variant="body">{item.name}</Text>
+                  </Pressable>
+                )}
+              />
+            )}
+          </View>
+        ) : (
+          <View style={{ marginTop: spacing.xl, gap: spacing.sm }}>
+            <Text variant="bodyMedium">{selectedBank.name}</Text>
+            <Pressable onPress={() => setSelectedBank(null)}>
+              <Text variant="caption" color="brand">
+                Change bank
+              </Text>
+            </Pressable>
+            <TextInput
+              value={accountNumber}
+              onChangeText={setAccountNumber}
+              placeholder="Account number"
+              placeholderTextColor={colors.textSecondary}
+              keyboardType="number-pad"
+              maxLength={10}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.bgSurfaceAlt,
+                  color: colors.textPrimary,
+                  borderRadius: radius.card,
+                  borderColor: colors.borderSubtle,
+                },
+              ]}
+            />
+            {linkBankAccount.isError ? (
+              <Text variant="caption" color="danger">
+                {linkBankAccount.error.message}
+              </Text>
+            ) : null}
+            <Button
+              label={linkBankAccount.isPending ? 'Linking…' : 'Link account'}
+              onPress={handleLink}
+              disabled={linkBankAccount.isPending || accountNumber.length !== 10}
+            />
+          </View>
+        )}
+      </Screen>
+    </Modal>
+  );
+}
+
 export default function WalletScreen() {
   const { spacing } = useTheme();
+  const router = useRouter();
   const { session } = useSession();
   const userId = session?.user.id;
 
   const { data: wallets, isLoading } = useWallets(userId);
   const { data: bankAccount } = useLinkedBankAccount(userId);
+  const { data: kycTier } = useKycTier(userId);
 
   const [buyModalVisible, setBuyModalVisible] = useState(false);
   const [withdrawModalVisible, setWithdrawModalVisible] = useState(false);
+  const [linkBankModalVisible, setLinkBankModalVisible] = useState(false);
 
   const topupCredit = walletBalance(wallets, 'topup_credit');
   const earningsPending = walletBalance(wallets, 'earnings_pending');
@@ -242,10 +389,25 @@ export default function WalletScreen() {
         </View>
 
         {!bankAccount ? (
-          <Text variant="caption" color="secondary" style={{ marginTop: spacing.sm }}>
-            No verified bank account linked yet — withdrawals are not available until that is set
-            up.
-          </Text>
+          <View style={{ marginTop: spacing.sm, gap: spacing.sm }}>
+            <Text variant="caption" color="secondary">
+              No verified bank account linked yet — withdrawals are not available until that is set
+              up.
+            </Text>
+            {(kycTier ?? 0) >= 1 ? (
+              <Button
+                label="Add bank account"
+                variant="secondary"
+                onPress={() => setLinkBankModalVisible(true)}
+              />
+            ) : (
+              <Pressable onPress={() => router.push('/settings')}>
+                <Text variant="caption" color="brand">
+                  Verify your identity first →
+                </Text>
+              </Pressable>
+            )}
+          </View>
         ) : null}
       </ScrollView>
 
@@ -257,7 +419,12 @@ export default function WalletScreen() {
           bankAccountId={bankAccount.id}
           availableKobo={withdrawableCash}
         />
-      ) : null}
+      ) : (
+        <LinkBankAccountModal
+          visible={linkBankModalVisible}
+          onClose={() => setLinkBankModalVisible(false)}
+        />
+      )}
     </Screen>
   );
 }
