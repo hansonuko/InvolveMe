@@ -132,9 +132,52 @@ Client input must be E.164 **with** a leading `+` (matching what's used for `sig
 
 ### `GET /functions/v1/estimate-message-cost?words=N` (or computed client-side from public `pricing_config` for instant UI feedback — server remains authoritative at actual send time regardless)
 
-### `POST /functions/v1/kyc-callback`
+### `POST /functions/v1/submit-kyc`
 
-Server-to-server webhook from the KYC vendor confirming BVN/NIN + liveness check result → updates `kyc_records` and `users.kyc_tier`.
+```jsonc
+// Request
+{ "type": "bvn", "number": "22362591439" }   // or "type": "nin"
+// Response 200
+{ "verified": true, "tier": 1 }
+// Response 400
+{ "error": "invalid_request" }             // wrong type, or number isn't exactly 11 digits
+// Response 422
+{ "error": "verification_failed", "message": "We couldn't verify that number." }
+// Response 503
+{ "error": "kyc_provider_unavailable" }
+```
+
+Tier 1 only — plain BVN/NIN number verification via Prembly's BVN/NIN Basic REST API, synchronous (no webhook/callback needed, unlike the original `kyc-callback` design below assumed). No camera/liveness capture; Prembly's separate `react-native-identity-kyc` widget (Tier 2) is deliberately not used — see `docs/00-SESSION-HANDOFF.md`. The raw BVN/NIN is never persisted (hashed with a server-only pepper before it touches `kyc_records`) and never returned to the client. A watchlist match (screened as part of this same call, per `docs/07-COMPLIANCE-LEGAL.md` §2) returns the identical `verification_failed` response as a not-found number — deliberately indistinguishable to the caller — and is logged to `fraud_signals` instead.
+
+**Every call costs Prembly real money (~₦45), success or failure** — confirmed live, not documented anywhere in Prembly's own docs excerpt read while building this.
+
+### `POST /functions/v1/link-bank-account`
+
+```jsonc
+// Request
+{ "bank_code": "044", "bank_name": "Access Bank", "account_number": "0690000031" }
+// Response 200
+{ "bank_account_id": "uuid", "bank_name": "Access Bank", "account_name": "JOHN DOE", "account_number_last4": "0031" }
+// Response 400
+{ "error": "invalid_request" | "invalid_account" }   // invalid_account = a real rejection from Flutterwave's account-resolve, e.g. account doesn't exist
+// Response 403
+{ "error": "kyc_required" }
+// Response 422
+{ "error": "name_mismatch" }
+// Response 503
+{ "error": "payment_provider_unavailable" }
+```
+
+Requires KYC tier ≥ 1 (`submit-kyc`). Resolves the account's registered name via Flutterwave (`/banks/account-resolve`), name-matches it against the caller's KYC-verified identity (order-independent token match — Nigerian BVN records and bank names don't agree on name order), and only on a match creates a real Flutterwave transfer recipient (`/transfers/recipients`) and writes `bank_accounts` with `name_match_verified: true`. A mismatch is a hard rejection — no row inserted, no way to "fix later" via this endpoint — per CLAUDE.md rule #7. This is what actually populates `bank_accounts.provider_account_id` for a real user; `withdraw`'s own checks were always correct, there was just never a way to satisfy them until this function existed.
+
+### `GET /functions/v1/list-banks`
+
+```jsonc
+// Response 200
+{ "banks": [{ "code": "044", "name": "Access Bank" }, ...] }
+```
+
+Read-only proxy for Flutterwave's `/banks?country=NG`, for the bank-picker UI — not hardcoded, since Flutterwave is the source of truth for which `bank_code` values the two functions above will actually accept.
 
 ## 2. Scheduled jobs (pg_cron → Edge Function)
 

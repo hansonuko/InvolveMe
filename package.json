@@ -13,7 +13,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:db": "node --env-file=.env supabase/tests/wallet-functions.test.js",
-    "test:functions": "node --env-file=.env supabase/tests/send-message-function.test.js && node --env-file=.env supabase/tests/withdraw-function.test.js && node --env-file=.env supabase/tests/webhook-flutterwave-function.test.js && node --env-file=.env supabase/tests/post-status-function.test.js && node --env-file=.env supabase/tests/buy-credit-function.test.js && node --env-file=.env supabase/tests/find-user-by-phone-function.test.js",
+    "test:functions": "node --env-file=.env supabase/tests/send-message-function.test.js && node --env-file=.env supabase/tests/withdraw-function.test.js && node --env-file=.env supabase/tests/webhook-flutterwave-function.test.js && node --env-file=.env supabase/tests/post-status-function.test.js && node --env-file=.env supabase/tests/buy-credit-function.test.js && node --env-file=.env supabase/tests/find-user-by-phone-function.test.js && node --env-file=.env supabase/tests/submit-kyc-function.test.js && node --env-file=.env supabase/tests/link-bank-account-function.test.js",
     "prepare": "husky"
   },
   "devDependencies": {

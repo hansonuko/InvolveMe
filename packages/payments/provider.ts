@@ -87,6 +87,39 @@ export interface WebhookVerification {
   payload: unknown;
 }
 
+export interface Bank {
+  code: string;
+  name: string;
+}
+
+export interface ResolveBankAccountRequest {
+  bankCode: string;
+  accountNumber: string;
+}
+
+export interface ResolveBankAccountResult {
+  /** The bank's own registered name for this account — compared against
+   * the KYC-verified identity by link-bank-account, never trusted as
+   * already-matched on its own. */
+  accountName: string;
+}
+
+/**
+ * Creates the actual `/transfers/recipients`-equivalent object a payout
+ * later references by id — this is what finally populates
+ * `bank_accounts.provider_account_id` (see `PayoutRequest`'s comment on
+ * why that column existed but nothing had ever written to it for a real
+ * user before this).
+ */
+export interface CreateTransferRecipientRequest {
+  bankCode: string;
+  accountNumber: string;
+}
+
+export interface CreateTransferRecipientResult {
+  recipientId: string;
+}
+
 export interface PaymentProvider {
   readonly name: 'flutterwave' | 'paystack';
   /**
@@ -100,4 +133,9 @@ export interface PaymentProvider {
   initiateCollection(request: CollectionRequest): Promise<CollectionResult>;
   initiatePayout(request: PayoutRequest): Promise<PayoutResult>;
   verifyWebhook(rawBody: string, signatureHeader: string | null): WebhookVerification;
+  listBanks(): Promise<Bank[]>;
+  resolveBankAccountName(request: ResolveBankAccountRequest): Promise<ResolveBankAccountResult>;
+  createTransferRecipient(
+    request: CreateTransferRecipientRequest,
+  ): Promise<CreateTransferRecipientResult>;
 }

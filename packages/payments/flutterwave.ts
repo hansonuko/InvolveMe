@@ -64,11 +64,16 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
+  Bank,
   CollectionRequest,
   CollectionResult,
+  CreateTransferRecipientRequest,
+  CreateTransferRecipientResult,
   PaymentProvider,
   PayoutRequest,
   PayoutResult,
+  ResolveBankAccountRequest,
+  ResolveBankAccountResult,
   ResolveCustomerRequest,
   WebhookVerification,
 } from './provider.ts';
@@ -311,6 +316,48 @@ export function createFlutterwaveProvider(config: FlutterwaveConfig): PaymentPro
         providerReference: transfer.data.id,
         status: transfer.data.status === 'NEW' ? 'pending' : 'processing',
       };
+    },
+
+    // New this session, for link-bank-account — the flow that actually
+    // populates bank_accounts.provider_account_id for a real user (see
+    // PayoutRequest's comment: nothing had ever called this before).
+
+    async listBanks(): Promise<Bank[]> {
+      // https://developer.flutterwave.com/reference/banks_get
+      const result = (await flwFetch(config, '/banks?country=NG', { method: 'GET' })) as {
+        data: { code: string; name: string }[];
+      };
+      return result.data.map((b) => ({ code: b.code, name: b.name }));
+    },
+
+    async resolveBankAccountName(
+      request: ResolveBankAccountRequest,
+    ): Promise<ResolveBankAccountResult> {
+      // https://developer.flutterwave.com/reference/bank_account_resolve_post
+      const result = (await flwFetch(config, '/banks/account-resolve', {
+        method: 'POST',
+        body: {
+          currency: 'NGN',
+          account: { code: request.bankCode, number: request.accountNumber },
+        },
+      })) as { data: { account_name: string } };
+      return { accountName: result.data.account_name };
+    },
+
+    async createTransferRecipient(
+      request: CreateTransferRecipientRequest,
+    ): Promise<CreateTransferRecipientResult> {
+      // https://developer.flutterwave.com/reference/transfers_recipients_create
+      const result = (await flwFetch(config, '/transfers/recipients', {
+        method: 'POST',
+        body: {
+          type: 'bank_ngn',
+          bank: { account_number: request.accountNumber, code: request.bankCode },
+          destination_currency: 'NGN',
+        },
+        idempotencyKey: `recipient-${request.bankCode}-${request.accountNumber}`,
+      })) as { data: { id: string } };
+      return { recipientId: result.data.id };
     },
 
     verifyWebhook(rawBody: string, signatureHeader: string | null): WebhookVerification {
