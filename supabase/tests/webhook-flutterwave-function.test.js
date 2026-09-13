@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 // Phase 2 batch 2 — end-to-end test of the webhook-flutterwave Edge
-// Function. Real HTTP calls with real HMAC-SHA256 signatures computed the
-// same way packages/payments/flutterwave.ts's verifyWebhook checks them,
-// against the real dev database. See supabase/tests/README.md for the
-// deno-run-instead-of-functions-serve rationale.
+// Function. Real HTTP calls with the real `verif-hash` plain-secret header
+// Flutterwave actually sends, against the real dev database. See
+// supabase/tests/README.md for the deno-run-instead-of-functions-serve
+// rationale.
 //
-// The exact event payload shape/type strings are Flutterwave's documented
-// v4 webhook convention as far as could be confirmed without a live
-// account (see packages/payments/flutterwave.ts's header comment) — this
-// test exercises this project's own handling of that shape, not a
-// guarantee a real Flutterwave webhook looks exactly like this.
+// REWRITTEN 2026-09-13: the previous version of this test signed requests
+// with HMAC-SHA256/base64 under a `flutterwave-signature` header and used
+// a `{ type, data: { reference, status: 'succeeded' } }` envelope — all of
+// which matched the (wrong) implementation at the time, not what
+// Flutterwave actually sends. That's exactly why this suite passing 87/87
+// never caught the real incident: it was testing this project's code
+// against its own wrong assumptions, not against Flutterwave's documented
+// contract. Rewritten against developer.flutterwave.com/docs/webhooks and
+// .../reference/webhooks, fetched fresh — see
+// packages/payments/flutterwave.ts's header comment for the full story and
+// docs/05-API-REALTIME-SPEC.md for the corrected contract this now
+// exercises.
 
 const { Client } = require('pg');
 const { spawn } = require('node:child_process');
@@ -20,10 +27,10 @@ const DB_URL = process.env.SUPABASE_DB_URL;
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-// Synthetic secret if .env doesn't have a real one yet — signature
-// verification only needs *a* shared secret to exercise correctly, not a
-// real Flutterwave-issued one (per docs/00-SESSION-HANDOFF.md's original
-// batch 2 plan).
+// Synthetic secret if .env doesn't have a real one yet — verification is a
+// plain string compare against this value, so any non-empty string works
+// for exercising the code path; doesn't need to be a real Flutterwave-
+// issued one.
 const WEBHOOK_SECRET = process.env.FLW_WEBHOOK_SECRET_HASH || 'test-webhook-secret';
 
 for (const [name, val] of Object.entries({
@@ -49,18 +56,19 @@ function log(label, ok, detail) {
   process.stdout.write(`[${ok ? 'PASS' : 'FAIL'}] ${label}${detail ? ' — ' + detail : ''}\n`);
 }
 
-// Base64 digest, not hex — matches packages/payments/flutterwave.ts's
-// verifyWebhook, corrected this session against Flutterwave's actual
-// webhook docs (see that file's header comment for the full story).
-function sign(rawBody) {
-  return crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('base64');
+// Plain string, not a computed digest — matches
+// packages/payments/flutterwave.ts's verifyWebhook: the real Flutterwave
+// `verif-hash` header is just the dashboard-configured secret, compared
+// directly, not a signature over anything.
+function sign(_rawBody) {
+  return WEBHOOK_SECRET;
 }
 
 async function postWebhook(payloadObj, { signature } = {}) {
   const rawBody = JSON.stringify(payloadObj);
   const headers = { 'Content-Type': 'application/json' };
   if (signature !== null) {
-    headers['flutterwave-signature'] = signature !== undefined ? signature : sign(rawBody);
+    headers['verif-hash'] = signature !== undefined ? signature : sign(rawBody);
   }
   const res = await fetch(`${FUNCTION_URL}/`, { method: 'POST', headers, body: rawBody });
   const json = await res.json().catch(() => null);
@@ -160,12 +168,14 @@ async function testChargeCompletedConfirmsTopup(admin) {
     'flutterwave',
   ]);
   const topupId = topupRes.rows[0].id;
-  const eventId = `wbk_test_${crypto.randomUUID()}`;
+  const chargeId = `chg_test_${crypto.randomUUID()}`;
+  // No top-level delivery id in Flutterwave's real payload — the
+  // idempotency key webhook-flutterwave synthesizes is `${event}:${data.id}`.
+  const eventId = `charge.completed:${chargeId}`;
 
   const payload = {
-    id: eventId,
-    type: 'charge.completed',
-    data: { id: `chg_test_${crypto.randomUUID()}`, reference: topupId, status: 'succeeded' },
+    event: 'charge.completed',
+    data: { id: chargeId, tx_ref: topupId, status: 'successful' },
   };
 
   const first = await postWebhook(payload);
@@ -229,44 +239,46 @@ async function testSignatureVerification(admin) {
     'flutterwave',
   ]);
   const topupId = topupRes.rows[0].id;
-  const eventId = `wbk_test_${crypto.randomUUID()}`;
   const payload = {
-    id: eventId,
-    type: 'charge.completed',
-    data: { id: `chg_test_${crypto.randomUUID()}`, reference: topupId },
+    event: 'charge.completed',
+    data: { id: `chg_test_${crypto.randomUUID()}`, tx_ref: topupId },
   };
 
   const noSig = await postWebhook(payload, { signature: null });
   log(
-    'missing signature header -> 401 invalid_signature',
+    'missing verif-hash header -> 401 invalid_signature',
     noSig.status === 401 && noSig.json?.error === 'invalid_signature',
     JSON.stringify(noSig.json),
   );
 
-  const wrongSig = await postWebhook(payload, { signature: 'deadbeef'.repeat(8) });
+  const wrongSig = await postWebhook(payload, { signature: 'not-the-real-secret' });
   log(
-    'garbage signature -> 401 invalid_signature',
+    'wrong verif-hash value -> 401 invalid_signature',
     wrongSig.status === 401 && wrongSig.json?.error === 'invalid_signature',
     JSON.stringify(wrongSig.json),
   );
 
-  // A signature computed for a *different* body than what's actually sent.
-  const rawBody = JSON.stringify(payload);
-  const tamperedSignature = sign(rawBody);
-  const tamperedBody = JSON.stringify({
-    ...payload,
-    data: { ...payload.data, reference: crypto.randomUUID() },
-  });
+  // Verification is a plain compare against the configured secret, not a
+  // signature over the body — so unlike an HMAC scheme, a *correct*
+  // verif-hash value accompanying a tampered body is NOT rejected by
+  // verifyWebhook itself (there's nothing in the body the header
+  // cryptographically commits to, confirmed against Flutterwave's actual
+  // documented mechanism). What still protects against sending an
+  // arbitrary payload with the correct secret is that the secret itself is
+  // never exposed to the client — this test instead confirms a malformed
+  // body with a *correct* header is handled as "no reference" rather than
+  // crashing.
+  const malformedBody = 'not valid json {{{';
   const res = await fetch(`${FUNCTION_URL}/`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'flutterwave-signature': tamperedSignature },
-    body: tamperedBody,
+    headers: { 'Content-Type': 'application/json', 'verif-hash': sign(malformedBody) },
+    body: malformedBody,
   });
-  const tampered = { status: res.status, json: await res.json().catch(() => null) };
+  const malformed = { status: res.status, json: await res.json().catch(() => null) };
   log(
-    "signature valid for a different body than what's sent -> 401 invalid_signature",
-    tampered.status === 401 && tampered.json?.error === 'invalid_signature',
-    JSON.stringify(tampered.json),
+    'correct verif-hash but unparseable JSON body -> 401 invalid_signature, not a crash',
+    malformed.status === 401 && malformed.json?.error === 'invalid_signature',
+    JSON.stringify(malformed.json),
   );
 
   const topupAfter = await admin.query('select status from public.topups where id = $1', [topupId]);
@@ -313,14 +325,14 @@ async function testTransferWebhooksCompleteWithdrawals(admin) {
   ]);
   const withdrawal1Id = w1.rows[0].withdrawal_id;
 
-  const completedEventId = `wbk_test_${crypto.randomUUID()}`;
+  const completedTransferId = `trf_test_${crypto.randomUUID()}`;
+  const completedEventId = `transfer.completed:${completedTransferId}`;
   const completed = await postWebhook({
-    id: completedEventId,
-    type: 'transfer.disburse',
-    data: { id: `trf_test_${crypto.randomUUID()}`, reference: withdrawal1Id },
+    event: 'transfer.completed',
+    data: { id: completedTransferId, reference: withdrawal1Id, status: 'SUCCESSFUL' },
   });
   log(
-    'transfer.disburse -> 200 processed',
+    'transfer.completed (status SUCCESSFUL) -> 200 processed',
     completed.status === 200 && completed.json?.status === 'processed',
     JSON.stringify(completed.json),
   );
@@ -350,14 +362,14 @@ async function testTransferWebhooksCompleteWithdrawals(admin) {
     `before=${wallet2Before.balance} after=${walletAfterInitiate.balance}`,
   );
 
-  const failedEventId = `wbk_test_${crypto.randomUUID()}`;
+  const failedTransferId = `trf_test_${crypto.randomUUID()}`;
+  const failedEventId = `transfer.completed:${failedTransferId}`;
   const failed = await postWebhook({
-    id: failedEventId,
-    type: 'transfer.reversal',
-    data: { id: `trf_test_${crypto.randomUUID()}`, reference: withdrawal2Id },
+    event: 'transfer.completed',
+    data: { id: failedTransferId, reference: withdrawal2Id, status: 'FAILED' },
   });
   log(
-    'transfer.reversal -> 200 processed',
+    'transfer.completed (status FAILED) -> 200 processed',
     failed.status === 200 && failed.json?.status === 'processed',
     JSON.stringify(failed.json),
   );

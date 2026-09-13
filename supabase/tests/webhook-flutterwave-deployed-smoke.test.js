@@ -25,6 +25,17 @@
 // test starts failing with 401 UNAUTHORIZED_NO_AUTH_HEADER, check that
 // flag was included on the most recent deploy before assuming a code
 // regression.
+//
+// LIMITATION, worth being honest about (this is exactly the gap that let
+// the credit-not-landing bug recur once already): this test signs its own
+// request with this project's own understanding of Flutterwave's webhook
+// contract (`verif-hash`, plain string compare — see
+// packages/payments/flutterwave.ts's header comment). It proves the
+// deployed endpoint is internally self-consistent and reachable; it does
+// NOT prove Flutterwave's real delivery actually matches that contract —
+// only a real inbound webhook, or a direct real-transaction reconciliation
+// against `webhook_events_seen`, can prove that. Don't treat this test
+// passing as proof the incident is closed.
 
 const crypto = require('crypto');
 
@@ -49,15 +60,9 @@ function log(label, ok, detail) {
   process.stdout.write(`[${ok ? 'PASS' : 'FAIL'}] ${label}${detail ? ' — ' + detail : ''}\n`);
 }
 
-function sign(rawBody) {
-  return crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('base64');
-}
-
 async function main() {
   const payload = {
-    id: `wbk_deployed_smoke_${crypto.randomUUID()}`,
-    timestamp: Date.now(),
-    type: 'charge.completed',
+    event: 'charge.completed',
     // A well-formed but nonexistent uuid reference — exercises the full
     // signature-verify -> claim -> route -> fn_confirm_topup path for
     // real without touching any real topup. fn_confirm_topup's own
@@ -66,8 +71,8 @@ async function main() {
     // malformed/stale reference doesn't fail the webhook delivery).
     data: {
       id: `chg_deployed_smoke_${crypto.randomUUID()}`,
-      reference: '00000000-0000-0000-0000-000000000000',
-      status: 'succeeded',
+      tx_ref: '00000000-0000-0000-0000-000000000000',
+      status: 'successful',
       amount: 1,
       currency: 'NGN',
     },
@@ -76,13 +81,13 @@ async function main() {
 
   const res = await fetch(`${SUPABASE_URL}/functions/v1/webhook-flutterwave`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'flutterwave-signature': sign(rawBody) },
+    headers: { 'Content-Type': 'application/json', 'verif-hash': WEBHOOK_SECRET },
     body: rawBody,
   });
   const text = await res.text();
 
   log(
-    'deployed webhook-flutterwave accepts a real signed request (200, not the platform JWT gate or a runtime crash)',
+    'deployed webhook-flutterwave accepts a real verif-hash request (200, not the platform JWT gate or a runtime crash)',
     res.status === 200,
     `status=${res.status} body=${text.slice(0, 200)}`,
   );
@@ -91,12 +96,12 @@ async function main() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'flutterwave-signature': 'not-a-real-signature',
+      'verif-hash': 'not-the-real-secret',
     },
     body: rawBody,
   });
   log(
-    'deployed webhook-flutterwave still rejects a bad signature (401, not the platform gate blocking it earlier)',
+    'deployed webhook-flutterwave still rejects a wrong verif-hash (401, not the platform gate blocking it earlier)',
     badSig.status === 401,
     `status=${badSig.status}`,
   );

@@ -43,41 +43,51 @@
  * deliberately-fake recipient id came back a real `RECIPIENT_NOT_FOUND`
  * (404), proving the whole request shape is accepted up to that point.
  *
- * `verifyWebhook` — HMAC-SHA256 of the raw body against
- * `FLW_WEBHOOK_SECRET_HASH`, digest **base64** (confirmed against
- * Flutterwave's current webhook docs, code example included) — the
- * previous version of this file used `hex`, which would have rejected
- * every real webhook Flutterwave ever sent. Caught before it shipped by
- * reading the doc's own verification code sample rather than assuming the
- * v3-era convention still held.
- *
- * A second, real bug in this same function, found via a real incident
- * (2026-09-13): `Buffer.from(...)` here relied on the global `Buffer` with
- * no explicit import. A local `deno run` tolerates this; Supabase's
- * deployed edge-runtime does not, and crashed with a 500 on every real
- * request that reached this code. Fixed with an explicit
- * `import { Buffer } from 'node:buffer'` — see
+ * `verifyWebhook` — CORRECTED AGAIN, 2026-09-13, same day as the JWT-gate
+ * and Buffer-import fixes below, after the credit-not-landing bug recurred
+ * even with both of *those* fixes deployed and passing. Re-diagnosed from
+ * scratch rather than assuming that writeup was complete (it wasn't): this
+ * function was checking a header (`flutterwave-signature`) Flutterwave
+ * never sends, verified with an algorithm (HMAC-SHA256, base64) Flutterwave
+ * never runs. The "confirmed against Flutterwave's current webhook docs"
+ * claim this comment used to make was wrong — re-fetched
+ * developer.flutterwave.com/docs/webhooks and .../reference/webhooks fresh,
+ * independently, twice, both agreeing: the real header is **`verif-hash`**,
+ * and verification is a **plain string comparison** against the dashboard-
+ * configured secret — no HMAC, no digest, nothing computed over the body at
+ * all. Also wrong: the payload envelope is `{ event, data }`, not
+ * `{ type, data }`, there is no top-level `id` field for idempotency (see
+ * this function's own comment on how `eventId` is synthesized instead), and
+ * a charge's merchant-side reference lives at `data.tx_ref`, not
+ * `data.reference` (transfers *do* use `data.reference` — the two resource
+ * types don't share a convention). See
  * supabase/functions/webhook-flutterwave/index.ts's header comment for the
- * full incident (this bug was masked by an unrelated platform-level JWT
- * gateway issue that was rejecting every webhook before this code ever ran,
- * so the two had to be found and fixed in sequence, not simultaneously).
+ * full incident, including the live ground-truth check that proved this was
+ * actively broken (two real ₦100 payments made the same day, both
+ * `status: "succeeded"` at Flutterwave, both stuck `pending` in this DB
+ * with `webhook_events_seen` still completely empty).
  *
- * What's still NOT fully verified end-to-end: a real virtual-account
- * funding *did* complete for real this session (confirmed independently via
- * `GET /charges?customer_id=...` returning `status: "succeeded"` for a real
- * ₦100 transfer) — but the corresponding webhook was never actually
- * *observed* arriving, only reconstructed and manually confirmed via
- * `fn_confirm_topup` after the fact, since both bugs above meant it could
- * never have arrived successfully before they were fixed. A real payout has
- * also never disbursed. Whether a real webhook actually lands now that both
- * bugs are fixed is the next thing to watch for, not something already
- * proven — `supabase/tests/webhook-flutterwave-deployed-smoke.test.js`
- * proves the endpoint itself is healthy, not that Flutterwave's real
- * delivery reaches it.
+ * A second, unrelated bug found via the same incident, still fixed:
+ * `Buffer.from(...)` here relied on the global `Buffer` with no explicit
+ * import. A local `deno run` tolerates this; Supabase's deployed
+ * edge-runtime does not, and crashed with a 500 on every real request that
+ * reached this code. Fixed with an explicit
+ * `import { Buffer } from 'node:buffer'`.
+ *
+ * Lesson for whoever touches this next: the previous "confirmed live"
+ * language in this comment described *reading* Flutterwave's docs, never
+ * *receiving* one real raw webhook request and inspecting it byte-for-byte
+ * — reading docs confidently is not the same discipline as the live-API
+ * probing this project otherwise prides itself on for the REST endpoints,
+ * and it silently broke this one specific thing for weeks. If this ever
+ * looks broken again, don't re-read the docs and guess — check
+ * `webhook_events_seen` row count directly, and if it's not growing, add
+ * temporary unconditional logging of the raw incoming header names/body
+ * before touching the verification logic itself.
  */
 
 import { Buffer } from 'node:buffer';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type {
   Bank,
   CollectionRequest,
@@ -376,29 +386,55 @@ export function createFlutterwaveProvider(config: FlutterwaveConfig): PaymentPro
     },
 
     verifyWebhook(rawBody: string, signatureHeader: string | null): WebhookVerification {
+      // CORRECTED 2026-09-13, this time against the actual documented
+      // contract, not a remembered/assumed one — see
+      // supabase/functions/webhook-flutterwave/index.ts's header comment
+      // for the full incident this replaces. Ground truth (fetched fresh
+      // from developer.flutterwave.com/docs/webhooks and
+      // developer.flutterwave.com/reference/webhooks, independently, twice,
+      // both agreeing): the header is **`verif-hash`**, not
+      // `flutterwave-signature`, and verification is a **plain string
+      // comparison** against the secret hash configured in the dashboard —
+      // there is no HMAC, no digest, no signing of the body at all. The
+      // previous version of this function checked a header Flutterwave
+      // never sends, with an algorithm Flutterwave never runs — meaning
+      // every real webhook was silently rejected from day one, a strictly
+      // worse bug than the JWT-gate/Buffer issues fixed earlier the same
+      // day, because those were platform/runtime issues around otherwise-
+      // correct code; this was the verification logic itself checking the
+      // wrong thing. Confirmed live and current as of this fix: two real
+      // ₦100 top-up charges made the same day this fix shipped
+      // (chg_uaP4X5W6rO, chg_8AHFxYniLv — both `status: "succeeded"` per
+      // Flutterwave's own `GET /charges`) sat with `webhook_events_seen`
+      // still completely empty (0 rows total, checked directly against the
+      // dev DB) at the moment this bug was found — proof this was live and
+      // active, not hypothetical.
       if (!signatureHeader) {
+        console.error('verifyWebhook: no verif-hash header on inbound request');
         return { isValid: false, eventId: '', payload: null };
       }
-
-      // Base64 digest, not hex — confirmed against
-      // https://developer.flutterwave.com/docs/webhooks's own verification
-      // code sample. (The previous version of this file used hex, which
-      // would have rejected every real webhook.)
-      const expected = createHmac('sha256', config.webhookSecretHash)
-        .update(rawBody)
-        .digest('base64');
 
       // Constant-time comparison — a naive `===` leaks timing information
       // an attacker could use to forge a valid signature byte-by-byte.
       // Buffers must be equal length for timingSafeEqual; mismatched
       // length is itself a fast, safe rejection (no secret-dependent
       // branch on the content being compared).
-      const expectedBuf = Buffer.from(expected, 'utf8');
+      const expectedBuf = Buffer.from(config.webhookSecretHash, 'utf8');
       const actualBuf = Buffer.from(signatureHeader, 'utf8');
       const isValid =
         expectedBuf.length === actualBuf.length && timingSafeEqual(expectedBuf, actualBuf);
 
       if (!isValid) {
+        // Logged deliberately (not just returned): the last time this
+        // check silently failed for a structural reason (wrong header
+        // name entirely), nothing surfaced it for weeks. This doesn't log
+        // the secret or the header value, just the fact of a mismatch and
+        // the lengths involved, which is enough to distinguish "wrong
+        // secret configured" from "header genuinely absent/malformed" in
+        // the logs without leaking anything sensitive.
+        console.error(
+          `verifyWebhook: verif-hash mismatch (received length=${actualBuf.length}, expected length=${expectedBuf.length})`,
+        );
         return { isValid: false, eventId: '', payload: null };
       }
 
@@ -406,11 +442,23 @@ export function createFlutterwaveProvider(config: FlutterwaveConfig): PaymentPro
       try {
         payload = JSON.parse(rawBody);
       } catch {
+        console.error('verifyWebhook: signature valid but body is not valid JSON');
         return { isValid: false, eventId: '', payload: null };
       }
 
-      const eventId =
-        typeof (payload as { id?: unknown })?.id === 'string' ? (payload as { id: string }).id : '';
+      // No documented top-level delivery/event id exists in Flutterwave's
+      // real payload (confirmed against the docs' own examples — the
+      // envelope is just `{ event, data }`, nothing else at the top
+      // level). `data.id` (the underlying charge/transfer id) is the only
+      // stable identifier a retry of the *same* event will repeat, so the
+      // idempotency key is synthesized as `${event}:${data.id}` — prefixed
+      // with the event name so a charge and a transfer that happen to
+      // share a numeric id at Flutterwave can never collide in
+      // `webhook_events_seen`.
+      const p = payload as { event?: unknown; data?: { id?: unknown } };
+      const eventName = typeof p.event === 'string' ? p.event : '';
+      const dataId = p.data?.id != null ? String(p.data.id) : '';
+      const eventId = eventName && dataId ? `${eventName}:${dataId}` : '';
 
       return { isValid: true, eventId, payload };
     },
