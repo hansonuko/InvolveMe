@@ -1,16 +1,29 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { FlatList, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import {
+  FlatList,
+  Modal,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useBanks, useLinkBankAccount, type Bank } from '@/lib/queries/banks';
+import { useFindUserByPhone, type FoundUser } from '@/lib/queries/findUserByPhone';
 import { useSession } from '@/lib/hooks/useSession';
 import { useKycTier } from '@/lib/queries/kyc';
+import { toE164NigerianPhone } from '@/lib/phone';
 import {
   useBuyCredit,
   useLinkedBankAccount,
+  useTopupStatus,
+  useTransferCredit,
   useWallets,
   useWithdraw,
   walletBalance,
@@ -41,9 +54,32 @@ function BalanceCard({ label, value, suffix }: { label: string; value: number; s
   );
 }
 
+/** Shown once useTopupStatus reports the topup as 'completed' — see that
+ * hook's comment for how it detects this without the user having to back
+ * out and check the wallet manually. "Continue" just closes the modal;
+ * the wallet screen behind it already reflects the new balance via the
+ * same Realtime subscription that drove this. */
+function TopupCongrats({ onContinue }: { onContinue: () => void }) {
+  const { spacing } = useTheme();
+  return (
+    <View style={{ gap: spacing.md, marginTop: spacing.xl, alignItems: 'center', flex: 1 }}>
+      <Text variant="display">🎉</Text>
+      <Text variant="title" style={{ textAlign: 'center' }}>
+        Congratulations!
+      </Text>
+      <Text variant="body" color="secondary" style={{ textAlign: 'center' }}>
+        Your credit has landed — you can now start chatting with your loved ones, engage with
+        groups, and also earn from it.
+      </Text>
+      <Button label="Go to wallet" onPress={onContinue} style={{ marginTop: spacing.lg }} />
+    </View>
+  );
+}
+
 function BuyCreditModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { colors, spacing, radius } = useTheme();
   const buyCredit = useBuyCredit();
+  const { data: topupStatus } = useTopupStatus(buyCredit.data?.topup_id);
   const [amountNaira, setAmountNaira] = useState('1000');
 
   const handleClose = () => {
@@ -71,7 +107,9 @@ function BuyCreditModal({ visible, onClose }: { visible: boolean; onClose: () =>
           </Pressable>
         </View>
 
-        {!buyCredit.data ? (
+        {topupStatus === 'completed' ? (
+          <TopupCongrats onContinue={handleClose} />
+        ) : !buyCredit.data ? (
           <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
             <Text variant="caption" color="secondary">
               Amount (₦)
@@ -121,14 +159,19 @@ function BuyCreditModal({ visible, onClose }: { visible: boolean; onClose: () =>
                 },
               ]}
             >
-              <Text variant="title">{buyCredit.data.bank_transfer.account_number}</Text>
+              <Text variant="title" selectable>
+                {buyCredit.data.bank_transfer.account_number}
+              </Text>
               <Text variant="body" color="secondary">
                 {buyCredit.data.bank_transfer.bank_name ?? 'Flutterwave'}
               </Text>
             </View>
             <Text variant="caption" color="secondary">
-              Credits land automatically once the transfer is confirmed — no need to come back and
-              check.
+              Tap and hold the account number to copy it.
+            </Text>
+            <Text variant="caption" color="secondary">
+              Credits land automatically once the transfer is confirmed — this screen updates
+              itself, no need to back out and check.
             </Text>
           </View>
         )}
@@ -337,27 +380,181 @@ function LinkBankAccountModal({ visible, onClose }: { visible: boolean; onClose:
   );
 }
 
+/** Send chat credit to another user by phone number — same lookup flow as
+ * chats.tsx's NewChatModal (find by phone, then act). See
+ * lib/queries/wallet.ts's useTransferCredit comment for the compliance
+ * context: this is convertible to cash on the recipient's side, which is
+ * why it shipped ahead of (not instead of) the legal review
+ * docs/07-COMPLIANCE-LEGAL.md §1 calls for on this exact pattern. */
+function TransferCreditModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { colors, spacing, radius } = useTheme();
+  const findUser = useFindUserByPhone();
+  const transferCredit = useTransferCredit();
+
+  const [phone, setPhone] = useState('');
+  const [found, setFound] = useState<FoundUser | null>(null);
+  const [credits, setCredits] = useState('');
+
+  const reset = () => {
+    setPhone('');
+    setFound(null);
+    setCredits('');
+    findUser.reset();
+    transferCredit.reset();
+  };
+
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const handleLookup = () => {
+    findUser.mutate(toE164NigerianPhone(phone), {
+      onSuccess: (user) => setFound(user),
+    });
+  };
+
+  const handleSend = () => {
+    if (!found) return;
+    const parsed = Number(credits);
+    if (!Number.isInteger(parsed) || parsed <= 0) return;
+    transferCredit.mutate({ recipientPhone: toE164NigerianPhone(phone), credits: parsed });
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
+      <Screen>
+        <View
+          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+        >
+          <Text variant="title">Send credit</Text>
+          <Pressable onPress={handleClose} hitSlop={12}>
+            <Text variant="body" color="secondary">
+              Close
+            </Text>
+          </Pressable>
+        </View>
+
+        {transferCredit.isSuccess ? (
+          <View style={{ marginTop: spacing.xl, gap: spacing.sm }}>
+            <Text variant="bodyMedium" color="success">
+              Sent {transferCredit.data.credits_sent} credits to{' '}
+              {found?.display_name ?? 'this user'}.
+            </Text>
+            <Text variant="caption" color="secondary">
+              They will receive {transferCredit.data.credits_received} as withdrawable cash after
+              the platform&apos;s cut.
+            </Text>
+          </View>
+        ) : (
+          <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
+            <Text variant="caption" color="secondary">
+              Their phone number
+            </Text>
+            <TextInput
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="0801 234 5678"
+              placeholderTextColor={colors.textSecondary}
+              keyboardType="phone-pad"
+              editable={!found}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.bgSurfaceAlt,
+                  color: colors.textPrimary,
+                  borderRadius: radius.card,
+                  borderColor: colors.borderSubtle,
+                },
+              ]}
+            />
+
+            {findUser.isError ? (
+              <Text variant="caption" color="danger">
+                {findUser.error.message}
+              </Text>
+            ) : null}
+
+            {!found ? (
+              <Button
+                label={findUser.isPending ? 'Looking up…' : 'Find'}
+                onPress={handleLookup}
+                disabled={findUser.isPending || phone.length < 8}
+              />
+            ) : (
+              <>
+                <Text variant="bodyMedium" color="success">
+                  Sending to {found.display_name ?? 'this user'}
+                </Text>
+                <Text variant="caption" color="secondary">
+                  How many credits?
+                </Text>
+                <TextInput
+                  value={credits}
+                  onChangeText={setCredits}
+                  placeholder="e.g. 50"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="number-pad"
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.bgSurfaceAlt,
+                      color: colors.textPrimary,
+                      borderRadius: radius.card,
+                      borderColor: colors.borderSubtle,
+                    },
+                  ]}
+                />
+                {transferCredit.isError ? (
+                  <Text variant="caption" color="danger">
+                    {transferCredit.error.message}
+                  </Text>
+                ) : null}
+                <Button
+                  label={transferCredit.isPending ? 'Sending…' : 'Send credit'}
+                  onPress={handleSend}
+                  disabled={transferCredit.isPending || !Number(credits)}
+                />
+              </>
+            )}
+          </View>
+        )}
+      </Screen>
+    </Modal>
+  );
+}
+
 export default function WalletScreen() {
   const { spacing } = useTheme();
   const router = useRouter();
   const { session } = useSession();
   const userId = session?.user.id;
 
-  const { data: wallets, isLoading } = useWallets(userId);
-  const { data: bankAccount } = useLinkedBankAccount(userId);
-  const { data: kycTier } = useKycTier(userId);
+  const { data: wallets, isLoading, refetch: refetchWallets, isRefetching } = useWallets(userId);
+  const { data: bankAccount, refetch: refetchBankAccount } = useLinkedBankAccount(userId);
+  const { data: kycTier, refetch: refetchKycTier } = useKycTier(userId);
 
   const [buyModalVisible, setBuyModalVisible] = useState(false);
   const [withdrawModalVisible, setWithdrawModalVisible] = useState(false);
   const [linkBankModalVisible, setLinkBankModalVisible] = useState(false);
+  const [transferModalVisible, setTransferModalVisible] = useState(false);
 
   const topupCredit = walletBalance(wallets, 'topup_credit');
   const earningsPending = walletBalance(wallets, 'earnings_pending');
   const withdrawableCash = walletBalance(wallets, 'withdrawable_cash');
 
+  const handleRefresh = () => {
+    void refetchWallets();
+    void refetchBankAccount();
+    void refetchKycTier();
+  };
+
   return (
     <Screen>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={handleRefresh} />}
+      >
         <Text variant="display" style={{ marginBottom: spacing.lg }}>
           Wallet
         </Text>
@@ -388,6 +585,15 @@ export default function WalletScreen() {
           </View>
         </View>
 
+        <View style={{ marginTop: spacing.md }}>
+          <Button
+            label="Send credit to someone"
+            variant="secondary"
+            onPress={() => setTransferModalVisible(true)}
+            disabled={topupCredit <= 0}
+          />
+        </View>
+
         {!bankAccount ? (
           <View style={{ marginTop: spacing.sm, gap: spacing.sm }}>
             <Text variant="caption" color="secondary">
@@ -412,6 +618,10 @@ export default function WalletScreen() {
       </ScrollView>
 
       <BuyCreditModal visible={buyModalVisible} onClose={() => setBuyModalVisible(false)} />
+      <TransferCreditModal
+        visible={transferModalVisible}
+        onClose={() => setTransferModalVisible(false)}
+      />
       {bankAccount ? (
         <WithdrawModal
           visible={withdrawModalVisible}

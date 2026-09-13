@@ -1,6 +1,14 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import {
+  FlatList,
+  Modal,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
@@ -187,7 +195,12 @@ export default function ChatsScreen() {
   const { spacing } = useTheme();
   const router = useRouter();
   const { session } = useSession();
-  const { data: threads, isLoading } = useThreads(session?.user.id);
+  const {
+    data: threads,
+    isLoading,
+    refetch: refetchThreads,
+    isRefetching,
+  } = useThreads(session?.user.id);
   const [modalVisible, setModalVisible] = useState(false);
 
   return (
@@ -232,6 +245,9 @@ export default function ChatsScreen() {
           renderItem={({ item }) => (
             <ThreadRow thread={item} onPress={() => router.push(`/thread/${item.id}`)} />
           )}
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={() => void refetchThreads()} />
+          }
         />
       )}
 

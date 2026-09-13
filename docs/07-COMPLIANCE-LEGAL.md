@@ -10,6 +10,8 @@ InvolveMe holds user funds (top-up balances, pending earnings) and moves cash be
 
 **Do not build, without a legal check first:** direct wallet-to-wallet cash transfer unconnected to chat activity, credit resale/exchange between users, or anything resembling a stored-value instrument usable outside the app (e.g., a redeemable gift-card-like credit) — each of those meaningfully changes the regulatory analysis.
 
+**Status as of 2026-09-13: built anyway.** Peer-to-peer credit transfer, convertible to cash on the recipient's side (`transfer-credit` Edge Function / `fn_transfer_credit`, see `docs/00-SESSION-HANDOFF.md`), shipped on an explicit, informed decision by the product owner after this exact risk was surfaced and three alternatives (hold behind a flag / non-cash gift-only / ship live) were offered. This is not an oversight — it is the one item on this page most likely to matter to counsel, so it's called out here a second time rather than left to be found only in the pre-launch checklist below.
+
 ## 2. KYC/AML
 
 - **Tiered KYC is mandatory before any cash leaves the system** (see `docs/06-SECURITY-FRAUD-LOOPHOLES.md` §4): Tier 1 = BVN or NIN verification via a licensed KYC vendor (e.g., a provider integrated with NIMC/CBN watchlists — do not build custom BVN verification, use a vendor with the proper data-sharing agreements). Tier 2 = liveness/enhanced verification for higher limits.
@@ -21,13 +23,13 @@ InvolveMe holds user funds (top-up balances, pending earnings) and moves cash be
 
 This is the most immediate practical risk — the app can be built perfectly and still get rejected or pulled.
 
-- **Apple App Store Review Guidelines** scrutinize apps that facilitate paid interaction between strangers, especially anything read as adjacent to escort/companion services, and apps that move real money must generally use approved payment flows for digital goods vs. real-world services correctly classified (chat-for-pay is a "service," not digital content, so Apple's in-app-purchase requirement for digital goods should *not* apply — but this exact classification is a common review flashpoint and needs explicit justification in the review notes, and ideally a pre-submission consultation).
+- **Apple App Store Review Guidelines** scrutinize apps that facilitate paid interaction between strangers, especially anything read as adjacent to escort/companion services, and apps that move real money must generally use approved payment flows for digital goods vs. real-world services correctly classified (chat-for-pay is a "service," not digital content, so Apple's in-app-purchase requirement for digital goods should _not_ apply — but this exact classification is a common review flashpoint and needs explicit justification in the review notes, and ideally a pre-submission consultation).
 - **Google Play** has similar policies around monetized social/dating-adjacent interaction and financial services (Play's Financial Services policy applies to apps facilitating money transmission).
 - **Mitigation baked into product design:** no explicit/adult content, mandatory content moderation (text scanning for harassment/solicitation, image moderation on media/status uploads), clear ToS prohibiting use of the platform for sexual services or solicitation, an in-app reporting/blocking system (WhatsApp-parity feature, also a review requirement), and age verification (18+) at signup given money changes hands. Build all of this before submission — retrofitting moderation after a rejection or takedown is far more expensive than shipping it in v1.
 
 ## 4. Terms of Service must explicitly cover
 
-- Chat credit is **not** a currency, gift card, or transferable financial instrument outside the app's defined mechanics — it has no value except as defined by the pricing config, to avoid it being treated as a separate regulated stored-value product.
+- Chat credit is **not** a currency, gift card, or financial instrument usable _outside_ the app's defined mechanics — it has no value except as defined by the pricing config, to avoid it being treated as a separate regulated stored-value product. (This line was written before peer-to-peer transfer existed — see §1's "built anyway" note. It still holds for _outside_-the-app usability; it no longer accurately describes credit as non-transferable _within_ the app, and the ToS draft needs to say so precisely once counsel has looked at §1.)
 - Platform's fee structure (2% top-up, 20% earnings take) disclosed plainly, not just in fine print — regulators and app stores both look for this.
 - Escrow/refund mechanics (unanswered-message refund window) disclosed so users understand when they are and aren't charged.
 - Withdrawal eligibility conditions (KYC requirement, tiered limits, the 24h promise's actual conditions per `docs/06-SECURITY-FRAUD-LOOPHOLES.md` §4) — do not market an unconditional "24h guaranteed" if the real system is tiered; market it accurately as "for verified users."
@@ -39,6 +41,7 @@ Nigeria Data Protection Act (NDPA) applies: lawful basis for processing phone nu
 
 ## 6. Pre-launch legal checklist
 
+- [ ] **Get the peer-to-peer credit transfer feature (§1, "built anyway") in front of counsel specifically** — it shipped live before this checklist item was checked, not after
 - [ ] Confirm InvolveMe's licensing posture with Nigerian fintech counsel given the "wallet on top of a licensed PSP" architecture
 - [ ] KYC vendor contract with proper BVN/NIN data-sharing agreement in place
 - [ ] ToS + Privacy Policy drafted covering §4/§5 above, reviewed by counsel

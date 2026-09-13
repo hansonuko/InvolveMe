@@ -118,6 +118,54 @@ export function useBuyCredit() {
   });
 }
 
+/** Polls-via-Realtime a single topup's status, so BuyCreditModal can detect
+ * the moment a transfer clears and show the congrats screen instead of
+ * making the user back out to the wallet screen and check manually.
+ * `topups` was added to the supabase_realtime publication specifically for
+ * this (see the enable_realtime_topups migration); RLS already scopes the
+ * row to its owner. */
+export function useTopupStatus(topupId: string | undefined) {
+  const queryClient = useQueryClient();
+  const queryKey = ['topups', topupId];
+
+  const query = useQuery({
+    queryKey,
+    enabled: !!topupId,
+    queryFn: async (): Promise<string> => {
+      const { data, error } = await supabase
+        .from('topups')
+        .select('status')
+        .eq('id', topupId)
+        .single();
+      if (error) throw error;
+      return data.status;
+    },
+    // Realtime pushes the update; this is just a safety-net poll in case a
+    // websocket event is ever missed, so it doesn't need to be fast.
+    refetchInterval: 5000,
+  });
+
+  useEffect(() => {
+    if (!topupId) return;
+
+    const channel = supabase
+      .channel(`topups:${topupId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'topups', filter: `id=eq.${topupId}` },
+        () => queryClient.invalidateQueries({ queryKey }),
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topupId]);
+
+  return query;
+}
+
 interface WithdrawResponse {
   withdrawal_id: string;
   amount_kobo: number;
@@ -134,6 +182,34 @@ export function useWithdraw() {
       callEdgeFunction<WithdrawResponse>('withdraw', {
         bank_account_id: params.bankAccountId,
         amount_kobo: params.amountKobo,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['wallets'] });
+    },
+  });
+}
+
+interface TransferCreditResponse {
+  transfer_id: string;
+  credits_sent: number;
+  platform_cut_credits: number;
+  credits_received: number;
+}
+
+/** Wraps POST /functions/v1/transfer-credit. Sender -> recipient chat
+ * credit, convertible to cash on the recipient's side (see
+ * supabase/functions/transfer-credit's header comment) — flagged in
+ * docs/00-SESSION-HANDOFF.md as shipped ahead of the legal review
+ * docs/07-COMPLIANCE-LEGAL.md §1 calls for on this exact pattern. */
+export function useTransferCredit() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: { recipientPhone: string; credits: number; note?: string }) =>
+      callEdgeFunction<TransferCreditResponse>('transfer-credit', {
+        recipient_phone: params.recipientPhone,
+        credits: params.credits,
+        note: params.note,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['wallets'] });

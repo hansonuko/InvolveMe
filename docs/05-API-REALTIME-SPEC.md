@@ -179,6 +179,25 @@ Requires KYC tier ≥ 1 (`submit-kyc`). Resolves the account's registered name v
 
 Read-only proxy for Flutterwave's `/banks?country=NG`, for the bank-picker UI — not hardcoded, since Flutterwave is the source of truth for which `bank_code` values the two functions above will actually accept.
 
+### `POST /functions/v1/transfer-credit`
+
+```jsonc
+// Request
+{ "recipient_phone": "+2348012345678", "credits": 50, "note": "for lunch" }   // note optional
+// Response 200
+{ "transfer_id": "uuid", "credits_sent": 50, "platform_cut_credits": 10, "credits_received": 40 }
+// Response 400
+{ "error": "invalid_request" | "invalid_amount" | "amount_over_transfer_cap" }
+// Response 402
+{ "error": "insufficient_credit" }
+// Response 403
+{ "error": "sender_suspended" | "recipient_suspended" | "wallet_frozen" }
+// Response 404
+{ "error": "user_not_found" }
+```
+
+Peer-to-peer chat-credit transfer, convertible to cash on the recipient's side — see `docs/03-ECONOMY-LEDGER.md` §9 and `docs/07-COMPLIANCE-LEGAL.md` §1 (this is the one feature that document names explicitly as needing a legal check before shipping; it shipped anyway, flagged). `recipient_phone` resolves the same way `find-user-by-phone` does. `credit_transfer_max_credits` in `pricing_config` caps a single call.
+
 ## 2. Scheduled jobs (pg_cron → Edge Function)
 
 | Job                    | Schedule     | Does                                                                                                                                                                                                             |
@@ -193,6 +212,7 @@ Read-only proxy for Flutterwave's `/banks?country=NG`, for the bank-picker UI �
 
 - `postgres_changes` on `messages` filtered by `thread_id=eq.<id>` — chat delivery.
 - `postgres_changes` on `wallets` filtered by `user_id=eq.<self>` — live balance updates driving the motion spec in `docs/04-DESIGN-SYSTEM.md`.
+- `postgres_changes` on `topups` filtered by `id=eq.<topup_id>` — lets the buy-credit screen detect a transfer clearing without the user backing out to check manually.
 - Presence channel per thread — typing indicators, online status (ephemeral, not persisted).
 - Broadcast channel per thread — read receipts (ephemeral by design; if a persisted read-receipt audit trail is ever needed for disputes, add a `message_reads` table deliberately rather than repurposing broadcast).
 
