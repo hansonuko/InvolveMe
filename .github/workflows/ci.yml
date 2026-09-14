@@ -7,6 +7,28 @@ on:
     branches: [main]
 
 jobs:
+  # Gates test-wallet-code below to PRs that could plausibly touch it — a
+  # docs-only or mobile-UI-only PR (the majority of this project's history
+  # so far) has no reason to spend CI minutes and live Flutterwave API
+  # calls re-running the wallet suite. lint-and-typecheck/migrate-staging
+  # stay unconditional (cheap, and typechecking genuinely covers the whole
+  # repo regardless of what changed).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      wallet: ${{ steps.filter.outputs.wallet }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            wallet:
+              - 'supabase/functions/**'
+              - 'supabase/migrations/**'
+              - 'supabase/tests/**'
+              - 'packages/payments/**'
+
   lint-and-typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -44,7 +66,8 @@ jobs:
   # hand) is the meaningful check, not pre-merge.
   test-wallet-code:
     runs-on: ubuntu-latest
-    needs: lint-and-typecheck
+    needs: [changes, lint-and-typecheck]
+    if: needs.changes.outputs.wallet == 'true'
     steps:
       - uses: actions/checkout@v4
 
