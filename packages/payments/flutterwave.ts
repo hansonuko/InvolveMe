@@ -97,6 +97,7 @@ import type {
   PaymentProvider,
   PayoutRequest,
   PayoutResult,
+  CollectionStatusResult,
   ResolveBankAccountRequest,
   ResolveBankAccountResult,
   ResolveCustomerRequest,
@@ -120,7 +121,8 @@ export interface FlutterwaveConfig {
   /** sandbox | production — see docs/authentication: separate credential
    * pairs per environment, and this project's confirmed pair is production. */
   environment: 'sandbox' | 'production';
-  /** HMAC-SHA256 key for verifying the `flutterwave-signature` webhook header. */
+  /** Plain-string-compared secret for the `verif-hash` webhook header — see
+   * verifyWebhook's own comment for why this isn't HMAC despite the name. */
   webhookSecretHash: string;
   /** Platform's own `/transfers/senders` id — required on every payout. */
   transferSenderId: string;
@@ -302,6 +304,36 @@ export function createFlutterwaveProvider(config: FlutterwaveConfig): PaymentPro
           expiresAt: virtualAccount.data.account_expiration_datetime ?? null,
         },
       };
+    },
+
+    async checkCollectionStatus(reference: string): Promise<CollectionStatusResult> {
+      // https://developer.flutterwave.com/reference/charges_get — confirmed
+      // live 2026-09-14 (docs/00-SESSION-HANDOFF.md session 12):
+      // GET /charges?reference={topups.id} returns the real charge (if any
+      // funds have actually landed) with a top-level `status` of
+      // 'succeeded' | 'failed' | anything else in-flight — the same
+      // `reference` field this project already confirmed matches
+      // `topups.id` exactly for both card and bank-transfer/virtual-account
+      // collections (verified against 5 real charges, not assumed). No
+      // matching charge at all just means no money has arrived yet, which
+      // is a normal 'pending' outcome, not an error.
+      const result = (await flwFetch(config, `/charges?reference=${reference}`, {
+        method: 'GET',
+      })) as { data: { id: string; status: string }[] };
+
+      const charge = result.data[0];
+      if (!charge) {
+        return { status: 'pending', providerChargeId: null };
+      }
+      if (charge.status === 'succeeded') {
+        return { status: 'succeeded', providerChargeId: charge.id };
+      }
+      if (charge.status === 'failed') {
+        return { status: 'failed', providerChargeId: charge.id };
+      }
+      // Any other in-flight status (e.g. still processing) — treat as
+      // pending rather than guess; the next scheduled run checks again.
+      return { status: 'pending', providerChargeId: null };
     },
 
     async initiatePayout(request: PayoutRequest): Promise<PayoutResult> {
