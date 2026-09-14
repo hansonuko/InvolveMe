@@ -2,6 +2,7 @@ export type {
   Bank,
   CollectionRequest,
   CollectionResult,
+  CollectionStatusResult,
   CreateTransferRecipientRequest,
   CreateTransferRecipientResult,
   PaymentProvider,

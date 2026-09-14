@@ -87,6 +87,29 @@ export interface WebhookVerification {
   payload: unknown;
 }
 
+/**
+ * `checkCollectionStatus` — a direct, pull-based ground-truth check against
+ * the provider, independent of whether a webhook ever arrives. Added
+ * 2026-09-14 after `webhook-flutterwave` was found to have never once
+ * received a real Flutterwave-initiated event (docs/00-SESSION-HANDOFF.md
+ * session 12): every "completed" topup in this app's history turned out to
+ * have been reconciled by hand, not by a webhook. `reconcile-topups` polls
+ * this for any topup stuck `pending`, so a stuck webhook — for any reason,
+ * including a future dashboard misconfiguration nobody's found yet — can
+ * self-heal instead of silently holding a user's money indefinitely.
+ * `reference` is the same value passed as `CollectionRequest.reference`
+ * (i.e. `topups.id`) when the collection was initiated.
+ */
+export interface CollectionStatusResult {
+  status: 'pending' | 'succeeded' | 'failed';
+  /** The provider's own charge id — passed to fn_confirm_topup's
+   * p_provider_ref exactly like the webhook handler does, so a topup
+   * confirmed this way is indistinguishable in the ledger from one
+   * confirmed by a real webhook. Null only when status is 'pending' (no
+   * charge exists yet to have an id). */
+  providerChargeId: string | null;
+}
+
 export interface Bank {
   code: string;
   name: string;
@@ -133,6 +156,7 @@ export interface PaymentProvider {
   initiateCollection(request: CollectionRequest): Promise<CollectionResult>;
   initiatePayout(request: PayoutRequest): Promise<PayoutResult>;
   verifyWebhook(rawBody: string, signatureHeader: string | null): WebhookVerification;
+  checkCollectionStatus(reference: string): Promise<CollectionStatusResult>;
   listBanks(): Promise<Bank[]>;
   resolveBankAccountName(request: ResolveBankAccountRequest): Promise<ResolveBankAccountResult>;
   createTransferRecipient(
