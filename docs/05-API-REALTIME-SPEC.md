@@ -32,6 +32,8 @@ Error codes: `thread_not_found` (404), `not_a_participant` (403), `thread_blocke
 
 Response now includes `thread_id` — required so the client can continue the conversation. Once a thread exists, replies **must** pass its `thread_id`, not `recipient_id`: `fn_start_thread(payer, payee)` looks up `(participant_a, participant_b)` as an ordered pair, so the payee replying with `recipient_id` set to the payer would look up (and, finding none, create) a second, reversed-role thread rather than continuing the first — participant_a/payer is fixed for the life of a thread and is always whoever opened it.
 
+**Push notification side effect (added 2026-09-14):** after a successful send, the recipient gets a best-effort Expo push notification (`_shared/push.ts`'s `sendPushToUser`, fired via `EdgeRuntime.waitUntil` so it can never delay or fail this response) with the sender's `display_name` as title and a truncated message preview as body. Silently a no-op if the recipient has no row in `push_tokens` (no dedicated notification-preference flag exists — see that table's note in `docs/02-DATA-MODEL.md`).
+
 ### `POST /functions/v1/buy-credit`
 
 ```jsonc
@@ -147,6 +149,24 @@ Client input must be E.164 **with** a leading `+` (matching what's used for `sig
 ```
 
 Added 2026-09-14 alongside the read-cursor migration (`20260914080000_thread_read_cursor.sql`). Sets the caller's own `participant_a_last_read_at`/`participant_b_last_read_at` column to `now()` via `fn_mark_thread_read` — no financial logic, but same "identity re-derived from the JWT, never trusted from the body" posture as every other function here. Called on opening a thread (see `apps/mobile/app/thread/[id].tsx`). The unread count itself isn't returned by this endpoint or any other — clients read `public.thread_unread_counts` (a `security_invoker` view, RLS-equivalent scoping via `auth.uid()`) directly, same as any other read that doesn't need server-side computation.
+
+### `POST /functions/v1/set-thread-blocked`
+
+```jsonc
+// Request
+{ "thread_id": "uuid", "blocked": true }
+// Response 200
+{ "ok": true, "blocked": true }
+// Response 400
+{ "error": "invalid_request" } // missing thread_id, or blocked isn't a boolean
+// Response 403
+{ "error": "not_a_participant" }
+{ "error": "not_the_blocker" } // trying to unblock a thread someone *else* blocked
+// Response 404
+{ "error": "thread_not_found" }
+```
+
+Added 2026-09-14 (`20260914090000_settings_privacy_reports_push.sql`) — the actual write path for blocking. `threads.blocked_by` and its enforcement inside `fn_send_message` (rejects any send while non-null, with `thread_blocked`) both existed before this; nothing ever set it until this function. Idempotent both directions: blocking an already-blocked thread is a no-op success (doesn't overwrite who blocked it first); unblocking an already-unblocked thread is a no-op success. Only the user recorded in `blocked_by` can unblock — a blocked person can't unilaterally clear it themselves. Called from the thread screen's own overflow menu and from Settings > Privacy > Blocked contacts (unblock only).
 
 ### `GET /functions/v1/estimate-message-cost?words=N` (or computed client-side from public `pricing_config` for instant UI feedback — server remains authoritative at actual send time regardless)
 

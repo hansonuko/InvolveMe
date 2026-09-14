@@ -15,6 +15,7 @@
 // the request body.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { runInBackground, sendPushToUser } from '../_shared/push.ts';
 
 interface SendMessageRequestBody {
   thread_id?: string;
@@ -167,6 +168,37 @@ Deno.serve(async (req) => {
   }
 
   const data = rawData as FnSendMessageRow;
+
+  // Push notification — best-effort, never blocks or fails the response
+  // this billing-critical call already computed correctly. See
+  // _shared/push.ts's header comment for why "off" has no dedicated flag
+  // (it's just "no push_tokens row") and why this runs via
+  // EdgeRuntime.waitUntil rather than being awaited inline.
+  runInBackground(async () => {
+    const { data: threadRow } = await db
+      .from('threads')
+      .select('participant_a, participant_b')
+      .eq('id', threadId)
+      .maybeSingle();
+    if (!threadRow) return;
+
+    const recipientId =
+      threadRow.participant_a === user.id ? threadRow.participant_b : threadRow.participant_a;
+
+    const { data: sender } = await db
+      .from('users')
+      .select('display_name')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    await sendPushToUser(
+      db,
+      recipientId,
+      sender?.display_name ?? 'New message',
+      payload.body!.length > 120 ? `${payload.body!.slice(0, 117)}...` : payload.body!,
+      { thread_id: threadId },
+    );
+  });
 
   return json(200, {
     thread_id: threadId,

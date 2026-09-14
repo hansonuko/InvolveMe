@@ -60,7 +60,7 @@ function ThreadRow({ thread, onPress }: { thread: ThreadWithPartner; onPress: ()
       </View>
       <View style={{ flex: 1, marginLeft: spacing.md }}>
         <Text variant="bodyMedium">{thread.partner.display_name ?? 'Unnamed'}</Text>
-        {thread.is_blocked ? (
+        {thread.blocked_by ? (
           <Text variant="caption" color="danger">
             Blocked
           </Text>

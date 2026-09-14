@@ -21,7 +21,7 @@ Small team assumption: 1 product/founder, 2 mobile engineers (RN), 1 backend/Pos
 
 - Thread list, thread view, send/receive via `send-message` Edge Function, Realtime message delivery.
 - Escrow-pending visual state, word-count → cost preview, low-balance blocking.
-- Basic block/report (needed for app-store review regardless of when monetization ships).
+- ~~Basic block/report~~ — **built 2026-09-14** (needed for app-store review regardless of when monetization ships). See `docs/02-DATA-MODEL.md`'s `threads.blocked_by`/`user_reports` notes.
 - **Exit criteria:** two test accounts can hold a full paid conversation end-to-end with correct escrow/release behavior, matching the worked examples in `docs/03-ECONOMY-LEDGER.md`.
 
 ## Phase 3 — Payments in, payments out (2–3 weeks)

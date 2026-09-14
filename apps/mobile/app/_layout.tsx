@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { useSession } from '@/lib/hooks/useSession';
+import { resyncPushTokenIfPermitted } from '@/lib/push';
 import { ThemeProvider } from '@/theme';
 
 SplashScreen.preventAutoHideAsync();
@@ -43,6 +44,15 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [isLoading]);
+
+  // Silent re-sync only (never prompts) — see lib/push.ts's header
+  // comment. The only place that ever requests notification permission
+  // is the explicit toggle in settings/index.tsx.
+  useEffect(() => {
+    if (session?.user.id) {
+      void resyncPushTokenIfPermitted(session.user.id);
+    }
+  }, [session?.user.id]);
 
   if (isLoading) {
     return null;
