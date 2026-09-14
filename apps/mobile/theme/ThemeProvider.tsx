@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type PropsWithChildren } from 'react';
 import { useColorScheme } from 'react-native';
 
-import { palette, radius, spacing, typography, type ThemeMode } from './tokens';
+import { layout, palette, radius, spacing, typography, type ThemeMode } from './tokens';
 
 const themeValue = (mode: ThemeMode) => ({
   mode,
@@ -9,6 +9,7 @@ const themeValue = (mode: ThemeMode) => ({
   spacing,
   radius,
   typography,
+  layout,
 });
 
 export type Theme = ReturnType<typeof themeValue>;

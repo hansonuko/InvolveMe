@@ -2,6 +2,24 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Snapshot as of 2026-09-14 (session 9 — chrome correction: bars, icons, sizing)
+
+Second correction pass on the same day's palette work (PR #26, still open/unmerged at the user's request — this landed as a second commit on that same branch, not a new PR). Flagged back explicitly after reviewing the palette-refinement branch:
+
+**What was flagged as already correct, not touched again:**
+
+- `AppHeader`'s background was already `bg.canvas` (light milk / dark near-black) — never was wine. Only its height/icon sizing needed the size-up.
+
+**What was actually wrong and got fixed:**
+
+1. **`#B5677B` removed entirely, not just renamed** — it was dark mode's `brandPrimaryPressed` (a lightened/pressed wine that reads as mauve/purple at that lightness). `brandPrimary`/`brandPrimaryPressed` are now **theme-invariant** — the exact same wine in both modes — because the _only_ thing that ever needed a dark-mode-lightened variant was chrome (bars) using `brandPrimary` as a background, and that usage is gone too (next point). A filled button or badge doesn't need a lighter wine to stay legible in dark mode; only a colored bar sitting directly on a dark canvas would have.
+2. **Bottom tab bar and search bar were wine-filled backgrounds with cream content — inverted from what was asked.** Both are now `bg.canvas`/`bg.surfaceAlt` (light milk / dark near-black) with wine (light) / white (dark) icon and text — `text.secondary` is the new "on-canvas accent" role, redefined in dark mode as plain white instead of the old lightened-wine `#E7A9BA` (removes the "purple text" complaint at the source, not just its most visible instance). Found and fixed the same bug in the "InvolveMe" wordmark and three other on-canvas links (`wallet.tsx`'s "Change bank"/bank-account text, `thread/[id].tsx`'s reply hint) that were still using the old `color="brand"` (now theme-invariant wine) — would have gone near-invisible against a dark canvas in dark mode had they been left as-is; caught by grepping every `color="brand"` usage once the token's meaning changed, not left for a bug report.
+3. **Emoji tab icons replaced with real vector icons** (`@expo/vector-icons`' Ionicons — added as a new dependency, explicitly requested override of the earlier "stay lite, no icon package" call). Emoji render in a fixed native color no matter what `color` style is applied — the literal "colored icons" complaint — and can render as a broken/missing glyph on some Android font configs, the most likely real cause of "menu icons appear broken." Header's "+"/"⋮" also moved to Ionicons for the same reason and for one consistent icon system app-wide. Status tab's icon reverted mid-task, on direct request, from a tools/wrench glyph (a later mockup-driven choice) back to a plain ring shape (`ellipse`/`ellipse-outline`) matching the very first glyph used for that tab and this doc's own "Status ring" motion-spec language.
+4. **Bars sized up**: new `theme.layout` token group (`barHeight=96` ≈0.6in at the conventional 160dp/in baseline, `tabIconSize=28`, `headerIconSize=26`), `typography.tabBarLabel` bumped 12→14. The old focused-tab pill background is gone — with the bar no longer wine, there's nothing for a pill to contrast against; the icon/label color change alone now carries "active," the same convention WhatsApp/Telegram's own bars use.
+5. **Chats/Groups/Contacts sub-header now spans the full width in three equal columns** (`flex: 1` each) instead of being left-clustered with a fixed gap, per an explicit "spread and space equally to 100% width, same column width" ask.
+
+**Verified:** `tsc --noEmit` and `expo lint` both clean. Not yet visually confirmed on a real device — the bar-height-in-inches claim specifically is a dp/pt-convention approximation, not something confirmable from source alone; worth a real-device look before treating 96 as final.
+
 ## Snapshot as of 2026-09-14 (session 8 — palette refinement + real app icon/splash)
 
 Requested against exactly two anchor colors (canvas `#FDFFF7`, brand wine `#5F1B31` reconfirmed) with instructions to derive everything else "intelligently" from them, fix odd/unmatched tokens, and replace the placeholder app icon/splash with a supplied logo image (removing its baked-in checkerboard "transparency" backdrop).

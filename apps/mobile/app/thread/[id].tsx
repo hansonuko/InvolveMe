@@ -215,7 +215,7 @@ export default function ThreadScreen() {
             />
             <Text
               variant="caption"
-              color="brand"
+              color="secondary"
               onPress={sendMessage.isPending || !body.trim() ? undefined : handleSend}
               style={{ opacity: sendMessage.isPending || !body.trim() ? 0.4 : 1 }}
             >

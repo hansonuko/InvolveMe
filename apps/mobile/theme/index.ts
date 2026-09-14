@@ -1,5 +1,5 @@
 export { ThemeProvider, useTheme } from './ThemeProvider';
-export { palette, radius, spacing, typography } from './tokens';
+export { layout, palette, radius, spacing, typography } from './tokens';
 export type { ColorToken, ThemeMode } from './tokens';
 
 /** Derives a translucent variant of a theme color at render time, rather

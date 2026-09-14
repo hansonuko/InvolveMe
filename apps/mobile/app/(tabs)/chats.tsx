@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -111,14 +112,19 @@ const SUB_TABS: { key: ChatsSubTab; label: string }[] = [
   { key: 'contacts', label: 'Contacts' },
 ];
 
-/** Chats/Groups/Contacts segmented row under the header, per the
- * 2026-09-13 wine rebrand spec. Only "Chats" is a real feature — this app
- * has no groups concept anywhere in the data model or docs/02-DATA-MODEL.md,
- * and "Contacts" would mean phone-book matching, explicitly out of scope
- * per docs/00-SESSION-HANDOFF.md ("no contacts-sync/phone-book matching").
- * Rather than build either a fake list or silently drop the two tabs the
- * mockup shows, they're wired up as the same kind of honest stub
- * calls.tsx already uses for a deferred feature. */
+/** Chats/Groups/Contacts segmented row under the header. Only "Chats" is
+ * a real feature — this app has no groups concept anywhere in the data
+ * model or docs/02-DATA-MODEL.md, and "Contacts" would mean phone-book
+ * matching, explicitly out of scope per docs/00-SESSION-HANDOFF.md ("no
+ * contacts-sync/phone-book matching"). Rather than build either a fake
+ * list or silently drop the two tabs, they're wired up as the same kind
+ * of honest stub calls.tsx already uses for a deferred feature.
+ *
+ * **2026-09-14:** each tab is now an equal-width flex column spanning the
+ * full screen width (rather than left-clustered with a fixed gap), per
+ * an explicit "spread and space them equally to fit 100% width, same
+ * column width" ask — the three labels/indicators now land at exactly
+ * 1/3, 2/3, and the far edge regardless of screen width. */
 function ChatsSubHeader({
   active,
   onChange,
@@ -128,17 +134,22 @@ function ChatsSubHeader({
 }) {
   const { colors, spacing } = useTheme();
   return (
-    <View style={[styles.subHeaderRow, { paddingHorizontal: spacing.lg, gap: spacing.xl }]}>
+    <View style={styles.subHeaderRow}>
       {SUB_TABS.map((tab) => (
-        <Pressable key={tab.key} onPress={() => onChange(tab.key)} hitSlop={8}>
-          <View style={{ gap: spacing.xs }}>
+        <Pressable
+          key={tab.key}
+          onPress={() => onChange(tab.key)}
+          hitSlop={8}
+          style={styles.subHeaderCol}
+        >
+          <View style={{ gap: spacing.xs, alignItems: 'center' }}>
             <Text variant="bodyMedium" color={active === tab.key ? 'secondary' : 'tertiary'}>
               {tab.label}
             </Text>
             <View
               style={[
                 styles.subHeaderIndicator,
-                { backgroundColor: active === tab.key ? colors.brandPrimary : 'transparent' },
+                { backgroundColor: active === tab.key ? colors.textSecondary : 'transparent' },
               ]}
             />
           </View>
@@ -288,7 +299,7 @@ function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => v
 export default function ChatsScreen() {
   const router = useRouter();
   const { session } = useSession();
-  const { colors, spacing, radius } = useTheme();
+  const { colors, spacing, radius, layout } = useTheme();
   const {
     data: threads,
     isLoading,
@@ -307,27 +318,29 @@ export default function ChatsScreen() {
         );
 
   // Search lives as the FlatList's own ListHeaderComponent, not the sticky
-  // AppHeader, specifically so it scrolls away with the list content
-  // instead of staying pinned — per the 2026-09-13 wine rebrand spec.
+  // AppHeader, so it scrolls away with the list content instead of
+  // staying pinned. Fill is bgSurfaceAlt (a neutral, not a wine bar) per
+  // the 2026-09-14 chrome correction — see theme/tokens.ts's palette
+  // comment for why bars/fills like this no longer use brandPrimary.
   const searchBar = (
     <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
       <View
         style={[
           styles.searchBar,
           {
-            backgroundColor: colors.brandPrimary,
+            backgroundColor: colors.bgSurfaceAlt,
             borderRadius: radius.pill,
             paddingHorizontal: spacing.lg,
           },
         ]}
       >
-        <Text style={{ color: colors.textInverse }}>🔍</Text>
+        <Ionicons name="search" size={18} color={colors.textTertiary} />
         <TextInput
           value={search}
           onChangeText={setSearch}
           placeholder="Search"
-          placeholderTextColor={colors.textInverse}
-          style={[styles.searchInput, { color: colors.textInverse }]}
+          placeholderTextColor={colors.textTertiary}
+          style={[styles.searchInput, { color: colors.textPrimary }]}
         />
       </View>
     </View>
@@ -340,9 +353,7 @@ export default function ChatsScreen() {
         brand
         rightSlot={
           <Pressable onPress={() => setModalVisible(true)} hitSlop={12}>
-            <Text variant="title" color="brand">
-              +
-            </Text>
+            <Ionicons name="add" size={layout.headerIconSize} color={colors.textSecondary} />
           </Pressable>
         }
         menuItems={[{ label: 'Settings', onPress: () => router.push('/settings') }]}
@@ -394,8 +405,9 @@ const styles = StyleSheet.create({
   avatar: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   input: { borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16 },
   multiline: { minHeight: 80, textAlignVertical: 'top' },
-  subHeaderRow: { flexDirection: 'row' },
-  subHeaderIndicator: { height: 2, borderRadius: 1 },
+  subHeaderRow: { flexDirection: 'row', paddingVertical: 8 },
+  subHeaderCol: { flex: 1, alignItems: 'center' },
+  subHeaderIndicator: { height: 2, width: 32, borderRadius: 1 },
   searchBar: { flexDirection: 'row', alignItems: 'center', height: 44, gap: 8 },
   searchInput: { flex: 1, fontSize: 16, paddingVertical: 0 },
   empty: { paddingTop: 48, alignItems: 'center' },

@@ -347,7 +347,7 @@ function LinkBankAccountModal({ visible, onClose }: { visible: boolean; onClose:
           <View style={{ marginTop: spacing.xl, gap: spacing.sm }}>
             <Text variant="bodyMedium">{selectedBank.name}</Text>
             <Pressable onPress={() => setSelectedBank(null)}>
-              <Text variant="caption" color="brand">
+              <Text variant="caption" color="secondary">
                 Change bank
               </Text>
             </Pressable>
@@ -695,7 +695,7 @@ export default function WalletScreen() {
               />
             ) : (
               <Pressable onPress={() => router.push('/settings')}>
-                <Text variant="caption" color="brand">
+                <Text variant="caption" color="secondary">
                   Verify your identity first →
                 </Text>
               </Pressable>

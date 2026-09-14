@@ -7,27 +7,42 @@
  * it belongs here before it belongs in a component.
  */
 
-// 2026-09-14 palette refinement, requested against exactly two anchor
-// colors — canvas #FDFFF7 and brand wine #5F1B31 (the 2026-09-13 rebrand's
-// brand color, reconfirmed unchanged). Every other light-mode token below
-// is now *derived* from those two by mixing wine into near-white (surfaces/
-// borders) or near-black (ink text) at defined ratios, rather than picked
-// ad hoc — see docs/04-DESIGN-SYSTEM.md §1 for the exact ratios and the
-// contrast audit that came out of it. Two real accessibility bugs this
-// caught, not just a re-tint: `success`/`danger` (both actively used as
-// text throughout the app) failed WCAG AA (2.6:1 / 3.7:1) against the new,
-// brighter canvas — darkened to pass 4.5:1 while staying recognizably
-// green/red. `accentCredit` also fails at 2.0:1 but is intentionally left
-// vivid (see its own comment below) since nothing renders it as text today.
+// 2026-09-14 chrome correction (second pass, same day): the palette
+// refinement above got the *neutrals* right but the chrome — bottom tab
+// bar, header, search bar — was still using `brandPrimary` (wine) as a
+// literal bar *background*, per the earlier "Deep Wine" mockup. Flagged
+// back explicitly: bars should be the light-milk canvas (dark: a clean
+// near-black) with wine/white *text and icons* on top, not the reverse —
+// and the dark-mode accent (`#C97D91`/`#B5677B`, a lightened/pressed wine)
+// reads as purple/mauve at that lightness, which it is not meant to.
+//
+// Fix, not a patch: `brandPrimary`/`brandPrimaryPressed` are now
+// **theme-invariant** (the exact same wine in both modes) — they exist
+// only for *filled* surfaces now (buttons, the unread badge), which are
+// self-contained (their own fill + their own on-fill text contrast) and
+// were never the thing being objected to; a small colored badge or a
+// filled CTA button is a universally standard pattern, not "chrome."
+// Lightening wine for dark-mode legibility is what produced the
+// pink/mauve `#C97D91`/`#B5677B` in the first place — removing the
+// lightened variant removes the purple, not just its name.
+//
+// The role that actually needs to invert per theme — "the accent color
+// used for text/icons that sit directly on the canvas" (active tab,
+// active sub-header indicator, header icon) — was already `textSecondary`
+// in light mode (wine, correct), just not asked to differ in dark mode
+// yet. It now does: plain white in dark mode, exactly as instructed
+// ("white text"), not a tinted accent — this is a *content* color, not a
+// bar fill, so nothing here reintroduces a "colored background" mistake.
 export const palette = {
   light: {
     bgCanvas: '#FDFFF7',
     bgSurface: '#FFFFFF',
     // 10% wine mixed into near-white — replaces the old #FFE6D8 peach,
-    // which related to neither anchor color (exactly the "odd/unmatched"
-    // case this refinement was asked to fix). Used for input fields, list-
+    // which related to neither anchor color. Used for input fields, list-
     // row press states, incoming message bubbles.
     bgSurfaceAlt: '#EDE8E3',
+    // Filled-surface color only now (buttons, unread badge) — never a bar
+    // background. See header comment for why this changed meaning.
     brandPrimary: '#5F1B31',
     brandPrimaryPressed: '#471425',
     // Intentionally not derived from wine/near-white, and intentionally
@@ -50,43 +65,49 @@ export const palette = {
     // ties primary text into the two-anchor system instead of being an
     // unrelated pure neutral.
     textPrimary: '#0E0407',
+    // The "accent used for text/icons on the canvas" role: active tab,
+    // active sub-header indicator, header action icons, chat display
+    // names. Wine in light mode; see dark below for why this is plain
+    // white there instead of a lightened wine.
     textSecondary: '#5F1B31',
-    // 30% wine mixed into neutral gray — replaces the old flat #8A8A8A
-    // (same "unrelated neutral" issue as bgSurfaceAlt had), still muted
-    // enough for secondary reading at 5.05:1 against bgCanvas.
+    // 30% wine mixed into neutral gray — replaces the old flat #8A8A8A,
+    // still muted enough for secondary reading at 5.05:1 against bgCanvas.
+    // Doubles as the inactive tab-icon/label tone.
     textTertiary: '#7D696F',
-    // "On brand" color — bottom-nav labels/icons, badge text, and the
-    // primary button label all sit on a wine-colored surface regardless of
-    // app theme, so this is the near-white anchor reused directly rather
-    // than a third, unrelated light tone — deliberately identical in both
-    // themes (see dark palette below).
+    // "On brand" color — for content that sits *on a filled wine surface*
+    // specifically (badge text, primary-button label, own-message-bubble
+    // text) — not bars, which no longer have a wine fill. Reuses the
+    // canvas anchor directly. Deliberately identical in both themes.
     textInverse: '#FDFFF7',
     // 6% wine mixed into near-white — one step lighter than bgSurfaceAlt,
-    // same derivation family.
+    // same derivation family. Also the bottom-tab-bar/header top border,
+    // now that those bars are canvas-colored and need a hairline to read
+    // as a distinct bar at all.
     borderSubtle: '#F4F1EB',
     badgeBg: '#5F1B31',
     badgeText: '#FDFFF7',
   },
   dark: {
-    // Dark mode wasn't part of this refinement's ask (only the two named
-    // anchor colors were, both light-mode) and keeps the 2026-09-13
-    // rebrand's own conservative extrapolation — flagged there and in
-    // docs/04 §1 as due for a real pass if a dark-mode design is ever
-    // actually specified. textInverse/badgeText below are the one
-    // exception: kept identical to the light palette's new value, since
-    // both are documented as theme-fixed "on brand" colors, not something
-    // that should drift out of sync just because light mode changed.
     bgCanvas: '#1A1013',
     bgSurface: '#241820',
     bgSurfaceAlt: '#3A2430',
-    brandPrimary: '#C97D91',
-    brandPrimaryPressed: '#B5677B',
+    // Theme-invariant — see header comment. A filled button/badge in dark
+    // mode is still legible without lightening the fill itself; only the
+    // fill's own label color would need to adapt, and it already does
+    // (textInverse, unchanged by theme by design).
+    brandPrimary: '#5F1B31',
+    brandPrimaryPressed: '#471425',
     accentCredit: '#FFC24D',
     success: '#32D583',
     danger: '#F97066',
     warning: '#FDB022',
     textPrimary: '#F5EDE9',
-    textSecondary: '#E7A9BA',
+    // Plain white in dark mode, not a lightened/tinted wine — this is
+    // exactly the "reverse: dark background, white text" the correction
+    // asked for. Same value as textPrimary is a deliberate simplification
+    // (no separate "accent" hue in dark mode) rather than reintroducing
+    // the pink/mauve problem by trying to keep one.
+    textSecondary: '#F5EDE9',
     textTertiary: '#A8A29E',
     textInverse: '#FDFFF7',
     borderSubtle: '#3A2A30',
@@ -114,6 +135,21 @@ export const radius = {
   pill: 999,
 } as const;
 
+// Added 2026-09-14, on an explicit "0.6 inch bars, bigger icons" ask.
+// `barHeight` targets ~0.6in using the 160dp-per-inch baseline both
+// platforms' "device-independent pixel" units are conventionally defined
+// against (RN's own unit, same as CSS px on the mdpi/1x reference) — the
+// OS scales this to each device's real pixel density, so it lands close
+// to 0.6in on real hardware without being pixel-exact on every device
+// (dp/pt were never meant to guarantee that, only to approximate it).
+// Worth a real-device look once shipped, per this project's own
+// discipline about not treating a plausible number as a confirmed one.
+export const layout = {
+  barHeight: 96,
+  tabIconSize: 28,
+  headerIconSize: 26,
+} as const;
+
 // System font stack only — no bundled custom fonts, see docs/04-DESIGN-SYSTEM.md §2
 // (RN resolves the platform default automatically when fontFamily is left undefined).
 export const typography = {
@@ -128,8 +164,10 @@ export const typography = {
   caption: { fontSize: 13, fontWeight: '400' as const },
   // Bottom tab bar labels — bolder/larger than React Navigation's default
   // (~11/500) so the tab bar reads as more prominent, per
-  // docs/04-DESIGN-SYSTEM.md §2.
-  tabBarLabel: { fontSize: 12, fontWeight: '700' as const },
+  // docs/04-DESIGN-SYSTEM.md §2. Bumped 12→14 on 2026-09-14 alongside the
+  // taller bar / bigger icons — proportionally similar to the "7pt→10pt"
+  // example given for the ask, scaled to this token's own starting size.
+  tabBarLabel: { fontSize: 14, fontWeight: '700' as const },
   balance: {
     fontSize: 24,
     fontWeight: '700' as const,
