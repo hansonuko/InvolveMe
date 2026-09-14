@@ -69,7 +69,9 @@ Read by Edge Functions per-request (cached briefly, e.g. 60s, in-memory) — nev
 
 ### `threads`
 
-| id, participant_a (payer), participant_b (payee), created_at, last_message_at, is_blocked |
+| id, participant_a (payer), participant_b (payee), created_at, last_message_at, is_blocked, participant_a_last_read_at, participant_b_last_read_at |
+
+The two `*_last_read_at` columns (added `20260914080000_thread_read_cursor.sql`) are each participant's own read cursor — `null` means "never read," not "read at the epoch." Written only by `fn_mark_thread_read` (`SECURITY DEFINER`, called via `mark-thread-read`), which sets the caller's own column after checking which participant they actually are — not a client-writable RLS+column-grant setup, since Postgres column grants can't be conditioned on which participant slot the caller occupies (see the migration's header comment for why that specific shortcut was rejected). `thread_unread_counts` (a `security_invoker` view over `threads`/`messages`) derives each of the caller's threads' unread count from this cursor — messages from the _other_ participant sent after it. No unread state is stored redundantly; it's computed at read time from the cursor + `messages`, same "balance is derived, don't cache it as a separate mutable fact" spirit CLAUDE.md applies to wallets, applied here to unread counts instead of money.
 
 ### `messages`
 

@@ -58,16 +58,7 @@ function ThreadRow({ thread, onPress }: { thread: ThreadWithPartner; onPress: ()
         </Text>
       </View>
       <View style={{ flex: 1, marginLeft: spacing.md }}>
-        <View style={styles.rowTop}>
-          <Text variant="bodyMedium" style={styles.flexShrink}>
-            {thread.partner.display_name ?? 'Unnamed'}
-          </Text>
-          {thread.last_message_at ? (
-            <Text variant="caption" color="tertiary">
-              {formatThreadTimestamp(thread.last_message_at)}
-            </Text>
-          ) : null}
-        </View>
+        <Text variant="bodyMedium">{thread.partner.display_name ?? 'Unnamed'}</Text>
         {thread.is_blocked ? (
           <Text variant="caption" color="danger">
             Blocked
@@ -76,6 +67,36 @@ function ThreadRow({ thread, onPress }: { thread: ThreadWithPartner; onPress: ()
           <Text variant="caption" color="tertiary" numberOfLines={1}>
             {thread.last_message_body}
           </Text>
+        ) : null}
+      </View>
+
+      {/* Timestamp above, unread-count pill below — same right-column
+          layout the wine-rebrand mockup showed, per
+          docs/00-SESSION-HANDOFF.md's unread-tracking section. The pill
+          only renders once there's a real count (thread_unread_counts,
+          migration 20260914080000_thread_read_cursor.sql) — never a
+          fabricated number. */}
+      <View style={[styles.rowEnd, { marginLeft: spacing.sm, gap: spacing.xs }]}>
+        {thread.last_message_at ? (
+          <Text variant="caption" color="tertiary">
+            {formatThreadTimestamp(thread.last_message_at)}
+          </Text>
+        ) : null}
+        {thread.unread_count > 0 ? (
+          <View
+            style={[
+              styles.unreadBadge,
+              {
+                backgroundColor: colors.badgeBg,
+                borderRadius: radius.pill,
+                paddingHorizontal: spacing.xs,
+              },
+            ]}
+          >
+            <Text variant="caption" color="badge">
+              {thread.unread_count > 99 ? '99+' : thread.unread_count}
+            </Text>
+          </View>
         ) : null}
       </View>
     </Pressable>
@@ -368,8 +389,8 @@ export default function ChatsScreen() {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  flexShrink: { flexShrink: 1 },
+  rowEnd: { alignItems: 'flex-end' },
+  unreadBadge: { minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   avatar: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   input: { borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16 },
   multiline: { minHeight: 80, textAlignVertical: 'top' },

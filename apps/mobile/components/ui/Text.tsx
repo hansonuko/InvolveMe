@@ -16,7 +16,8 @@ interface Props extends TextProps {
     | 'success'
     | 'danger'
     | 'warning'
-    | 'credit';
+    | 'credit'
+    | 'badge';
 }
 
 const colorTokenMap: Record<NonNullable<Props['color']>, string> = {
@@ -29,6 +30,9 @@ const colorTokenMap: Record<NonNullable<Props['color']>, string> = {
   danger: 'danger',
   warning: 'warning',
   credit: 'accentCredit',
+  // Foreground text for the unread-count pill (theme.colors.badgeBg is
+  // its background) — see AppHeader.tsx-adjacent chats.tsx ThreadRow.
+  badge: 'badgeText',
 };
 
 /** Themed text primitive — always route body copy through this, never a bare RN <Text>. */

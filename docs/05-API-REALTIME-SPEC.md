@@ -131,6 +131,23 @@ Added this session — a real gap found wiring up the mobile "start a new chat" 
 
 Client input must be E.164 **with** a leading `+` (matching what's used for `signInWithOtp`) — the function strips it before comparing, since `users.phone` itself is stored without one (see `docs/02-DATA-MODEL.md`'s note on this — found by testing, not by reading the schema comment, which had said plain "E.164").
 
+### `POST /functions/v1/mark-thread-read`
+
+```jsonc
+// Request
+{ "thread_id": "uuid" }
+// Response 200
+{ "ok": true }
+// Response 400
+{ "error": "invalid_request" } // missing thread_id
+// Response 403
+{ "error": "not_a_participant" }
+// Response 404
+{ "error": "thread_not_found" }
+```
+
+Added 2026-09-14 alongside the read-cursor migration (`20260914080000_thread_read_cursor.sql`). Sets the caller's own `participant_a_last_read_at`/`participant_b_last_read_at` column to `now()` via `fn_mark_thread_read` — no financial logic, but same "identity re-derived from the JWT, never trusted from the body" posture as every other function here. Called on opening a thread (see `apps/mobile/app/thread/[id].tsx`). The unread count itself isn't returned by this endpoint or any other — clients read `public.thread_unread_counts` (a `security_invoker` view, RLS-equivalent scoping via `auth.uid()`) directly, same as any other read that doesn't need server-side computation.
+
 ### `GET /functions/v1/estimate-message-cost?words=N` (or computed client-side from public `pricing_config` for instant UI feedback — server remains authoritative at actual send time regardless)
 
 ### `POST /functions/v1/submit-kyc`

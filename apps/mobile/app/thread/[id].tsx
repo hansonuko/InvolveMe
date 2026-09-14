@@ -13,6 +13,7 @@ import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
 import { type Message, useSendMessage, useThreadMessages } from '@/lib/queries/messages';
+import { useMarkThreadRead } from '@/lib/queries/threads';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/theme';
 
@@ -125,9 +126,22 @@ export default function ThreadScreen() {
 
   const { data: messages, isLoading } = useThreadMessages(id);
   const sendMessage = useSendMessage();
+  const markThreadRead = useMarkThreadRead();
   const headerInfo = useThreadHeaderInfo(id, currentUserId);
 
   const [body, setBody] = useState('');
+
+  // Marks this thread read the moment it's opened — per
+  // docs/00-SESSION-HANDOFF.md's unread-tracking section. Fires once per
+  // mount (opening a thread from the list, or navigating back into it,
+  // both remount this screen); not re-fired on every new message while
+  // the thread stays open, which is an acceptable v1 gap, not a bug — the
+  // badge only needs to clear when the thread is actually visited.
+  useEffect(() => {
+    if (!id) return;
+    markThreadRead.mutate(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const handleSend = () => {
     if (!body.trim()) return;
