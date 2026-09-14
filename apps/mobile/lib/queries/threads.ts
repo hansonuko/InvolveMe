@@ -7,7 +7,11 @@ export interface ThreadWithPartner {
   id: string;
   participant_a: string;
   participant_b: string;
-  is_blocked: boolean;
+  /** Who blocked this thread, if anyone — `null` means not blocked. Only
+   * the user this equals can unblock it (see fn_set_thread_blocked's
+   * comment in migration 20260914090000_settings_privacy_reports_push.sql
+   * for why a plain boolean couldn't support that rule). */
+  blocked_by: string | null;
   last_message_at: string | null;
   created_at: string;
   /** The other participant, relative to the current user — resolved client-side below. */
@@ -43,7 +47,7 @@ export function useThreads(currentUserId: string | undefined) {
     queryFn: async (): Promise<ThreadWithPartner[]> => {
       const { data: threads, error } = await supabase
         .from('threads')
-        .select('id, participant_a, participant_b, is_blocked, last_message_at, created_at')
+        .select('id, participant_a, participant_b, blocked_by, last_message_at, created_at')
         .or(`participant_a.eq.${currentUserId},participant_b.eq.${currentUserId}`)
         .order('last_message_at', { ascending: false, nullsFirst: false });
 
@@ -154,6 +158,75 @@ export function useMarkThreadRead() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['threads'] });
       queryClient.invalidateQueries({ queryKey: ['totalUnreadCount'] });
+    },
+  });
+}
+
+interface SetThreadBlockedResponse {
+  ok: boolean;
+  blocked: boolean;
+}
+
+/** Wraps POST /functions/v1/set-thread-blocked — the actual write half of
+ * blocking (docs/00-SESSION-HANDOFF.md: enforcement already existed,
+ * nothing ever set it). Called both from a thread's own overflow menu
+ * (block) and from the Settings > Privacy > Blocked list (unblock). */
+export function useSetThreadBlocked() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: { threadId: string; blocked: boolean }) =>
+      callEdgeFunction<SetThreadBlockedResponse>('set-thread-blocked', {
+        thread_id: params.threadId,
+        blocked: params.blocked,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['threads'] });
+      queryClient.invalidateQueries({ queryKey: ['blockedThreads'] });
+    },
+  });
+}
+
+export interface BlockedThread {
+  thread_id: string;
+  partner: { id: string; display_name: string | null };
+}
+
+/** Threads the *current user* blocked (never ones where the other
+ * participant blocked them — `blocked_by` makes that distinction
+ * possible, which a plain boolean couldn't) — for Settings > Privacy's
+ * "Blocked contacts" list. */
+export function useBlockedThreads(currentUserId: string | undefined) {
+  return useQuery({
+    queryKey: ['blockedThreads', currentUserId],
+    enabled: !!currentUserId,
+    queryFn: async (): Promise<BlockedThread[]> => {
+      const { data: threads, error } = await supabase
+        .from('threads')
+        .select('id, participant_a, participant_b')
+        .eq('blocked_by', currentUserId);
+
+      if (error) throw error;
+      if (!threads?.length) return [];
+
+      const partnerIds = threads.map((t) =>
+        t.participant_a === currentUserId ? t.participant_b : t.participant_a,
+      );
+      const { data: partners, error: partnersError } = await supabase
+        .from('users')
+        .select('id, display_name')
+        .in('id', partnerIds);
+      if (partnersError) throw partnersError;
+
+      const partnersById = new Map((partners ?? []).map((p) => [p.id, p]));
+
+      return threads.map((t) => {
+        const partnerId = t.participant_a === currentUserId ? t.participant_b : t.participant_a;
+        return {
+          thread_id: t.id,
+          partner: partnersById.get(partnerId) ?? { id: partnerId, display_name: null },
+        };
+      });
     },
   });
 }
