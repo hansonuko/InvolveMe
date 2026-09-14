@@ -26,6 +26,60 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+  # Added 2026-09-15 (docs/00-SESSION-HANDOFF.md session 12) after a bug in
+  # the webhook-flutterwave <-> buy-credit path recurred three times across
+  # separate sessions, each time only caught because someone happened to run
+  # the test suite by hand — CLAUDE.md has required ledger-conservation +
+  # concurrency tests for any balance-mutating function since Phase 1, but
+  # nothing ever enforced that requirement at merge time. This job is that
+  # enforcement: runs test:db (schema/ledger-conservation, no external
+  # calls) and test:functions:ci (every Edge Function test except
+  # submit-kyc, which costs real money — ~₦45 — per real run and stays
+  # manual-only, same as it already was locally) against the real linked
+  # dev Supabase project and LIVE Flutterwave credentials, on every PR and
+  # push to main. Deliberately does NOT run test:deployed here — those
+  # tests assert against whatever is currently deployed to production,
+  # which is a fact about the live environment, not about this PR's code;
+  # running them post-deploy (as this project's sessions already do by
+  # hand) is the meaningful check, not pre-merge.
+  test-wallet-code:
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: DB-level tests (ledger conservation, concurrency)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: npm run test:db:ci
+
+      - name: Edge Function tests (real dev DB + live Flutterwave, excludes submit-kyc)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          FLW_CLIENT_ID: ${{ secrets.FLW_CLIENT_ID }}
+          FLW_CLIENT_SECRET: ${{ secrets.FLW_CLIENT_SECRET }}
+          FLW_ENVIRONMENT: ${{ secrets.FLW_ENVIRONMENT }}
+          FLW_WEBHOOK_SECRET_HASH: ${{ secrets.FLW_WEBHOOK_SECRET_HASH }}
+          FLW_TRANSFER_SENDER_ID: ${{ secrets.FLW_TRANSFER_SENDER_ID }}
+          CRON_INTERNAL_SECRET: ${{ secrets.CRON_INTERNAL_SECRET }}
+        run: npm run test:functions:ci
+
   # Placeholder — activates once supabase/migrations exist (Phase 1).
   # Runs schema migrations against the staging Supabase project on merge to
   # main, per docs/01-ARCHITECTURE.md "Environments".
