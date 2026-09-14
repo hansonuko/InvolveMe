@@ -2,6 +2,28 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Snapshot as of 2026-09-14 (session 10 — search-bar spacing, responsive chrome, chat wallpaper)
+
+Third pass on the same day's design branch (PR #26, still open/unmerged — landed as a third commit, not a new PR), responding to a "confirm X / build Y" request.
+
+**Confirmed, not re-touched:** the search bar genuinely is the thread list's `ListHeaderComponent` (scrolls away with the list), not part of the fixed `AppHeader`/`ChatsSubHeader` stack above it — re-checked the actual render tree rather than assumed, since a later regression silently moving it back would be exactly the kind of thing worth re-verifying rather than trusting from memory.
+
+**Fixed:**
+
+1. **Search bar had zero top padding** — flush against `ChatsSubHeader` above it. Added `spacing.lg` (16dp) of top padding, which lands at exactly the requested ~0.1in at the same 160dp/in convention `layout.barHeight` already uses — no new token needed.
+2. **Header/tab-bar sizing is now actually responsive, not a fixed number.** `theme/tokens.ts`'s `layout` (added last pass) was a static `{barHeight: 96, ...}` regardless of device — on an explicit "should adjust automatically on a smaller/bigger screen, same look and feel" ask, `ThemeProvider` now scales all three `layout` values by the device's real screen width (`useWindowDimensions`, 375pt reference, clamped 0.85–1.15×) before handing them out via `useTheme()`. No call-site changes needed in `_layout.tsx`/`AppHeader.tsx` — they already read sizes through `useTheme().layout`, so the responsive behavior is transparent to them.
+3. **New chat wallpaper** (`components/ui/ChatWallpaper.tsx`, new `react-native-svg` dependency — also unblocks the still-unbuilt "Status ring" motion spec that already anticipated this library). A tiled, 6%-opacity, single-tone vector pattern behind the thread's message list — same concept as WhatsApp's doodle wallpaper / Telegram's paper-plane pattern, deliberately different content (a chat bubble, a coin, a four-point "value" spark — chat + money, this app's whole premise) so it doesn't read as a clone. Tint is `text.secondary`, so light and dark mode both get a version that's actually visible-but-subtle against their own canvas, not one fixed asset baked for one theme.
+
+**Design-standard audit, as requested — status of each:**
+
+- Tap targets: header/menu actions already use `hitSlop` to clear the 44×44pt minimum (docs/04 §6); sub-header tabs are full flex columns, comfortably over minimum.
+- Color contrast: covered by the palette-refinement pass's WCAG audit (docs/04 §1) — no new gaps introduced by this pass's changes.
+- Icon consistency: fully unified on Ionicons app-wide as of the previous pass; this pass didn't touch iconography further.
+- Hardcoded colors: none outside `theme/tokens.ts` (re-grepped, still clean).
+- **Still unconfirmed, flagged rather than assumed:** whether `tabBarStyle`'s explicit `height` interacts correctly with React Navigation's own bottom safe-area inset handling on a real notched/home-indicator device — plausible from the API, not verified on hardware. Worth a real-device look alongside the "0.6in" claim itself before treating either as final.
+
+**Verified:** `tsc --noEmit` and `expo lint` both clean.
+
 ## Snapshot as of 2026-09-14 (session 9 — chrome correction: bars, icons, sizing)
 
 Second correction pass on the same day's palette work (PR #26, still open/unmerged at the user's request — this landed as a second commit on that same branch, not a new PR). Flagged back explicitly after reviewing the palette-refinement branch:

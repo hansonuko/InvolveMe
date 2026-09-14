@@ -142,13 +142,29 @@ export const radius = {
 // OS scales this to each device's real pixel density, so it lands close
 // to 0.6in on real hardware without being pixel-exact on every device
 // (dp/pt were never meant to guarantee that, only to approximate it).
-// Worth a real-device look once shipped, per this project's own
-// discipline about not treating a plausible number as a confirmed one.
+//
+// These are the *reference* values, measured at `RESPONSIVE_BASE_WIDTH` —
+// `ThemeProvider` is what actually hands out the screen-size-adjusted
+// numbers via `useTheme().layout` (added same day, on an explicit
+// "bars should adjust automatically on a smaller/bigger screen, same
+// look and feel" ask). Nothing outside `theme/` should import this
+// object directly for `barHeight`/`tabIconSize`/`headerIconSize` — go
+// through `useTheme()` so the responsive scaling is never bypassed.
 export const layout = {
   barHeight: 96,
   tabIconSize: 28,
   headerIconSize: 26,
 } as const;
+
+// 375 is the iPhone SE/8/X-class logical width — the most common RN
+// design-reference baseline, and a reasonable "typical phone" midpoint.
+// Scale is clamped fairly tightly (0.85–1.15): the ask is for the bars to
+// *feel* consistent across real phone screens, not to shrink/balloon
+// bar chrome dramatically on the small-phone/tablet extremes, where an
+// uncapped linear scale would look worse, not better.
+export const RESPONSIVE_BASE_WIDTH = 375;
+export const RESPONSIVE_SCALE_MIN = 0.85;
+export const RESPONSIVE_SCALE_MAX = 1.15;
 
 // System font stack only — no bundled custom fonts, see docs/04-DESIGN-SYSTEM.md §2
 // (RN resolves the platform default automatically when fontFamily is left undefined).

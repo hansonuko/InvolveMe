@@ -68,7 +68,7 @@ System font stack only — **no bundled custom font family** for body text, to p
 - 4px base grid: `space.xs=4, sm=8, md=12, lg=16, xl=24, xxl=32`.
 - Radius: `radius.bubble=18, radius.card=16, radius.sheet=24 (top corners), radius.pill=999`.
 - Elevation via soft, tinted shadows (brand-tinted in light mode, none/border in dark mode — pure black shadows on a near-black background are wasted), 3 levels only (`elevation.1/2/3`) to keep the shadow system simple.
-- **`layout` (added 2026-09-14):** `barHeight=96` (both the bottom tab bar and `AppHeader`, targeting ~0.6in at the conventional 160dp/in baseline both platforms' dp/pt units are defined against), `tabIconSize=28`, `headerIconSize=26`.
+- **`layout` (added 2026-09-14, made responsive same day):** reference sizes `barHeight=96` (both the bottom tab bar and `AppHeader`, targeting ~0.6in at the conventional 160dp/in baseline both platforms' dp/pt units are defined against), `tabIconSize=28`, `headerIconSize=26` — measured at a 375pt reference width (`RESPONSIVE_BASE_WIDTH`, the iPhone SE/8/X-class logical width). **`useTheme().layout` is not this static table** — `ThemeProvider` scales all three by the device's actual screen width (clamped 0.85–1.15×) so the bars keep the same look and feel on a smaller or bigger phone instead of a single fixed size that reads oversized or cramped at the extremes. Read sizes through `useTheme()`, never import `layout` from `theme/tokens.ts` directly for these three.
 
 ## 4. Motion system
 
@@ -96,7 +96,7 @@ Performance rule: every animation must be expressible as a `useAnimatedStyle` dr
 2. **Status** (tab) — ring feed, camera-first composer, credit cost shown before posting.
 3. **Wallet** (new tab, InvolveMe-specific — this is the structural addition to the WhatsApp IA) — `topup_credit` balance, `earnings_pending`, `withdrawable_cash` with the countdown ring, "Top Up" and "Withdraw" primary actions, transaction history (rendered straight from `ledger_entries`, user-facing labels mapped from `reason`).
 4. **Calls** (tab) — parity feature, out of v1 scope (see roadmap), voice/video calls are **not** part of the pay-per-message credit system in v1 to keep scope bounded — flagged as a future monetization/complexity decision, not an oversight.
-5. **Thread** — bubbles, per-message cost shown as a small caption under each bubble (`"2 credits"` / `"4 credits · 63 words"`) so cost is never hidden, composer shows live word-count → credit-cost preview as you type.
+5. **Thread** — bubbles, per-message cost shown as a small caption under each bubble (`"2 credits"` / `"4 credits · 63 words"`) so cost is never hidden, composer shows live word-count → credit-cost preview as you type. **Background wallpaper (added 2026-09-14):** a tiled, near-invisible (6% opacity) single-tone vector pattern of InvolveMe's own motifs (chat bubble, coin, four-point "value" spark) sits behind the message list — `components/ui/ChatWallpaper.tsx`, `react-native-svg`'s `Pattern`. Same _concept_ as WhatsApp's doodle wallpaper or Telegram's paper-plane pattern, deliberately different content so this doesn't read as a clone; tint is `text.secondary` (theme-adaptive), so it's actually visible-but-subtle in both light and dark mode rather than one fixed asset baked for one.
 6. Profile/Settings — KYC status badge prominently surfaced (verified/unverified), bank account management, standard WhatsApp-parity privacy controls.
 
 ## 6. Accessibility

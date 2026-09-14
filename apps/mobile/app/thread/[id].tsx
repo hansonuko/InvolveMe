@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 
+import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
@@ -157,6 +158,12 @@ export default function ThreadScreen() {
     <>
       <Stack.Screen options={{ headerShown: true, title: headerInfo?.partnerName ?? 'Chat' }} />
       <Screen style={{ paddingHorizontal: 0 }}>
+        {/* Absolute, behind everything else in this screen — see
+            ChatWallpaper's own header comment for why this exists and why
+            it's a tinted vector pattern rather than a WhatsApp/Telegram
+            asset. */}
+        <ChatWallpaper />
+
         {headerInfo && !headerInfo.isPayer ? (
           <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
             <Text variant="caption" color="secondary">

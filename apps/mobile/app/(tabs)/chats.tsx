@@ -318,12 +318,23 @@ export default function ChatsScreen() {
         );
 
   // Search lives as the FlatList's own ListHeaderComponent, not the sticky
-  // AppHeader, so it scrolls away with the list content instead of
-  // staying pinned. Fill is bgSurfaceAlt (a neutral, not a wine bar) per
-  // the 2026-09-14 chrome correction — see theme/tokens.ts's palette
-  // comment for why bars/fills like this no longer use brandPrimary.
+  // AppHeader/ChatsSubHeader above it, so it scrolls away with the list
+  // content instead of staying pinned — confirmed still true here, not
+  // just assumed, since it's the exact thing a later regression could
+  // silently break. Fill is bgSurfaceAlt (a neutral, not a wine bar) per
+  // the 2026-09-14 chrome correction.
   const searchBar = (
-    <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
+    <View
+      style={{
+        paddingHorizontal: spacing.lg,
+        // ~0.1in of breathing room below the fixed header/sub-header
+        // stack, per an explicit ask — spacing.lg (16dp) already lands
+        // exactly there at the same 160dp/in convention layout.barHeight
+        // uses, so no new token was needed for this.
+        paddingTop: spacing.lg,
+        paddingBottom: spacing.md,
+      }}
+    >
       <View
         style={[
           styles.searchBar,

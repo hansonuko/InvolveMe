@@ -2,6 +2,11 @@ export { ThemeProvider, useTheme } from './ThemeProvider';
 export { layout, palette, radius, spacing, typography } from './tokens';
 export type { ColorToken, ThemeMode } from './tokens';
 
+// Note: `layout` above is the *reference* size table (measured at one
+// screen width). Components should read bar/icon sizes from
+// `useTheme().layout` instead — that's the screen-size-adjusted version
+// ThemeProvider computes, not this module's static export.
+
 /** Derives a translucent variant of a theme color at render time, rather
  * than hardcoding a separate rgba() literal alongside it (CLAUDE.md's
  * no-hardcoded-hex rule extends to this — the *source* must still be a
