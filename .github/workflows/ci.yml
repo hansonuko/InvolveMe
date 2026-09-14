@@ -63,7 +63,7 @@ jobs:
       - name: DB-level tests (ledger conservation, concurrency)
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: npm run test:db
+        run: npm run test:db:ci
 
       - name: Edge Function tests (real dev DB + live Flutterwave, excludes submit-kyc)
         env:
