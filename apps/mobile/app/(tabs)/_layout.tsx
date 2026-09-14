@@ -1,76 +1,79 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { StyleSheet, View, type ColorValue } from 'react-native';
+import type { ColorValue } from 'react-native';
 
-import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
 import { useTotalUnreadCount } from '@/lib/queries/threads';
 import { useTheme } from '@/theme';
 
-/** Bold, single-glyph tab icons — no vector-icon package is installed in
- * this project yet (`@expo/vector-icons` isn't in node_modules; adding it
- * would be a new dependency, not something already covered per CLAUDE.md's
- * "stay lite" rule), so these are rendered through the existing `Text`
- * primitive rather than pulling one in for this alone. Filled vs. plain
- * glyph gives the same "bolder when active" read a filled/outline icon pair
- * normally would. */
-const TAB_GLYPHS: Record<string, string> = {
-  chats: '💬',
-  calls: '📞',
-  wallet: '👛',
-  status: '🛠',
+/** Real vector icons (`@expo/vector-icons`, ships inside the Expo SDK —
+ * added 2026-09-14, on an explicit "no colored icons, modern and
+ * standard" ask) — replaces the earlier emoji glyphs. Emoji render in a
+ * fixed native color no matter what `color` style is applied, which is
+ * exactly the "colored icon" problem being fixed here; they'd also
+ * render as a broken/missing-glyph "tofu" box on some Android font
+ * configs, which is the most likely cause of "menu icons appear broken."
+ * Ionicons tints correctly via the `color` prop React Navigation already
+ * passes through `tabBarActiveTintColor`/`tabBarInactiveTintColor`, so no
+ * per-icon color logic is needed here at all. */
+const TAB_ICONS: Record<
+  string,
+  { active: keyof typeof Ionicons.glyphMap; inactive: keyof typeof Ionicons.glyphMap }
+> = {
+  chats: { active: 'chatbubbles', inactive: 'chatbubbles-outline' },
+  calls: { active: 'call', inactive: 'call-outline' },
+  wallet: { active: 'wallet', inactive: 'wallet-outline' },
+  // Matches the very first Status glyph used (a plain ring, '◎') before a
+  // later mockup-driven pass swapped it for a tools icon — reverted back
+  // on explicit request. A ring is also the right shape for "Status" in
+  // this app's own docs/04-DESIGN-SYSTEM.md §4 motion spec ("Status ring:
+  // animated gradient ring around avatars with unseen status").
+  status: { active: 'ellipse', inactive: 'ellipse-outline' },
 };
 
 function TabIcon({
   route,
   color,
   focused,
+  size,
 }: {
   route: string;
   color: ColorValue;
   focused: boolean;
+  size: number;
 }) {
-  const { colors, spacing, radius } = useTheme();
+  const icons = TAB_ICONS[route];
   return (
-    <View
-      style={[
-        styles.iconPill,
-        {
-          paddingHorizontal: spacing.md,
-          paddingVertical: spacing.xs,
-          borderRadius: radius.pill,
-          // Focused tab gets a lighter-wine pill behind it — the bottom bar
-          // itself is a solid wine surface (see tabBarStyle below), so this
-          // needs to read as a step lighter than that, not just an opacity
-          // tint on the same hue.
-          backgroundColor: focused ? colors.brandPrimaryPressed : 'transparent',
-        },
-      ]}
-    >
-      <Text
-        style={{ fontSize: 20, color }}
-        accessibilityElementsHidden
-        importantForAccessibility="no"
-      >
-        {TAB_GLYPHS[route] ?? '•'}
-      </Text>
-    </View>
+    <Ionicons
+      name={icons ? (focused ? icons.active : icons.inactive) : 'ellipse-outline'}
+      size={size}
+      color={color}
+    />
   );
 }
 
 /**
  * WhatsApp-parity tab shell: Chats / Calls / Wallet (InvolveMe-specific, see
- * docs/04-DESIGN-SYSTEM.md §5) / Status, in that order per the 2026-09-13
- * wine rebrand spec (docs/00-SESSION-HANDOFF.md) — previously Chats /
- * Status / Wallet / Calls.
+ * docs/04-DESIGN-SYSTEM.md §5) / Status.
  *
- * `headerShown: false` — each screen now renders its own `AppHeader`
- * (components/ui/AppHeader.tsx). Before this, Expo Router's own default
- * `Tabs` header rendered *underneath* every screen's custom title, since
- * nothing had ever turned it off — two stacked headers on every tab. See
- * docs/00-SESSION-HANDOFF.md's header/nav overhaul section.
+ * `headerShown: false` — each screen renders its own `AppHeader`
+ * (components/ui/AppHeader.tsx).
+ *
+ * **2026-09-14 chrome correction:** the bar was a solid wine surface with
+ * cream content (the original "Deep Wine" mockup's literal look) —
+ * flagged back as backwards. Bars are now the canvas color (light milk /
+ * dark near-black) with `textSecondary` (wine light, white dark) for the
+ * active icon/label and `textTertiary` for inactive — text/icons carry
+ * the accent, not the bar fill. See theme/tokens.ts's palette comment for
+ * why the dark-mode accent is now plain white rather than the lightened
+ * wine (`#C97D91`/`#B5677B`) that read as purple/mauve. Also taller
+ * (`layout.barHeight`, ~0.6in) with bigger icons and a bigger label, on
+ * an explicit size-up ask — no more focused-pill background behind the
+ * icon; the icon/label color change alone carries the "active" state,
+ * the same convention WhatsApp/Telegram's own tab bars actually use.
  */
 export default function TabsLayout() {
-  const { colors, typography } = useTheme();
+  const { colors, typography, layout } = useTheme();
   const { session } = useSession();
   // Real count from thread_unread_counts (migration
   // 20260914080000_thread_read_cursor.sql) — undefined/0 renders no
@@ -81,16 +84,17 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={({ route }) => ({
         headerShown: false,
-        // The tab bar itself is a solid wine surface with cream icons/labels
-        // regardless of light/dark app theme — `textInverse`/`brandPrimary`
-        // are the "always on brand" tokens for exactly this (see
-        // theme/tokens.ts's 2026-09-13 rebrand comment).
-        tabBarStyle: { backgroundColor: colors.brandPrimary, borderTopColor: colors.brandPrimary },
-        tabBarActiveTintColor: colors.textInverse,
-        tabBarInactiveTintColor: colors.textInverse,
+        tabBarStyle: {
+          backgroundColor: colors.bgCanvas,
+          borderTopColor: colors.borderSubtle,
+          height: layout.barHeight,
+          paddingTop: 12,
+        },
+        tabBarActiveTintColor: colors.textSecondary,
+        tabBarInactiveTintColor: colors.textTertiary,
         tabBarLabelStyle: typography.tabBarLabel,
         tabBarIcon: ({ color, focused }) => (
-          <TabIcon route={route.name} color={color} focused={focused} />
+          <TabIcon route={route.name} color={color} focused={focused} size={layout.tabIconSize} />
         ),
       })}
     >
@@ -108,7 +112,3 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  iconPill: { alignItems: 'center', justifyContent: 'center' },
-});

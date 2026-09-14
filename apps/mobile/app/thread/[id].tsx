@@ -9,13 +9,14 @@ import {
   View,
 } from 'react-native';
 
+import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
 import { type Message, useSendMessage, useThreadMessages } from '@/lib/queries/messages';
 import { useMarkThreadRead } from '@/lib/queries/threads';
 import { supabase } from '@/lib/supabase';
-import { useTheme } from '@/theme';
+import { useTheme, withAlpha } from '@/theme';
 
 interface ThreadHeaderInfo {
   partnerName: string | null;
@@ -84,14 +85,14 @@ function MessageBubble({ message, isOwn }: { message: Message; isOwn: boolean })
           },
         ]}
       >
-        <Text variant="body" style={isOwn ? styles.onBrand : undefined}>
+        <Text variant="body" color={isOwn ? 'inverse' : undefined}>
           {message.body}
         </Text>
         <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
           <Text
             variant="caption"
             color={isOwn ? undefined : 'secondary'}
-            style={isOwn ? styles.onBrandCaption : undefined}
+            style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
           >
             {message.credits_charged} cr
           </Text>
@@ -99,7 +100,7 @@ function MessageBubble({ message, isOwn }: { message: Message; isOwn: boolean })
             <Text
               variant="caption"
               color={isOwn ? undefined : 'secondary'}
-              style={isOwn ? styles.onBrandCaption : undefined}
+              style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
             >
               · awaiting reply
             </Text>
@@ -107,7 +108,7 @@ function MessageBubble({ message, isOwn }: { message: Message; isOwn: boolean })
             <Text
               variant="caption"
               color={isOwn ? undefined : 'secondary'}
-              style={isOwn ? styles.onBrandCaption : undefined}
+              style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
             >
               · refunded
             </Text>
@@ -157,6 +158,12 @@ export default function ThreadScreen() {
     <>
       <Stack.Screen options={{ headerShown: true, title: headerInfo?.partnerName ?? 'Chat' }} />
       <Screen style={{ paddingHorizontal: 0 }}>
+        {/* Absolute, behind everything else in this screen — see
+            ChatWallpaper's own header comment for why this exists and why
+            it's a tinted vector pattern rather than a WhatsApp/Telegram
+            asset. */}
+        <ChatWallpaper />
+
         {headerInfo && !headerInfo.isPayer ? (
           <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
             <Text variant="caption" color="secondary">
@@ -215,7 +222,7 @@ export default function ThreadScreen() {
             />
             <Text
               variant="caption"
-              color="brand"
+              color="secondary"
               onPress={sendMessage.isPending || !body.trim() ? undefined : handleSend}
               style={{ opacity: sendMessage.isPending || !body.trim() ? 0.4 : 1 }}
             >
@@ -231,8 +238,6 @@ export default function ThreadScreen() {
 const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row' },
   bubble: { maxWidth: '80%' },
-  onBrand: { color: '#FFFFFF' },
-  onBrandCaption: { color: 'rgba(255,255,255,0.75)' },
   composer: { flexDirection: 'row', alignItems: 'flex-end' },
   input: {
     flex: 1,

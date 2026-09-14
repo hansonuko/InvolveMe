@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useState, type ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 
@@ -30,22 +31,24 @@ interface AppHeaderProps {
  * Shared fixed header for the (tabs) screens — see
  * docs/00-SESSION-HANDOFF.md's header/nav overhaul section for why this
  * exists: every tab screen used to render its own ad-hoc title `<Text>`
- * *and* Expo Router's own default `Tabs` header rendered underneath it
- * (screenOptions never set `headerShown: false`) — two stacked headers on
- * every tab. `(tabs)/_layout.tsx` now turns the native one off entirely;
- * this is the only header each tab screen gets.
+ * *and* Expo Router's own default `Tabs` header rendered underneath it —
+ * two stacked headers on every tab. `(tabs)/_layout.tsx` turns the native
+ * one off entirely; this is the only header each tab screen gets.
  *
  * Deliberately not wrapped in its own SafeAreaView/inset padding — it
- * relies on `Screen`'s existing SafeAreaView for the top inset, the same
- * mechanism the old inline titles already sat correctly under. What it
- * fixes structurally is different: as a non-scrolling sibling placed
- * *before* a screen's scrollable body (never inside it), content can't
- * scroll up behind/over it — see wallet.tsx's fix, where the old title lived
- * as the first child *inside* the ScrollView and scrolled away with
- * everything else.
+ * relies on `Screen`'s existing SafeAreaView for the top inset.
+ *
+ * **2026-09-14 chrome correction:** background was already the canvas
+ * color (light milk / dark near-black) — that part didn't need fixing.
+ * What did: the overflow icon is now a real vector icon (Ionicons,
+ * `@expo/vector-icons`) rather than a plain "⋮" character (inconsistent
+ * rendering across platform fonts was a real contributor to icons
+ * "appearing broken"), sized up and given more breathing room per an
+ * explicit size-up ask, and the bar itself is now a fixed
+ * `layout.barHeight` (~0.6in) tall instead of content-height.
  */
 export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps) {
-  const { colors, spacing, radius } = useTheme();
+  const { colors, spacing, radius, layout } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -53,20 +56,26 @@ export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps
       style={[
         styles.row,
         {
+          height: layout.barHeight,
           paddingHorizontal: spacing.lg,
-          paddingBottom: spacing.md,
           backgroundColor: colors.bgCanvas,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.borderSubtle,
         },
       ]}
     >
-      <Text variant={brand ? 'brand' : 'display'} color={brand ? 'brand' : 'primary'}>
+      {/* color="secondary" (not "brand") even for the wordmark — brandPrimary
+          is theme-invariant wine now (see tokens.ts), which would be
+          near-invisible against a dark canvas in dark mode. textSecondary
+          is the theme-adaptive accent role that's actually meant for
+          on-canvas content. */}
+      <Text variant={brand ? 'brand' : 'display'} color={brand ? 'secondary' : 'primary'}>
         {title}
       </Text>
 
-      {/* ~24dp between the "+" and "⋮" actions per the 2026-09-13 wine
-          rebrand's header spec (docs/00-SESSION-HANDOFF.md) — spacing.lg
-          (16) read as too tight side by side. */}
-      <View style={[styles.actions, { gap: spacing.xl }]}>
+      {/* Bigger gap than before — the icons themselves are bigger now too,
+          so the old 24dp read as cramped next to them. */}
+      <View style={[styles.actions, { gap: spacing.xxl }]}>
         {rightSlot}
 
         {menuItems?.length ? (
@@ -77,9 +86,11 @@ export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps
               accessibilityRole="button"
               accessibilityLabel="More options"
             >
-              <Text variant="title" color="secondary">
-                ⋮
-              </Text>
+              <Ionicons
+                name="ellipsis-vertical"
+                size={layout.headerIconSize}
+                color={colors.textSecondary}
+              />
             </Pressable>
 
             <Modal
@@ -97,7 +108,7 @@ export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps
                       borderColor: colors.borderSubtle,
                       borderRadius: radius.card,
                       right: spacing.lg,
-                      top: spacing.xxl,
+                      top: layout.barHeight,
                     },
                   ]}
                 >
