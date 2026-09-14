@@ -2,6 +2,8 @@ import { Tabs } from 'expo-router';
 import { StyleSheet, View, type ColorValue } from 'react-native';
 
 import { Text } from '@/components/ui/Text';
+import { useSession } from '@/lib/hooks/useSession';
+import { useTotalUnreadCount } from '@/lib/queries/threads';
 import { useTheme } from '@/theme';
 
 /** Bold, single-glyph tab icons — no vector-icon package is installed in
@@ -69,6 +71,11 @@ function TabIcon({
  */
 export default function TabsLayout() {
   const { colors, typography } = useTheme();
+  const { session } = useSession();
+  // Real count from thread_unread_counts (migration
+  // 20260914080000_thread_read_cursor.sql) — undefined/0 renders no
+  // badge at all, never a fabricated number.
+  const { data: totalUnread } = useTotalUnreadCount(session?.user.id);
 
   return (
     <Tabs
@@ -87,7 +94,14 @@ export default function TabsLayout() {
         ),
       })}
     >
-      <Tabs.Screen name="chats" options={{ title: 'Chats' }} />
+      <Tabs.Screen
+        name="chats"
+        options={{
+          title: 'Chats',
+          tabBarBadge: totalUnread ? totalUnread : undefined,
+          tabBarBadgeStyle: { backgroundColor: colors.badgeBg, color: colors.badgeText },
+        }}
+      />
       <Tabs.Screen name="calls" options={{ title: 'Calls' }} />
       <Tabs.Screen name="wallet" options={{ title: 'Wallet' }} />
       <Tabs.Screen name="status" options={{ title: 'Status' }} />
