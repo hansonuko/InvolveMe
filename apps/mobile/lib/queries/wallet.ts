@@ -226,12 +226,33 @@ export function useBuyCredit() {
   });
 }
 
-/** Polls-via-Realtime a single topup's status, so BuyCreditModal can detect
- * the moment a transfer clears and show the congrats screen instead of
- * making the user back out to the wallet screen and check manually.
- * `topups` was added to the supabase_realtime publication specifically for
- * this (see the enable_realtime_topups migration); RLS already scopes the
- * row to its owner. */
+/** Tracks a single topup's status so BuyCreditModal can detect the moment
+ * a transfer clears and show the congrats screen instead of making the
+ * user back out to the wallet screen and check manually.
+ *
+ * Two layers, added at different times for different reasons
+ * (docs/00-SESSION-HANDOFF.md session 12): the Realtime subscription +
+ * plain DB read below react the instant *something else* (the webhook, if
+ * it ever actually fires, or the reconcile-topups cron) writes
+ * `topups.status`. But neither of those can be trusted to be fast — the
+ * cron only checks topups older than 5 minutes, every 10 minutes, and the
+ * webhook has never once fired in this app's history (see
+ * reconcile-topups' own header). A user actively staring at this screen
+ * waiting for their credit was left watching nothing happen for up to ~15
+ * minutes, which is exactly the "wait aimlessly" complaint that prompted
+ * this: `checkActiveTopupStatus` below actively asks the server "has this
+ * cleared yet?" (check-topup-status, the same Flutterwave ground-truth
+ * check reconcile-topups uses, but on demand and with no age gate) every
+ * few seconds while the modal is open and still pending — this is now the
+ * real fast path; the cron is the backstop for a user who closes the
+ * modal or backgrounds the app before this ever gets to run. */
+async function checkActiveTopupStatus(topupId: string): Promise<string> {
+  const { status } = await callEdgeFunction<{ status: string }>('check-topup-status', {
+    topup_id: topupId,
+  });
+  return status;
+}
+
 export function useTopupStatus(topupId: string | undefined) {
   const queryClient = useQueryClient();
   const queryKey = ['topups', topupId];
@@ -270,6 +291,33 @@ export function useTopupStatus(topupId: string | undefined) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topupId]);
+
+  // The active fast-path poll — stops itself the moment the topup resolves
+  // (no point spending Flutterwave API calls once there's nothing left to
+  // check), and stops entirely if the screen showing it unmounts (modal
+  // closed), matching the honest "this screen updates itself" promise
+  // BuyCreditModal makes only while it's actually still on screen.
+  useEffect(() => {
+    if (!topupId || query.data !== 'pending') return;
+
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        const status = await checkActiveTopupStatus(topupId);
+        if (!cancelled) queryClient.setQueryData(queryKey, status);
+      } catch {
+        // Transient network/edge-function hiccup — the next tick (or the
+        // Realtime/5s-poll layer above) will catch it. Not worth surfacing
+        // mid-poll.
+      }
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topupId, query.data]);
 
   return query;
 }

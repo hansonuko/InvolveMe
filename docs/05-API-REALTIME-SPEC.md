@@ -63,6 +63,19 @@ Response now includes `thread_id` — required so the client can continue the co
 
 Card and other payment methods aren't implemented — only NGN bank transfer, matching this project's phone-only, KYC-light v1 scope.
 
+### `POST /functions/v1/check-topup-status`
+
+```jsonc
+// Request
+{ "topup_id": "uuid" }
+// Response 200
+{ "status": "pending" | "completed" | "failed" }
+// Response 403 (topup belongs to another user)
+{ "error": "not_your_topup" }
+```
+
+Added 2026-09-14 (session 12, continued) after real-device testing showed the "credits land automatically" promise on the buy-credit screen wasn't actually fast — the webhook that promise depended on has never once fired in this app's history (see `webhook-flutterwave`'s entry below), and `reconcile-topups`' cron only checks topups older than 5 minutes, every 10 minutes. This is the same Flutterwave ground-truth check (`PaymentProvider.checkCollectionStatus`), called on demand for one specific topup with no age gate, self-confirming via `fn_confirm_topup` exactly like the cron does — the mobile client polls it every ~4s while the payment screen is open and still pending, so the "instant" feeling comes from the client asking often while the user is actually watching, not from the provider ever pushing anything reliably. Ownership-checked (`topups.user_id === caller.id`), unlike `reconcile-topups`' machine-only all-users sweep, since this has a real per-user caller a client could otherwise abuse to probe other users' payments.
+
 ### `POST /functions/v1/webhook-flutterwave` (and future `webhook-paystack`)
 
 Server-to-server only, not called by the app.
