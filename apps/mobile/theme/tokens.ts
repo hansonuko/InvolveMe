@@ -7,36 +7,75 @@
  * it belongs here before it belongs in a component.
  */
 
-// 2026-09-13 rebrand ("Deep Wine" — see docs/04-DESIGN-SYSTEM.md §1):
-// replaces the earlier violet+gold ("Involve Violet") direction. The brief
-// this shipped from specified light-mode values only (a cream/wine
-// messaging-app look); dark mode has no source spec to match, so its
-// values below are a conservative extrapolation (same wine/milk brand
-// hues, ported onto dark canvases) rather than a second designed look —
-// flagged here and in docs/04 for a real dark-mode pass if one is wanted.
+// 2026-09-14 palette refinement, requested against exactly two anchor
+// colors — canvas #FDFFF7 and brand wine #5F1B31 (the 2026-09-13 rebrand's
+// brand color, reconfirmed unchanged). Every other light-mode token below
+// is now *derived* from those two by mixing wine into near-white (surfaces/
+// borders) or near-black (ink text) at defined ratios, rather than picked
+// ad hoc — see docs/04-DESIGN-SYSTEM.md §1 for the exact ratios and the
+// contrast audit that came out of it. Two real accessibility bugs this
+// caught, not just a re-tint: `success`/`danger` (both actively used as
+// text throughout the app) failed WCAG AA (2.6:1 / 3.7:1) against the new,
+// brighter canvas — darkened to pass 4.5:1 while staying recognizably
+// green/red. `accentCredit` also fails at 2.0:1 but is intentionally left
+// vivid (see its own comment below) since nothing renders it as text today.
 export const palette = {
   light: {
-    bgCanvas: '#FBF9F1',
+    bgCanvas: '#FDFFF7',
     bgSurface: '#FFFFFF',
-    bgSurfaceAlt: '#FFE6D8',
+    // 10% wine mixed into near-white — replaces the old #FFE6D8 peach,
+    // which related to neither anchor color (exactly the "odd/unmatched"
+    // case this refinement was asked to fix). Used for input fields, list-
+    // row press states, incoming message bubbles.
+    bgSurfaceAlt: '#EDE8E3',
     brandPrimary: '#5F1B31',
-    brandPrimaryPressed: '#45131F',
+    brandPrimaryPressed: '#471425',
+    // Intentionally not derived from wine/near-white, and intentionally
+    // not darkened for AA text contrast (2.0:1 against bgSurface) — this
+    // is the one accent this app deliberately keeps distinct from the
+    // brand hue (docs/04 §1's "gold = my value" association) and nothing
+    // renders it as text today (grep-verified). If a future screen ever
+    // sets Text color="credit", it needs a separate darker text-only
+    // variant at that point — don't quietly reuse this value for text.
     accentCredit: '#F5A623',
-    success: '#12B76A',
-    danger: '#F04438',
-    warning: '#F79009',
-    textPrimary: '#000000',
+    // Darkened from the original #12B76A/#F04438/#F79009 to actually pass
+    // 4.5:1 against the new brighter bgCanvas — both success and danger
+    // are live today as Text colors (error/confirmation messages) and
+    // were failing AA before this fix, not a hypothetical.
+    success: '#0D874E',
+    danger: '#D63D32',
+    warning: '#AA6306',
+    // 15% wine mixed into black — a warm "ink" rather than flat #000000,
+    // imperceptibly different at a glance (20:1 contrast either way) but
+    // ties primary text into the two-anchor system instead of being an
+    // unrelated pure neutral.
+    textPrimary: '#0E0407',
     textSecondary: '#5F1B31',
-    textTertiary: '#8A8A8A',
-    // "On brand" color — bottom-nav labels/icons and badge text all sit on
-    // a wine-colored surface regardless of app theme, so this deliberately
-    // doesn't change between light/dark (see dark palette below).
-    textInverse: '#FFE6D8',
-    borderSubtle: '#EAD9CD',
+    // 30% wine mixed into neutral gray — replaces the old flat #8A8A8A
+    // (same "unrelated neutral" issue as bgSurfaceAlt had), still muted
+    // enough for secondary reading at 5.05:1 against bgCanvas.
+    textTertiary: '#7D696F',
+    // "On brand" color — bottom-nav labels/icons, badge text, and the
+    // primary button label all sit on a wine-colored surface regardless of
+    // app theme, so this is the near-white anchor reused directly rather
+    // than a third, unrelated light tone — deliberately identical in both
+    // themes (see dark palette below).
+    textInverse: '#FDFFF7',
+    // 6% wine mixed into near-white — one step lighter than bgSurfaceAlt,
+    // same derivation family.
+    borderSubtle: '#F4F1EB',
     badgeBg: '#5F1B31',
-    badgeText: '#FFE6D8',
+    badgeText: '#FDFFF7',
   },
   dark: {
+    // Dark mode wasn't part of this refinement's ask (only the two named
+    // anchor colors were, both light-mode) and keeps the 2026-09-13
+    // rebrand's own conservative extrapolation — flagged there and in
+    // docs/04 §1 as due for a real pass if a dark-mode design is ever
+    // actually specified. textInverse/badgeText below are the one
+    // exception: kept identical to the light palette's new value, since
+    // both are documented as theme-fixed "on brand" colors, not something
+    // that should drift out of sync just because light mode changed.
     bgCanvas: '#1A1013',
     bgSurface: '#241820',
     bgSurfaceAlt: '#3A2430',
@@ -49,10 +88,10 @@ export const palette = {
     textPrimary: '#F5EDE9',
     textSecondary: '#E7A9BA',
     textTertiary: '#A8A29E',
-    textInverse: '#FFE6D8',
+    textInverse: '#FDFFF7',
     borderSubtle: '#3A2A30',
     badgeBg: '#5F1B31',
-    badgeText: '#FFE6D8',
+    badgeText: '#FDFFF7',
   },
 } as const;
 

@@ -15,7 +15,7 @@ import { useSession } from '@/lib/hooks/useSession';
 import { type Message, useSendMessage, useThreadMessages } from '@/lib/queries/messages';
 import { useMarkThreadRead } from '@/lib/queries/threads';
 import { supabase } from '@/lib/supabase';
-import { useTheme } from '@/theme';
+import { useTheme, withAlpha } from '@/theme';
 
 interface ThreadHeaderInfo {
   partnerName: string | null;
@@ -84,14 +84,14 @@ function MessageBubble({ message, isOwn }: { message: Message; isOwn: boolean })
           },
         ]}
       >
-        <Text variant="body" style={isOwn ? styles.onBrand : undefined}>
+        <Text variant="body" color={isOwn ? 'inverse' : undefined}>
           {message.body}
         </Text>
         <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
           <Text
             variant="caption"
             color={isOwn ? undefined : 'secondary'}
-            style={isOwn ? styles.onBrandCaption : undefined}
+            style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
           >
             {message.credits_charged} cr
           </Text>
@@ -99,7 +99,7 @@ function MessageBubble({ message, isOwn }: { message: Message; isOwn: boolean })
             <Text
               variant="caption"
               color={isOwn ? undefined : 'secondary'}
-              style={isOwn ? styles.onBrandCaption : undefined}
+              style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
             >
               · awaiting reply
             </Text>
@@ -107,7 +107,7 @@ function MessageBubble({ message, isOwn }: { message: Message; isOwn: boolean })
             <Text
               variant="caption"
               color={isOwn ? undefined : 'secondary'}
-              style={isOwn ? styles.onBrandCaption : undefined}
+              style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
             >
               · refunded
             </Text>
@@ -231,8 +231,6 @@ export default function ThreadScreen() {
 const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row' },
   bubble: { maxWidth: '80%' },
-  onBrand: { color: '#FFFFFF' },
-  onBrandCaption: { color: 'rgba(255,255,255,0.75)' },
   composer: { flexDirection: 'row', alignItems: 'flex-end' },
   input: {
     flex: 1,
