@@ -98,12 +98,12 @@ async function resetPlatformWallets(admin) {
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (
        select id from public.wallets where user_id is null
-         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut')
+         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')
      )`,
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
   await admin.query(
-    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut')",
+    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')",
   );
 }
 
