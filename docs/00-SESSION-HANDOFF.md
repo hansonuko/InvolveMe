@@ -2,6 +2,19 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Where we stopped (end of session 14, 2026-09-15) — start here next session
+
+Three PRs shipped and merged clean this session, in order: **#43** reserve buffer + clawback-as-debt, **#44** a critical security fix found mid-flight (see below), **#45** settlement-aware auto-withdrawal holds. `main` is up to date with all three; CI green on every merge including `migrate-staging`, so the dev/staging DB already has everything described below live. Full detail on each is in the dated entries immediately below this one.
+
+**docs/06-SECURITY-FRAUD-LOOPHOLES.md §12 checklist is now 9 of 11 checked.** The two still open:
+
+- **§10** — referral/promo-system fraud prerequisites. Fingerprinting + velocity limits exist; OTP/carrier-detection doesn't, and there's no referral system yet to actually gate. Not actionable until a referral system is scoped (which is itself still deferred, blocked on this).
+- **§11** — legal sign-off per `docs/07-COMPLIANCE-LEGAL.md`. Not a coding task — needs actual counsel. `docs/07`'s own checklist has the concrete remaining items (counsel review of the drafted ToS/Privacy Policy and the peer-to-peer transfer feature, Nigerian fintech licensing posture, KYC vendor contract, Flutterwave business-side reserve/chargeback process) — all business/legal, not build work, except one: **Apple pre-submission review notes explaining the pay-per-message model** (`docs/07` line 52) is a real writing task, still open, and was one of the four options offered this session before settlement-aware holds was picked instead.
+
+**A real, unresolved side-finding from this session, not yet acted on:** the test suite's cleanup helpers (every `supabase/tests/*.test.js` file) share a pre-existing fragility — running multiple `test:*` suites concurrently causes spurious `ledger_entries is append-only` failures via cross-file trigger-disable contention (`ALTER TABLE ... DISABLE/ENABLE TRIGGER` is session-wide in Postgres, not scoped to one connection). Confirmed, not just suspected — see the "Critical" entry below for the investigation. Always run `test:*` suites one at a time from here on; a fix to the cleanup design itself (explicit transaction wrapping, or a per-file advisory lock) is still a real, unscheduled task if this keeps costing time.
+
+**Nothing is mid-flight.** Working tree is clean, `main` is fully merged and CI-green. The next session can pick fresh from: §10/§11's legal-adjacent items above, the Apple review-notes writing task, Phase 6/7 roadmap items (`docs/08-BUILD-PHASES-ROADMAP.md`), or the still-held `eas build` for device-fingerprinting's native modules (session 13, held at explicit user request "until more work accumulates" — a lot has since; worth asking whether now's the time).
+
 ## Snapshot as of 2026-09-15 (session 14, continued again — settlement-aware auto-withdrawal holds)
 
 Resumed after the emergency grants-lockdown PR (#44) merged — that fix was discovered and shipped mid-flight while starting this exact task, so it landed first. This is the original task: docs/06 §3's other, harder bullet, picked from a "what's naturally next" menu presented per explicit request.
