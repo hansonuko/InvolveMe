@@ -92,6 +92,49 @@ async function fundWallet(admin, userId, kind, amount) {
   );
 }
 
+// For settlement-aware auto-sweep tests: a user whose account is
+// `ageDays` old (backdates both auth.users.created_at and the
+// trigger-copied public.users.created_at, same field the trust check
+// reads) and, separately, a withdrawable_cash wallet whose
+// `updated_at` is backdated to simulate money that's sat unswept for
+// `updatedHoursAgo` hours — the same proxy fn_run_auto_withdraw_sweep
+// itself already uses for "how long has this sat here."
+async function createAgedUser(admin, ageDays) {
+  const id = crypto.randomUUID();
+  const phone = `+234${crypto.randomInt(100000000, 999999999)}`;
+  await admin.query(
+    `insert into auth.users (id, phone, created_at, aud, role, instance_id)
+     values ($1, $2, now() - make_interval(days => $3), 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000')`,
+    [id, phone, ageDays],
+  );
+  await admin.query(
+    'update public.users set created_at = now() - make_interval(days => $2), kyc_tier = 1 where id = $1',
+    [id, ageDays],
+  );
+  return id;
+}
+
+async function setupWithdrawableWallet(admin, userId, kobo, updatedHoursAgo) {
+  const bankRes = await admin.query(
+    `insert into public.bank_accounts (user_id, bank_name, account_name, name_match_verified)
+     values ($1, 'Test Bank', 'Sweep Test', true) returning id`,
+    [userId],
+  );
+  const wallet = await admin.query(
+    `select id from public.wallets where user_id = $1 and kind = 'withdrawable_cash'`,
+    [userId],
+  );
+  await admin.query(
+    `insert into public.ledger_entries (wallet_id, amount, reason) values ($1, $2, 'manual_adjustment')`,
+    [wallet.rows[0].id, kobo],
+  );
+  await admin.query(
+    'update public.wallets set updated_at = now() - make_interval(hours => $2) where id = $1',
+    [wallet.rows[0].id, updatedHoursAgo],
+  );
+  return { walletId: wallet.rows[0].id, bankAccountId: bankRes.rows[0].id };
+}
+
 async function sendMessages(admin, threadId, senderId, count, body = 'hi') {
   for (let i = 0; i < count; i++) {
     await admin.query('select public.fn_send_message($1, $2, $3)', [threadId, senderId, body]);
@@ -595,6 +638,172 @@ async function testNoDuplicateFalsePositiveOnVariedConversation(admin) {
   await deleteTestUser(admin, B);
 }
 
+// =============================================================================
+// Settlement-aware auto-withdrawal holds (docs/06-SECURITY-FRAUD-LOOPHOLES.md
+// §3/§4) — fn_is_withdrawal_trusted and fn_run_auto_withdraw_sweep's new
+// trust gate.
+// =============================================================================
+
+async function testAutoSweepTrustedPayeeSweepsAtNormalThreshold(admin) {
+  const A = await createAgedUser(admin, 60); // well past new_account_age_days (30), clean history
+  const { bankAccountId } = await setupWithdrawableWallet(admin, A, 100000, 30); // 30h old, past the 24h threshold
+
+  const trusted = await admin.query('select public.fn_is_withdrawal_trusted($1) as t', [A]);
+  log(
+    'an aged, clean, Tier-1 payee is trusted',
+    trusted.rows[0].t === true,
+    `trusted=${trusted.rows[0].t}`,
+  );
+
+  await admin.query('select public.fn_run_auto_withdraw_sweep()');
+
+  const wallet = await admin.query(
+    `select balance from public.wallets where user_id = $1 and kind = 'withdrawable_cash'`,
+    [A],
+  );
+  log(
+    "a trusted payee's money sweeps at the normal 24h threshold",
+    Number(wallet.rows[0].balance) === 0,
+    `balance=${wallet.rows[0].balance}`,
+  );
+
+  void bankAccountId;
+  await deleteTestUser(admin, A);
+}
+
+async function testAutoSweepUntrustedPayeeHoldsUntilLongerThreshold(admin) {
+  const A = await createAgedUser(admin, 5); // fresh — under new_account_age_days (30)
+  await setupWithdrawableWallet(admin, A, 100000, 30); // 30h old — past 24h but under 72h
+
+  const trusted = await admin.query('select public.fn_is_withdrawal_trusted($1) as t', [A]);
+  log(
+    'a fresh (5-day-old) Tier-1 payee is not trusted',
+    trusted.rows[0].t === false,
+    `trusted=${trusted.rows[0].t}`,
+  );
+
+  await admin.query('select public.fn_run_auto_withdraw_sweep()');
+
+  const walletAt30h = await admin.query(
+    `select balance from public.wallets where user_id = $1 and kind = 'withdrawable_cash'`,
+    [A],
+  );
+  log(
+    "an untrusted payee's money is NOT swept at 30h (needs the longer untrusted threshold)",
+    Number(walletAt30h.rows[0].balance) === 100000,
+    `balance=${walletAt30h.rows[0].balance}`,
+  );
+
+  // Age the same wallet past the untrusted threshold (72h) and re-run.
+  await admin.query(
+    `update public.wallets set updated_at = now() - interval '80 hours'
+     where user_id = $1 and kind = 'withdrawable_cash'`,
+    [A],
+  );
+  await admin.query('select public.fn_run_auto_withdraw_sweep()');
+
+  const walletAt80h = await admin.query(
+    `select balance from public.wallets where user_id = $1 and kind = 'withdrawable_cash'`,
+    [A],
+  );
+  log(
+    'the same untrusted payee sweeps once past the untrusted (72h) threshold',
+    Number(walletAt80h.rows[0].balance) === 0,
+    `balance=${walletAt80h.rows[0].balance}`,
+  );
+
+  await deleteTestUser(admin, A);
+}
+
+async function testAutoSweepHeldIndefinitelyWhileHighSeveritySignalIsRecent(admin) {
+  const A = await createAgedUser(admin, 60); // aged, would otherwise be trusted
+  await setupWithdrawableWallet(admin, A, 1000, 24 * 10); // 10 days old, past force-sweep (7d), below withdrawal_min_kobo
+  await admin.query(
+    `insert into public.fraud_signals (user_id, signal_type, severity, metadata) values ($1, 'chargeback', 'high', '{}')`,
+    [A],
+  );
+
+  const trusted = await admin.query('select public.fn_is_withdrawal_trusted($1) as t', [A]);
+  log(
+    'a payee with a recent high-severity signal is not trusted despite account age',
+    trusted.rows[0].t === false,
+    `trusted=${trusted.rows[0].t}`,
+  );
+
+  await admin.query('select public.fn_run_auto_withdraw_sweep()');
+
+  const wallet = await admin.query(
+    `select balance from public.wallets where user_id = $1 and kind = 'withdrawable_cash'`,
+    [A],
+  );
+  log(
+    'flagged money is held, never force-swept, even past the force-sweep window and below the minimum',
+    Number(wallet.rows[0].balance) === 1000,
+    `balance=${wallet.rows[0].balance}`,
+  );
+
+  await deleteTestUser(admin, A);
+}
+
+async function testAutoSweepSignalAgingOutOfLookbackUnblocksSweep(admin) {
+  const A = await createAgedUser(admin, 60);
+  await setupWithdrawableWallet(admin, A, 100000, 30);
+  // withdrawal_trust_signal_lookback_days is 90 — a signal from 100 days ago
+  // no longer disqualifies.
+  await admin.query(
+    `insert into public.fraud_signals (user_id, signal_type, severity, metadata, created_at)
+     values ($1, 'chargeback', 'high', '{}', now() - interval '100 days')`,
+    [A],
+  );
+
+  const trusted = await admin.query('select public.fn_is_withdrawal_trusted($1) as t', [A]);
+  log(
+    'a high-severity signal outside the lookback window no longer disqualifies',
+    trusted.rows[0].t === true,
+    `trusted=${trusted.rows[0].t}`,
+  );
+
+  await admin.query('select public.fn_run_auto_withdraw_sweep()');
+
+  const wallet = await admin.query(
+    `select balance from public.wallets where user_id = $1 and kind = 'withdrawable_cash'`,
+    [A],
+  );
+  log(
+    'the payee sweeps normally once the disqualifying signal has aged out',
+    Number(wallet.rows[0].balance) === 0,
+    `balance=${wallet.rows[0].balance}`,
+  );
+
+  await deleteTestUser(admin, A);
+}
+
+async function testManualWithdrawalUnaffectedByTrustStatus(admin) {
+  const A = await createAgedUser(admin, 5); // fresh, untrusted
+  const { bankAccountId } = await setupWithdrawableWallet(admin, A, 100000, 1); // only 1h old — wouldn't auto-sweep either way
+
+  const trusted = await admin.query('select public.fn_is_withdrawal_trusted($1) as t', [A]);
+  log(
+    'setup: this payee is untrusted',
+    trusted.rows[0].t === false,
+    `trusted=${trusted.rows[0].t}`,
+  );
+
+  const manual = await admin.query('select * from public.fn_initiate_withdrawal($1, $2, $3, $4)', [
+    A,
+    bankAccountId,
+    100000,
+    true,
+  ]);
+  log(
+    'a manual (user-initiated) withdrawal succeeds regardless of trust status — only auto-sweep timing is gated',
+    Number(manual.rows[0].amount_kobo) === 100000,
+    JSON.stringify(manual.rows[0]),
+  );
+
+  await deleteTestUser(admin, A);
+}
+
 async function main() {
   const admin = newClient();
   await admin.connect();
@@ -610,6 +819,11 @@ async function main() {
     await testEscrowReleaseRateLimitPerPayeeAcrossThreads(admin);
     await testDuplicateContentFlaggedButPayerUnaffected(admin);
     await testNoDuplicateFalsePositiveOnVariedConversation(admin);
+    await testAutoSweepTrustedPayeeSweepsAtNormalThreshold(admin);
+    await testAutoSweepUntrustedPayeeHoldsUntilLongerThreshold(admin);
+    await testAutoSweepHeldIndefinitelyWhileHighSeveritySignalIsRecent(admin);
+    await testAutoSweepSignalAgingOutOfLookbackUnblocksSweep(admin);
+    await testManualWithdrawalUnaffectedByTrustStatus(admin);
   } finally {
     await admin.end();
   }
