@@ -148,12 +148,12 @@ async function resetPlatformWallets(admin) {
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (
        select id from public.wallets where user_id is null
-         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut')
+         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')
      )`,
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
   await admin.query(
-    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut')",
+    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')",
   );
 }
 
@@ -294,13 +294,22 @@ async function testFullPaidExchange(admin) {
     `balance=${bEarningsPending.balance}`,
   );
 
+  // The full cut now splits between the spendable revenue wallet and the
+  // reserve wallet (platform_reserve_bps, docs/06-SECURITY-FRAUD-LOOPHOLES.md
+  // §3) — the two together must still sum to the full cut; that's the
+  // conservation property under test, not which wallet holds which slice.
   const platformWallet = await admin.query(
     "select balance from public.wallets where kind='platform_revenue_earnings_cut' and user_id is null",
   );
+  const platformReserveWallet = await admin.query(
+    "select balance from public.wallets where kind='platform_reserve_earnings_cut' and user_id is null",
+  );
+  const platformTotal =
+    Number(platformWallet.rows[0].balance) + Number(platformReserveWallet.rows[0].balance);
   log(
-    'platform earns its cut across both releases',
-    Number(platformWallet.rows[0].balance) === cut1 + cut2,
-    `expected=${cut1 + cut2} actual=${platformWallet.rows[0].balance}`,
+    'platform earns its cut across both releases (revenue + reserve combined)',
+    platformTotal === cut1 + cut2,
+    `expected=${cut1 + cut2} actual=${platformTotal} (revenue=${platformWallet.rows[0].balance} reserve=${platformReserveWallet.rows[0].balance})`,
   );
 
   const msgs = await admin.query(
@@ -327,18 +336,17 @@ async function testFullPaidExchange(admin) {
     if (!ok) allReconciled = false;
     details.push({ userId, kind, balance: w.balance, sum, ok });
   }
-  {
-    const sum = await ledgerSum(
-      admin,
-      (
-        await admin.query(
-          "select id from public.wallets where kind='platform_revenue_earnings_cut' and user_id is null",
-        )
-      ).rows[0].id,
-    );
-    const ok = sum === Number(platformWallet.rows[0].balance);
+  for (const kind of ['platform_revenue_earnings_cut', 'platform_reserve_earnings_cut']) {
+    const w = (
+      await admin.query(
+        'select id, balance from public.wallets where kind=$1 and user_id is null',
+        [kind],
+      )
+    ).rows[0];
+    const sum = await ledgerSum(admin, w.id);
+    const ok = sum === Number(w.balance);
     if (!ok) allReconciled = false;
-    details.push({ kind: 'platform_revenue_earnings_cut', sum, ok });
+    details.push({ kind, balance: w.balance, sum, ok });
   }
   log(
     'ledger conservation holds on every wallet touched',

@@ -113,6 +113,11 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: npm run test:fraud:ci
 
+      - name: Reserve buffer / chargeback-clawback tests (ledger conservation, concurrency)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: npm run test:chargeback:ci
+
   # Placeholder — activates once supabase/migrations exist (Phase 1).
   # Runs schema migrations against the staging Supabase project on merge to
   # main, per docs/01-ARCHITECTURE.md "Environments".
