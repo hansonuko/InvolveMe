@@ -432,6 +432,12 @@ async function testLedgerConservationUnderConcurrentLoad(admin) {
 async function testTransferSplitAndLedgerConservation(admin) {
   const A = await createTestUser(admin);
   const B = await createTestUser(admin);
+  // fn_transfer_credit now requires a Tier-1 recipient (session 13,
+  // docs/06-SECURITY-FRAUD-LOOPHOLES.md §2) — this test is about the
+  // split/ledger math, not the KYC gate itself (covered in
+  // fraud-functions.test.js), so satisfy the gate rather than route
+  // around what it's actually testing.
+  await admin.query('update public.users set kyc_tier = 1 where id = $1', [B]);
 
   const aWallet = await walletRow(admin, A, 'topup_credit');
   await admin.query(
@@ -524,6 +530,7 @@ async function testTransferSplitAndLedgerConservation(admin) {
 async function testConcurrentTransferPreventsDoubleSpend(admin) {
   const A = await createTestUser(admin);
   const B = await createTestUser(admin);
+  await admin.query('update public.users set kyc_tier = 1 where id = $1', [B]); // see testTransferSplitAndLedgerConservation's comment
 
   const aWallet = await walletRow(admin, A, 'topup_credit');
   await admin.query(
