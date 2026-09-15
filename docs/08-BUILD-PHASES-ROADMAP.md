@@ -40,12 +40,15 @@ Small team assumption: 1 product/founder, 2 mobile engineers (RN), 1 backend/Pos
 
 ## Phase 5 — Fraud & compliance hardening (2–3 weeks — do not launch publicly without this)
 
-- Device fingerprinting, collusion graph job, velocity limits, duplicate-content detection (`docs/06-SECURITY-FRAUD-LOOPHOLES.md` §1–8).
-- Tiered withdrawal limits + auto-withdraw sweep turned on.
-- Content moderation pipeline (text + media) for app-store compliance.
-- Admin review queue / kill-switch tooling (freeze wallet, suspend user).
-- Gate for turning on group-chat billing (`docs/03-ECONOMY-LEDGER.md` §10) once the collusion-detection/velocity-limit work above exists — that model has no reply-gate or per-message cap, so it's an explicit precondition, not a nice-to-have.
-- **Exit criteria:** every item in the loopholes doc's §12 checklist is either shipped or explicitly deferred with a written reason and owner.
+Re-audited 2026-09-15 (session 13) against actual code, not assumption — see `docs/06-SECURITY-FRAUD-LOOPHOLES.md` §12 for the item-by-item status this list summarizes.
+
+- ~~Device fingerprinting, collusion graph job, velocity limits~~ — **built 2026-09-15**: `device_fingerprints`/`fn_link_device_fingerprint`, `fn_run_collusion_detection` (nightly, two signal types, manual-review-only — never auto-freezes), `new_account_daily_topup_cap_kobo`. Mobile capture built but **not yet shipped** — needs a real `eas build` (new native modules, not OTA-eligible), held at the user's request until more work accumulates to build together.
+- Duplicate-content detection (`docs/06-SECURITY-FRAUD-LOOPHOLES.md` §6) — **still not built**, explicitly deferred out of the 2026-09-15 pass (a distinct problem — chat-farming — from the self-dealing/wash-chatting §2 that pass targeted). Rate limiting on message send is bundled into this same still-open item.
+- ~~Tiered withdrawal limits + auto-withdraw sweep turned on~~ — **done since Phase 1**, not Phase 5 work as this list implied (`kyc_tier1_daily_withdrawal_cap_kobo`, `fn_run_auto_withdraw_sweep`). This bullet was stale.
+- Content moderation pipeline (text + media) for app-store compliance — **still not built**, and still blocked on there being no media pipeline in this app at all yet.
+- ~~Admin review queue / kill-switch tooling~~ — **no dedicated tooling exists or is planned**; the actual answer, confirmed this session, is Supabase Studio directly against `fraud_signals`/`is_frozen` — same as `docs/01-ARCHITECTURE.md`'s original "admin dashboarding via Supabase Studio" call. Worth revisiting only if that genuinely stops being workable at real volume, not before.
+- Gate for turning on group-chat billing (`docs/03-ECONOMY-LEDGER.md` §10) — **partially satisfied**, not fully: collusion detection + velocity limits now exist, but §10's own stated risk (group chat has no reply-gate or per-message cap) is really answered by the still-unbuilt duplicate-content/rate-limiting item above, not by what shipped 2026-09-15. Do not flip `group_chat_enabled` on this basis alone.
+- **Exit criteria:** every item in the loopholes doc's §12 checklist is either shipped or explicitly deferred with a written reason and owner. Current real status: 7 of 11 checked, one partially (§2, mobile capture pending a build), three genuinely open (§3's reserve-buffer/clawback, §6, §11's legal sign-off).
 
 ## Phase 6 — Status updates + wallet screen polish (1 week)
 
