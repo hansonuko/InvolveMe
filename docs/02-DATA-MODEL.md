@@ -173,7 +173,7 @@ Still unresolved, not blocking (schema/function exist regardless): a group size 
 ## 2. Row Level Security posture
 
 - `users`: `SELECT` own row + rows of anyone you share a thread with (limited columns via a view); `UPDATE` own row only, excluding `kyc_tier`/`is_suspended` (service-role only).
-- `wallets`, `ledger_entries`, `escrows`, `withdrawals`, `topups`, `kyc_records`, `credit_transfers`: `SELECT` own rows only (`credit_transfers`: sender or recipient). **No client `INSERT`/`UPDATE`/`DELETE` grants at all** — every write is via `SECURITY DEFINER` functions invoked by Edge Functions using the service role.
+- `wallets`, `ledger_entries`, `escrows`, `withdrawals`, `topups`, `kyc_records`, `credit_transfers`: `SELECT` own rows only (`credit_transfers`: sender or recipient). **No client `INSERT`/`UPDATE`/`DELETE` grants at all** — every write is via `SECURITY DEFINER` functions invoked by Edge Functions using the service role. **This claim was false for the functions themselves from Phase 1 until 2026-09-15 (session 14) fixed it** — every `SECURITY DEFINER` function was directly callable by any client with just the anon key, `revoke execute ... from public` having been a no-op on this Supabase project the whole time (see `docs/00-SESSION-HANDOFF.md` and CLAUDE.md rule #11 for the full investigation and the correct pattern).
 - `messages`, `threads`: `SELECT` if you're a participant; no direct client writes (see above).
 - `pricing_config`: readable by `authenticated` (needed for client-side cost preview before sending), writable only by an internal `ops` role via the Supabase Studio / admin tool, and every write is logged to a `pricing_config_history` audit table.
 
