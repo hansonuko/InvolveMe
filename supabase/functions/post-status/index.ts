@@ -14,6 +14,8 @@
 // Flutterwave API-generation question is still open.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
+import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
 
 interface PostStatusRequestBody {
   media_url?: string;
@@ -103,6 +105,40 @@ Deno.serve(async (req) => {
 
   const db = serviceRoleClient();
 
+  // Content moderation (docs/06-SECURITY-FRAUD-LOOPHOLES.md §6,
+  // docs/07-COMPLIANCE-LEGAL.md §3) — same posture as send-message's own:
+  // checked before fn_post_status so a hard block is never charged or
+  // posted. Only the caption is text to moderate; media_url is just a
+  // reference (image moderation is out of scope — no media pipeline
+  // exists in this app yet, see packages/moderation/provider.ts).
+  let flaggedCategories: string[] | null = null;
+  if (payload.caption) {
+    try {
+      const moderation = await createOpenAiModerationProvider(
+        loadOpenAiModerationConfig(),
+      ).moderateText(payload.caption);
+
+      if (moderation.action === 'blocked') {
+        await db.from('moderated_content').insert({
+          user_id: user.id,
+          content_type: 'status',
+          action: 'blocked',
+          categories: moderation.categories,
+        });
+        return errorResponse(
+          400,
+          'content_blocked',
+          'This status violates our content policy and could not be posted.',
+        );
+      }
+      if (moderation.action === 'flagged') {
+        flaggedCategories = moderation.categories;
+      }
+    } catch (e) {
+      console.error('post-status: content moderation check failed, allowing post:', e);
+    }
+  }
+
   const { data: rawData, error } = await db
     .rpc('fn_post_status', {
       p_user_id: user.id,
@@ -116,6 +152,16 @@ Deno.serve(async (req) => {
   }
 
   const data = rawData as FnPostStatusRow;
+
+  if (flaggedCategories) {
+    await db.from('moderated_content').insert({
+      user_id: user.id,
+      content_type: 'status',
+      ref_id: data.status_id,
+      action: 'flagged',
+      categories: flaggedCategories,
+    });
+  }
 
   return json(200, {
     status_id: data.status_id,

@@ -115,6 +115,12 @@ Append-only event log feeding the rules/scoring described in `docs/06-SECURITY-F
 
 Backs `users.device_fingerprint_ids` (see below) — a hash gets its own row, rather than living only inside each user's array, because two different users' arrays containing the same id _is_ the signal `fn_run_collusion_detection` looks for. Written only by `fn_link_device_fingerprint` (`SECURITY DEFINER`), called from `register-device-fingerprint` on every app session (`apps/mobile/lib/deviceFingerprint.ts`) — the mobile app hashes a platform device identifier (Android ID / iOS vendor ID) with `expo-crypto` before it ever leaves the device, same "hash before it reaches the server" posture `KYC_HASH_PEPPER` already establishes for BVN/NIN. No RLS policy (enabled, zero policies) — never queried by the client, only written via the function above and read by the collusion job.
 
+### `moderated_content` (added `20260915140000_content_moderation.sql`)
+
+| id, user_id, content_type (`message`\|`status`), ref_id (nullable), action (`blocked`\|`flagged`), categories (jsonb), created_at |
+
+Not `fraud_signals` — that table's `user_id`/`related_user_id` shape is built around a pair (payer/payee); a moderation outcome is about one piece of content from one user, which doesn't fit cleanly. Written by `send-message`/`post-status` via `packages/moderation/openai.ts`, called before their respective billing RPC so a hard block never reaches `fn_send_message`/`fn_post_status` — `ref_id` is null for a `blocked` row for exactly that reason (nothing was ever inserted to reference); a `flagged` row (allowed through, logged for review) always has one. **Built 2026-09-15, not yet live** — no `OPENAI_API_KEY` exists in this environment yet, so the moderation check fails open (logs the provider error, allows the send) rather than blocking anything, by design, until a real key is added — see `docs/07-COMPLIANCE-LEGAL.md` §3/§6.
+
 ### `credit_transfers`
 
 Peer-to-peer chat-credit transfer, convertible to cash on the recipient's side — see `docs/07-COMPLIANCE-LEGAL.md` §1 for why this needed a legal-review flag before it shipped (it shipped anyway, on an explicit product-owner decision; the flag stays on the pre-launch checklist).
