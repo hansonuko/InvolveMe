@@ -48,6 +48,16 @@ function mapBuyCreditError(pgMessage: string): Response {
   if (pgMessage.startsWith('invalid_amount')) {
     return errorResponse(400, 'invalid_amount', 'amount_kobo must be a positive integer.');
   }
+  if (pgMessage.startsWith('daily_topup_limit_exceeded')) {
+    // docs/06-SECURITY-FRAUD-LOOPHOLES.md §4 — a new, unverified account's
+    // daily top-up cap. Verifying (Tier 1 KYC) removes this limit, so the
+    // message points there rather than just saying "try again later."
+    return errorResponse(
+      429,
+      'daily_topup_limit_exceeded',
+      "You've reached today's top-up limit for a new, unverified account. Verify your identity in Settings to remove this limit.",
+    );
+  }
   console.error('buy-credit: unmapped DB error:', pgMessage);
   return errorResponse(500, 'internal_error', 'Something went wrong.');
 }

@@ -56,6 +56,16 @@ function mapTransferCreditError(pgMessage: string): Response {
   if (pgMessage.startsWith('recipient_suspended')) {
     return errorResponse(403, 'recipient_suspended', "That account can't receive credit.");
   }
+  if (pgMessage.startsWith('recipient_kyc_required')) {
+    // docs/06-SECURITY-FRAUD-LOOPHOLES.md §2 — a Tier-0 recipient could
+    // otherwise accumulate withdrawable cash it could never earn or
+    // withdraw through any other path in this app.
+    return errorResponse(
+      403,
+      'recipient_kyc_required',
+      "That user hasn't verified their identity yet, so they can't receive credit transfers.",
+    );
+  }
   if (pgMessage.startsWith('amount_over_transfer_cap')) {
     return errorResponse(
       400,

@@ -186,6 +186,14 @@ async function main() {
   try {
     await waitForFunctionReady(15000);
 
+    // fn_transfer_credit now requires a Tier-1 recipient (session 13,
+    // docs/06-SECURITY-FRAUD-LOOPHOLES.md §2) — B is Tier-1 for the rest
+    // of this file so every test below still exercises what it originally
+    // meant to (validation, caps, balance, split), not this new gate.
+    // The gate itself gets its own dedicated test further down, against a
+    // separate Tier-0 recipient.
+    await admin.query('update public.users set kyc_tier = 1 where id = $1', [B.id]);
+
     const noAuth = await callTransferCredit(null, {
       recipient_phone: B.phone,
       credits: 10,
@@ -267,6 +275,21 @@ async function main() {
       bCash > 0,
       `balance=${bCash}`,
     );
+
+    // The KYC gate itself (session 13) — a fresh, still-Tier-0 recipient.
+    const C = await createTestUser();
+    await fundTopupCredit(admin, A.id, 100);
+    const unverifiedRecipient = await callTransferCredit(tokenA, {
+      recipient_phone: C.phone,
+      credits: 10,
+    });
+    log(
+      'a Tier-0 (unverified) recipient -> 403 recipient_kyc_required',
+      unverifiedRecipient.status === 403 &&
+        unverifiedRecipient.json?.error === 'recipient_kyc_required',
+      JSON.stringify(unverifiedRecipient.json),
+    );
+    await deleteTestUser(admin, C.id);
   } finally {
     deno.kill();
     await resetPlatformEarningsCutWallet(admin);

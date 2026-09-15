@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
 import { useSession } from '@/lib/hooks/useSession';
 import { resyncPushTokenIfPermitted } from '@/lib/push';
 import { ThemeProvider } from '@/theme';
@@ -52,6 +53,16 @@ export default function RootLayout() {
   useEffect(() => {
     if (session?.user.id) {
       void resyncPushTokenIfPermitted(session.user.id);
+    }
+  }, [session?.user.id]);
+
+  // Fraud-infra device link (docs/06-SECURITY-FRAUD-LOOPHOLES.md §2) — no
+  // permission prompt, no user-visible effect either way. Same automatic,
+  // silent-startup shape as the push resync above, and guarded the same
+  // deliberate way internally (see lib/deviceFingerprint.ts).
+  useEffect(() => {
+    if (session?.user.id) {
+      void registerDeviceFingerprint();
     }
   }, [session?.user.id]);
 
