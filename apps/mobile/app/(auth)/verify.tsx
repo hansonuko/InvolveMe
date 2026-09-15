@@ -15,6 +15,7 @@ export default function VerifyOtpScreen() {
   const { colors, spacing, radius } = useTheme();
   const router = useRouter();
   const pendingPhone = useAuthFlowStore((s) => s.pendingPhone);
+  const termsAccepted = useAuthFlowStore((s) => s.termsAccepted);
 
   const [code, setCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -28,7 +29,7 @@ export default function VerifyOtpScreen() {
 
     setError(null);
     setIsSubmitting(true);
-    const { error: verifyError } = await supabase.auth.verifyOtp({
+    const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
       phone: pendingPhone,
       token: code,
       type: 'sms',
@@ -37,6 +38,22 @@ export default function VerifyOtpScreen() {
 
     if (verifyError) {
       setError(verifyError.message);
+      return;
+    }
+
+    // Record the age-gate/Terms-Privacy consent now that a real user row
+    // exists — best-effort: the checkbox on the previous screen is the
+    // actual app-store-facing gate (an OTP was never even sent without
+    // it), this is the server-side audit trail. A rare write failure here
+    // shouldn't lock a legitimate, just-verified user out of the app.
+    if (termsAccepted && verifyData.user) {
+      const { error: termsError } = await supabase
+        .from('users')
+        .update({ terms_accepted_at: new Date().toISOString() })
+        .eq('id', verifyData.user.id);
+      if (termsError) {
+        console.error('Failed to record terms_accepted_at:', termsError.message);
+      }
     }
     // Success case: no navigation call needed — the session change fires the
     // auth-gate redirect in app/_layout.tsx.

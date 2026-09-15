@@ -177,6 +177,12 @@ export const typography = {
   title: { fontSize: 20, fontWeight: '600' as const },
   body: { fontSize: 16, fontWeight: '400' as const },
   bodyMedium: { fontSize: 16, fontWeight: '500' as const },
+  // Same size/weight as `body`, wider line-height — for dense multi-
+  // paragraph prose (Terms of Service / Privacy Policy,
+  // components/LegalDocumentScreen.tsx) where `body`'s default spacing
+  // reads too tight over long-form text; every other use of `body` is
+  // short chat/UI copy that doesn't need this.
+  bodyRelaxed: { fontSize: 16, fontWeight: '400' as const, lineHeight: 24 },
   caption: { fontSize: 13, fontWeight: '400' as const },
   // Bottom tab bar labels — bolder/larger than React Navigation's default
   // (~11/500) so the tab bar reads as more prominent, per
