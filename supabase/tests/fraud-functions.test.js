@@ -379,6 +379,222 @@ async function testTransferCreditKycGate(admin) {
   await deleteTestUser(admin, B);
 }
 
+// =============================================================================
+// Test 7: escrow-release rate limit, per thread (docs/06-SECURITY-FRAUD-
+// LOOPHOLES.md §6) — a burst of messages past the per-minute cap must
+// still all SEND (the payer is charged for every one, matching this
+// project's own "never fail the message" design), but only cap-worth of
+// escrows actually RELEASE; the rest stay pending for a later call to
+// pick up once the window moves on. Session 13's own manual verification
+// against this exact scenario is what this codifies.
+// =============================================================================
+
+async function testEscrowReleaseRateLimitPerThread(admin) {
+  const capRow = await admin.query(
+    "select value from public.pricing_config where key = 'escrow_release_messages_per_minute_cap'",
+  );
+  const cap = Number(capRow.rows[0].value);
+
+  const A = await createTestUser(admin);
+  const B = await createTestUser(admin);
+  await fundWallet(admin, A, 'topup_credit', (cap + 5) * 2);
+  const threadId = (await admin.query('select public.fn_start_thread($1, $2) as id', [A, B]))
+    .rows[0].id;
+
+  // cap+3 messages from the fixed payer A, then one reply from B to
+  // trigger a single release pass over everything still pending.
+  await sendMessages(admin, threadId, A, cap + 3, 'msg');
+  await sendMessages(admin, threadId, B, 1, 'ok');
+
+  const counts = await admin.query(
+    `select status, count(*)::int as n from public.escrows where thread_id = $1 group by status`,
+    [threadId],
+  );
+  const released = counts.rows.find((r) => r.status === 'released')?.n ?? 0;
+  const pending = counts.rows.find((r) => r.status === 'pending')?.n ?? 0;
+  const totalSent = cap + 4; // (cap + 3) from A, 1 from B
+  log(
+    `a burst past the per-minute cap (${cap}) releases exactly the cap, the rest stay pending`,
+    released === cap && pending === totalSent - cap,
+    `released=${released} pending=${pending} cap=${cap}`,
+  );
+
+  await deleteTestThread(admin, threadId);
+  await deleteTestUser(admin, A);
+  await deleteTestUser(admin, B);
+}
+
+// =============================================================================
+// Test 8: escrow-release rate limit, per payee, GLOBALLY across threads —
+// distinct from the per-thread cap above: a farmer running two
+// simultaneous 1:1 "conversations" to the same payee must still be
+// caught in aggregate. Temporarily lowers the real cap (same
+// flip-and-restore-in-finally pattern group-chat-functions.test.js
+// already uses for group_chat_enabled) rather than sending 100+ real
+// messages to exercise the production default.
+// =============================================================================
+
+async function testEscrowReleaseRateLimitPerPayeeAcrossThreads(admin) {
+  const key = 'escrow_release_earnings_per_hour_cap';
+  const original = (
+    await admin.query('select value from public.pricing_config where key = $1', [key])
+  ).rows[0].value;
+
+  try {
+    await admin.query('update public.pricing_config set value = 3 where key = $1', [key]);
+
+    const A1 = await createTestUser(admin);
+    const A2 = await createTestUser(admin);
+    const B = await createTestUser(admin);
+    await fundWallet(admin, A1, 'topup_credit', 20);
+    await fundWallet(admin, A2, 'topup_credit', 20);
+
+    const thread1 = (await admin.query('select public.fn_start_thread($1, $2) as id', [A1, B]))
+      .rows[0].id;
+    const thread2 = (await admin.query('select public.fn_start_thread($1, $2) as id', [A2, B]))
+      .rows[0].id;
+
+    // 3 messages + 1 reply in each thread = up to 8 releasable escrows
+    // total for the SAME payee B, well past the lowered cap of 3.
+    await sendMessages(admin, thread1, A1, 3, 'hey');
+    await sendMessages(admin, thread1, B, 1, 'yo');
+    await sendMessages(admin, thread2, A2, 3, 'hey');
+    await sendMessages(admin, thread2, B, 1, 'yo');
+
+    const released = (
+      await admin.query(
+        `select count(*)::int as n from public.escrows where payee_id = $1 and status = 'released'`,
+        [B],
+      )
+    ).rows[0].n;
+    log(
+      "the per-hour cap applies to B's total releases across BOTH threads, not each thread independently",
+      released === 3,
+      `released=${released} (lowered cap=3)`,
+    );
+
+    await deleteTestThread(admin, thread1);
+    await deleteTestThread(admin, thread2);
+    await deleteTestUser(admin, A1);
+    await deleteTestUser(admin, A2);
+    await deleteTestUser(admin, B);
+  } finally {
+    await admin.query('update public.pricing_config set value = $2 where key = $1', [
+      key,
+      original,
+    ]);
+  }
+}
+
+// =============================================================================
+// Test 9: duplicate-content detection — B's near-identical replies get
+// skipped (stay pending) with exactly one fraud_signals row, not one per
+// repeat. Also the real bug this session's manual verification caught:
+// A's own (textually similar) OPENING message must still release fine —
+// the check is scoped to the payee's own message history, never the
+// payer's, since the payer isn't the one being evaluated for farming.
+// =============================================================================
+
+async function testDuplicateContentFlaggedButPayerUnaffected(admin) {
+  const A = await createTestUser(admin);
+  const B = await createTestUser(admin);
+  await fundWallet(admin, A, 'topup_credit', 100);
+  const threadId = (await admin.query('select public.fn_start_thread($1, $2) as id', [A, B]))
+    .rows[0].id;
+
+  await admin.query('select public.fn_send_message($1, $2, $3)', [
+    threadId,
+    A,
+    'hi there how is your day going',
+  ]);
+  for (let i = 0; i < 5; i++) {
+    await admin.query('select public.fn_send_message($1, $2, $3)', [
+      threadId,
+      B,
+      'hi there how is your day going today',
+    ]);
+  }
+
+  const aMessage = await admin.query(
+    `select e.status from public.escrows e join public.messages m on m.id = e.message_id
+     where e.thread_id = $1 and m.sender_id = $2`,
+    [threadId, A],
+  );
+  log(
+    "the payer A's own (textually similar) opening message still releases — the check never applies to the payer",
+    aMessage.rows[0]?.status === 'released',
+    JSON.stringify(aMessage.rows[0]),
+  );
+
+  const bCounts = await admin.query(
+    `select e.status, count(*)::int as n from public.escrows e join public.messages m on m.id = e.message_id
+     where e.thread_id = $1 and m.sender_id = $2 group by e.status`,
+    [threadId, B],
+  );
+  const bPending = bCounts.rows.find((r) => r.status === 'pending')?.n ?? 0;
+  log(
+    "B's near-identical repeats mostly stay pending (only the first, with nothing yet to compare against, releases)",
+    bPending === 4,
+    JSON.stringify(bCounts.rows),
+  );
+
+  const signals = await admin.query(
+    `select count(*)::int as n from public.fraud_signals where user_id = $1 and signal_type = 'duplicate_content'`,
+    [B],
+  );
+  log(
+    'exactly one duplicate_content signal, not one per repeated message',
+    signals.rows[0].n === 1,
+    `n=${signals.rows[0].n}`,
+  );
+
+  await deleteTestThread(admin, threadId);
+  await deleteTestUser(admin, A);
+  await deleteTestUser(admin, B);
+}
+
+// =============================================================================
+// Test 10: false-positive check — genuinely varied replies from B, across
+// several exchanges, must ALL release normally. A duplicate-content
+// system worth trusting has to prove it leaves a real, varied
+// conversation alone, not just that it catches repetition.
+// =============================================================================
+
+async function testNoDuplicateFalsePositiveOnVariedConversation(admin) {
+  const A = await createTestUser(admin);
+  const B = await createTestUser(admin);
+  await fundWallet(admin, A, 'topup_credit', 100);
+  const threadId = (await admin.query('select public.fn_start_thread($1, $2) as id', [A, B]))
+    .rows[0].id;
+
+  const replies = [
+    'how was your weekend',
+    'did you watch the match last night',
+    'what are you cooking today',
+    'I finally finished that book',
+  ];
+  for (const reply of replies) {
+    await admin.query('select public.fn_send_message($1, $2, $3)', [threadId, A, `so, ${reply}?`]);
+    await admin.query('select public.fn_send_message($1, $2, $3)', [threadId, B, reply]);
+  }
+
+  const counts = await admin.query(
+    `select status, count(*)::int as n from public.escrows where thread_id = $1 group by status`,
+    [threadId],
+  );
+  log(
+    'a genuinely varied back-and-forth releases every escrow, none flagged as duplicate',
+    counts.rows.length === 1 &&
+      counts.rows[0].status === 'released' &&
+      counts.rows[0].n === replies.length * 2,
+    JSON.stringify(counts.rows),
+  );
+
+  await deleteTestThread(admin, threadId);
+  await deleteTestUser(admin, A);
+  await deleteTestUser(admin, B);
+}
+
 async function main() {
   const admin = newClient();
   await admin.connect();
@@ -390,6 +606,10 @@ async function main() {
     await testCollusionConcentratedPairing(admin);
     await testNoFalsePositiveOnNormalActivity(admin);
     await testTransferCreditKycGate(admin);
+    await testEscrowReleaseRateLimitPerThread(admin);
+    await testEscrowReleaseRateLimitPerPayeeAcrossThreads(admin);
+    await testDuplicateContentFlaggedButPayerUnaffected(admin);
+    await testNoDuplicateFalsePositiveOnVariedConversation(admin);
   } finally {
     await admin.end();
   }
