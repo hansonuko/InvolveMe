@@ -15,7 +15,9 @@
 // the request body.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
 import { runInBackground, sendPushToUser } from '../_shared/push.ts';
+import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
 
 interface SendMessageRequestBody {
   thread_id?: string;
@@ -155,6 +157,43 @@ Deno.serve(async (req) => {
     threadId = newThreadId as string;
   }
 
+  // Content moderation (docs/06-SECURITY-FRAUD-LOOPHOLES.md §6,
+  // docs/07-COMPLIANCE-LEGAL.md §3) — checked before fn_send_message, not
+  // after: a hard block must never be charged or delivered, so it can
+  // never reach the billing RPC at all. See packages/moderation/
+  // provider.ts for the blocked-vs-flagged distinction. A flagged (not
+  // blocked) result is logged further down, once the real message_id
+  // exists to reference.
+  let flaggedCategories: string[] | null = null;
+  try {
+    const moderation = await createOpenAiModerationProvider(
+      loadOpenAiModerationConfig(),
+    ).moderateText(payload.body);
+
+    if (moderation.action === 'blocked') {
+      await db.from('moderated_content').insert({
+        user_id: user.id,
+        content_type: 'message',
+        action: 'blocked',
+        categories: moderation.categories,
+      });
+      return errorResponse(
+        400,
+        'content_blocked',
+        'This message violates our content policy and could not be sent.',
+      );
+    }
+    if (moderation.action === 'flagged') {
+      flaggedCategories = moderation.categories;
+    }
+  } catch (e) {
+    // A moderation-provider outage must not take down messaging — fail
+    // open (allow the send) rather than block every message in the app
+    // because a third-party API had a bad moment. Logged loudly so a
+    // sustained outage is visible in supabase functions logs.
+    console.error('send-message: content moderation check failed, allowing send:', e);
+  }
+
   const { data: rawData, error } = await db
     .rpc('fn_send_message', {
       p_thread_id: threadId,
@@ -168,6 +207,16 @@ Deno.serve(async (req) => {
   }
 
   const data = rawData as FnSendMessageRow;
+
+  if (flaggedCategories) {
+    await db.from('moderated_content').insert({
+      user_id: user.id,
+      content_type: 'message',
+      ref_id: data.message_id,
+      action: 'flagged',
+      categories: flaggedCategories,
+    });
+  }
 
   // Push notification — best-effort, never blocks or fails the response
   // this billing-critical call already computed correctly. See

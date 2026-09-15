@@ -101,6 +101,11 @@ jobs:
           FLW_WEBHOOK_SECRET_HASH: ${{ secrets.FLW_WEBHOOK_SECRET_HASH }}
           FLW_TRANSFER_SENDER_ID: ${{ secrets.FLW_TRANSFER_SENDER_ID }}
           CRON_INTERNAL_SECRET: ${{ secrets.CRON_INTERNAL_SECRET }}
+          # Optional — moderation-functions.test.js fails open (send still
+          # succeeds) when unset, same as this app does in production
+          # before a real key is added. Add OPENAI_API_KEY as a repo
+          # secret to also exercise the true/false-positive assertions.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: npm run test:functions:ci
 
       - name: Fraud-infra tests (ledger conservation, concurrency)
