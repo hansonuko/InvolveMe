@@ -606,15 +606,8 @@ export default function SettingsScreen() {
 
           <SectionHeader label="Help" />
           <SettingsRow label="Invite a friend" onPress={handleInviteFriend} />
-          <SettingsRow
-            label="Terms & Privacy Policy"
-            onPress={() =>
-              Alert.alert(
-                'Coming soon',
-                'Our Terms of Service and Privacy Policy are not yet published.',
-              )
-            }
-          />
+          <SettingsRow label="Terms of Service" onPress={() => router.push('/legal/terms')} />
+          <SettingsRow label="Privacy Policy" onPress={() => router.push('/legal/privacy')} />
           <SettingsRow label="App version" value={Constants.expoConfig?.version ?? '—'} />
         </View>
 
