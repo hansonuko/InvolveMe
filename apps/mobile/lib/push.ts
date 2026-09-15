@@ -35,7 +35,7 @@ Notifications.setNotificationHandler({
  * flip. */
 export async function registerPushToken(
   userId: string,
-): Promise<'granted' | 'denied' | 'unsupported'> {
+): Promise<'granted' | 'denied' | 'unsupported' | 'error'> {
   if (!Device.isDevice) {
     // Simulators/emulators can't receive real push notifications — Expo's
     // own getExpoPushTokenAsync throws on these, so this is checked
@@ -54,9 +54,33 @@ export async function registerPushToken(
   }
 
   const projectId = Constants.expoConfig?.extra?.eas?.projectId;
-  const { data: token } = await Notifications.getExpoPushTokenAsync(
-    projectId ? { projectId } : undefined,
-  );
+  let token: string;
+  try {
+    // Real-world failure mode, not hypothetical: getExpoPushTokenAsync
+    // hits Expo's push service over the network and can throw for
+    // anything from a connectivity blip to a misconfigured FCM project —
+    // this project's own unregisterPushToken/hasRegisteredPushToken both
+    // already guard the identical call; this one, called automatically
+    // and silently on every app session restore (see
+    // resyncPushTokenIfPermitted / app/_layout.tsx), did not — the
+    // strongest concrete lead found for a real "app goes blank and
+    // unresponsive" bug report, since an uncaught throw here is an
+    // unhandled rejection on a fire-and-forget `void` call with no
+    // safety net above it. See components/ErrorBoundary.tsx for the
+    // structural fix (this alone isn't sufficient — anything else that
+    // ever throws unguarded on that same path would have the same
+    // effect), and this fix for the specific one found.
+    const result = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    token = result.data;
+  } catch (e) {
+    console.error('registerPushToken: getExpoPushTokenAsync failed:', e);
+    // Distinct from 'unsupported' — that means "this device can't do push
+    // at all" (a simulator) and drives a specific "need a real device"
+    // message in settings/index.tsx that would be actively misleading
+    // here, on a real device that just hit a transient network/service
+    // error and should be told to try again instead.
+    return 'error';
+  }
 
   const { error } = await supabase.from('push_tokens').upsert({
     token,

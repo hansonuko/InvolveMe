@@ -519,6 +519,11 @@ export default function SettingsScreen() {
       );
     } else if (enabled && result === 'unsupported') {
       Alert.alert('Not available', 'Push notifications need a real device, not a simulator.');
+    } else if (enabled && result === 'error') {
+      Alert.alert(
+        "Couldn't turn on notifications",
+        'Something went wrong reaching the notification service — check your connection and try again.',
+      );
     }
   };
 

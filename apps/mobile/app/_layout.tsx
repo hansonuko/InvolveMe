@@ -4,6 +4,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useSession } from '@/lib/hooks/useSession';
 import { resyncPushTokenIfPermitted } from '@/lib/push';
 import { ThemeProvider } from '@/theme';
@@ -61,16 +62,25 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>
-        <QueryClientProvider client={queryClient}>
-          {/* Only the two route groups are registered here — thread/[id] and
-              settings/index set their own header options inline via
-              <Stack.Screen options={...} /> from within the screen itself,
-              which avoids relying on exact nested-route name matching. */}
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="(tabs)" />
-          </Stack>
-        </QueryClientProvider>
+        {/* Catches any uncaught render-time crash anywhere below this
+            point — see components/ErrorBoundary.tsx's header comment for
+            why this exists (a real "blank unresponsive screen" bug report
+            with no crash reporting anywhere to diagnose it from). Inside
+            ThemeProvider so its own fallback UI can use theme/UI
+            primitives; wraps QueryClientProvider too so a crash doesn't
+            leave a half-torn-down query cache behind. */}
+        <ErrorBoundary>
+          <QueryClientProvider client={queryClient}>
+            {/* Only the two route groups are registered here — thread/[id] and
+                settings/index set their own header options inline via
+                <Stack.Screen options={...} /> from within the screen itself,
+                which avoids relying on exact nested-route name matching. */}
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(tabs)" />
+            </Stack>
+          </QueryClientProvider>
+        </ErrorBoundary>
       </ThemeProvider>
     </GestureHandlerRootView>
   );
