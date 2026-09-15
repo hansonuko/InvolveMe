@@ -103,6 +103,11 @@ jobs:
           CRON_INTERNAL_SECRET: ${{ secrets.CRON_INTERNAL_SECRET }}
         run: npm run test:functions:ci
 
+      - name: Fraud-infra tests (ledger conservation, concurrency)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: npm run test:fraud:ci
+
   # Placeholder — activates once supabase/migrations exist (Phase 1).
   # Runs schema migrations against the staging Supabase project on merge to
   # main, per docs/01-ARCHITECTURE.md "Environments".
