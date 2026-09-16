@@ -14,6 +14,7 @@ import {
 
 import { AppHeader } from '@/components/ui/AppHeader';
 import { Button } from '@/components/ui/Button';
+import { Ring } from '@/components/ui/Ring';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useBanks, useLinkBankAccount, type Bank } from '@/lib/queries/banks';
@@ -26,12 +27,16 @@ import {
   useBuyCredit,
   useLedgerEntries,
   useLinkedBankAccount,
+  usePricingConfig,
   useTopupStatus,
   useTransferCredit,
   useWallets,
   useWithdraw,
+  useWithdrawalCountdown,
   walletBalance,
   type LedgerEntry,
+  type Wallet,
+  type WithdrawalCountdown,
 } from '@/lib/queries/wallet';
 import { useTheme } from '@/theme';
 
@@ -607,6 +612,87 @@ function TransactionHistory({ userId }: { userId: string | undefined }) {
   );
 }
 
+/** Pure so it's testable/readable independent of the component — the
+ * withdrawal-hold logic it mirrors (fn_run_auto_withdraw_sweep,
+ * 20260915160000_settlement_aware_auto_sweep.sql) has two shapes: a
+ * below-minimum balance either force-sweeps eventually (trusted payees) or
+ * is held indefinitely with no guaranteed date (untrusted) — this must
+ * never render a countdown implying a promise the backend won't keep. */
+function computeSweepProgress(params: {
+  walletUpdatedAt: string;
+  balanceKobo: number;
+  minKobo: number;
+  effectiveSweepHours: number;
+  forceSweepDays: number;
+  forceSweepBelowMinimum: boolean;
+}): { progress: number; indefinite: boolean; label: string } {
+  const {
+    walletUpdatedAt,
+    balanceKobo,
+    minKobo,
+    effectiveSweepHours,
+    forceSweepDays,
+    forceSweepBelowMinimum,
+  } = params;
+  const belowMinimum = balanceKobo < minKobo;
+
+  if (belowMinimum && !forceSweepBelowMinimum) {
+    return { progress: 0, indefinite: true, label: 'Held until your balance reaches the minimum' };
+  }
+
+  const totalHours = belowMinimum ? forceSweepDays * 24 : effectiveSweepHours;
+  const elapsedMs = Date.now() - new Date(walletUpdatedAt).getTime();
+  const totalMs = totalHours * 60 * 60 * 1000;
+  const remaining = Math.max(0, Math.min(1, 1 - elapsedMs / totalMs));
+  const hoursLeft = Math.max(0, Math.ceil(totalHours - elapsedMs / (60 * 60 * 1000)));
+
+  return {
+    progress: remaining,
+    indefinite: false,
+    label: hoursLeft <= 1 ? 'Sweeping to your bank soon' : `Sweeps to your bank in ~${hoursLeft}h`,
+  };
+}
+
+function WithdrawalCountdownRing({
+  wallet,
+  countdown,
+  minKobo,
+  forceSweepDays,
+}: {
+  wallet: Wallet;
+  countdown: WithdrawalCountdown;
+  minKobo: number;
+  forceSweepDays: number;
+}) {
+  const { colors, spacing } = useTheme();
+  const { progress, indefinite, label } = computeSweepProgress({
+    walletUpdatedAt: wallet.updated_at,
+    balanceKobo: wallet.balance,
+    minKobo,
+    effectiveSweepHours: countdown.effective_sweep_hours,
+    forceSweepDays,
+    forceSweepBelowMinimum: countdown.force_sweep_below_minimum,
+  });
+
+  return (
+    <View
+      style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm }}
+    >
+      <Ring
+        size={28}
+        strokeWidth={3}
+        progress={indefinite ? 1 : progress}
+        colors={indefinite ? [colors.textTertiary] : [colors.accentCredit, colors.brandPrimary]}
+        trackColor={colors.borderSubtle}
+        animated={!indefinite}
+      />
+      <Text variant="caption" color="secondary">
+        {label}
+      </Text>
+    </View>
+  );
+}
+
 export default function WalletScreen() {
   const { spacing } = useTheme();
   const router = useRouter();
@@ -617,6 +703,11 @@ export default function WalletScreen() {
   const { data: wallets, isLoading, refetch: refetchWallets, isRefetching } = useWallets(userId);
   const { data: bankAccount, refetch: refetchBankAccount } = useLinkedBankAccount(userId);
   const { data: kycTier, refetch: refetchKycTier } = useKycTier(userId);
+  const { data: withdrawalCountdown } = useWithdrawalCountdown(userId);
+  const { data: sweepConfig } = usePricingConfig([
+    'withdrawal_min_kobo',
+    'withdrawal_force_sweep_days',
+  ]);
 
   const [buyModalVisible, setBuyModalVisible] = useState(false);
   const [withdrawModalVisible, setWithdrawModalVisible] = useState(false);
@@ -626,6 +717,7 @@ export default function WalletScreen() {
   const topupCredit = walletBalance(wallets, 'topup_credit');
   const earningsPending = walletBalance(wallets, 'earnings_pending');
   const withdrawableCash = walletBalance(wallets, 'withdrawable_cash');
+  const withdrawableWallet = wallets?.find((w) => w.kind === 'withdrawable_cash');
 
   const handleRefresh = () => {
     void refetchWallets();
@@ -655,6 +747,18 @@ export default function WalletScreen() {
             <BalanceCard label="Chat credit" value={topupCredit} suffix="cr" />
             <BalanceCard label="Pending earnings" value={earningsPending} suffix="cr" />
             <BalanceCard label="Withdrawable" value={withdrawableCash / 100} suffix="₦" />
+            {bankAccount &&
+            withdrawableCash > 0 &&
+            withdrawableWallet &&
+            withdrawalCountdown &&
+            sweepConfig ? (
+              <WithdrawalCountdownRing
+                wallet={withdrawableWallet}
+                countdown={withdrawalCountdown}
+                minKobo={sweepConfig.withdrawal_min_kobo}
+                forceSweepDays={sweepConfig.withdrawal_force_sweep_days}
+              />
+            ) : null}
           </View>
         )}
 
