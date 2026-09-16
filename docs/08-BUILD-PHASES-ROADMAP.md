@@ -52,8 +52,9 @@ Re-audited 2026-09-15 (session 13) against actual code, not assumption — see `
 
 ## Phase 6 — Status updates + wallet screen polish (1 week)
 
-- Status upload with credit debit, 24h expiry, ring UI.
-- Wallet tab: full transaction history rendered from `ledger_entries`, withdrawal countdown ring.
+- ~~Status upload with credit debit, 24h expiry, ring UI~~ — **built 2026-09-16 (session 15)**: debit/24h-expiry was already live since Phase 1; this session added thread-partner visibility RLS, seen/unseen tracking, and the ring UI (`docs/00-SESSION-HANDOFF.md` session 15). Text-caption only — media upload stays blocked on the still-missing Storage pipeline.
+- ~~Wallet tab: full transaction history rendered from `ledger_entries`, withdrawal countdown ring~~ — **done**: transaction history was already live (session 12); the withdrawal countdown ring was the only missing piece, built session 15.
+- **Not yet confirmed:** the new backend tests (`mark-status-viewed-function.test.js`, `get-withdrawal-countdown-function.test.js`) haven't been executed, and the ring UI hasn't been visually confirmed on a real device/simulator — see session 15's handoff entry for why (sandbox network limitation) and what's still needed before calling this phase done.
 
 ## Phase 7 — Closed beta → app store submission (2–3 weeks, includes review turnaround buffer)
 

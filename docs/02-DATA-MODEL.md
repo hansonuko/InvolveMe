@@ -135,6 +135,14 @@ Written only by `fn_transfer_credit` (`SECURITY DEFINER`). The sender's `topup_c
 
 | id, user_id, media_url, caption, credits_charged, expires_at (24h), created_at |
 
+Visible to the poster (always, including expired) and, per `20260916090000_status_visibility_and_view_tracking.sql` (Phase 6), to anyone with a non-blocked `threads` row with the poster while `expires_at > now()` — two permissive RLS policies, not one, since Postgres ORs them together. See §7.
+
+### `status_views` (added `20260916090000_status_visibility_and_view_tracking.sql`)
+
+| status_id, viewer_id, viewed_at | PK `(status_id, viewer_id)` |
+
+Records a status has been seen — drives the unseen(gold)/seen(grey) ring distinction on the mobile status feed (`docs/04-DESIGN-SYSTEM.md`). Written only by `fn_mark_status_viewed`; no client INSERT policy. See §7.
+
 ### `push_tokens` (added `20260914090000_settings_privacy_reports_push.sql`)
 
 | token (PK), user_id, platform (`ios`/`android`), created_at |
@@ -198,3 +206,13 @@ Invocation is a direct RPC call by support/ops (same precedent as the `manual_ad
 ## 6. Settlement-aware auto-withdrawal holds (`20260915160000`)
 
 docs/06-SECURITY-FRAUD-LOOPHOLES.md §3/§4. `fn_is_withdrawal_trusted(p_user_id)` computes a payee's "trusted" status — `kyc_tier >= 1`, account older than `new_account_age_days` (reused from §4's topup cap, same "how long counts as new" concept), and no `severity = 'high'` `fraud_signals` row within `withdrawal_trust_signal_lookback_days` (90, config, a rolling window). `fn_run_auto_withdraw_sweep` (redefined, `supabase/migrations/20260912081331_wire_scheduled_jobs.sql`'s original) calls it per candidate wallet: trusted payees sweep at the existing `withdrawal_auto_sweep_hours` (24h); untrusted payees only sweep past the longer `withdrawal_auto_sweep_hours_untrusted` (72h, config), and never force-sweep below `withdrawal_min_kobo` while a disqualifying signal is active, however long the money has sat — held, not force-paid, same posture the existing unverified-bank-account exclusion already uses. `fn_initiate_withdrawal` (manual withdrawal) is unchanged — only auto-sweep timing is gated. A disqualifying signal never sets `is_frozen`; it only delays the automatic sweep, consistent with the standing "fraud signals are for manual review, never auto-freeze" decision.
+
+## 7. Status visibility + withdrawal countdown (Phase 6, `20260916090000`/`20260916091500`)
+
+`docs/08-BUILD-PHASES-ROADMAP.md` Phase 6. Two independent pieces sharing a migration pair only by date, not by mechanism.
+
+**Status visibility.** `status_updates_select_own`'s own comment had explicitly deferred "visibility to contacts/thread partners" to this phase rather than guessing at it. A second permissive RLS policy, `status_updates_select_visible_to_thread_partner`, now also allows SELECT when a non-blocked `threads` row exists between viewer and poster and `expires_at > now()` — this app has no phone-contacts-sync concept, so a `threads` row is the closest equivalent to a WhatsApp "contact." `status_views` (new table, §1) records who's seen what; `fn_mark_status_viewed(p_status_id, p_viewer_id)` re-checks the same visibility condition (a `SECURITY DEFINER` function bypasses RLS, so this can't be relied on implicitly), no-ops on the poster viewing their own status, and is idempotent on `(status_id, viewer_id)`. No expiry sweep/hard-delete — the client filters `expires_at > now()` (the existing `status_updates_expires_at_idx` already supports it); nothing in `docs/07-COMPLIANCE-LEGAL.md` requires scheduled deletion.
+
+**Withdrawal countdown.** `fn_get_withdrawal_countdown(p_user_id)` wraps §6's `fn_is_withdrawal_trusted` into two client-facing fields — `effective_sweep_hours` and `force_sweep_below_minimum` — without ever returning the "trusted" boolean or any fraud-signal detail directly (this app has no self-serve dispute/unfreeze path, so a raw "you are untrusted" field would leak more than a ring needs). Doesn't return `wallets.updated_at`, `withdrawal_min_kobo`, or `withdrawal_force_sweep_days` — all three are already directly client-readable (`wallets` row-level RLS; `pricing_config` is fully authenticated-readable).
+
+Both new functions follow CLAUDE.md rule #11's mandatory grant pattern from creation (`revoke ... from public, anon, authenticated` + `grant ... to service_role`, same migration as the `create function`). See `docs/05-API-REALTIME-SPEC.md` for the `mark-status-viewed`/`get-withdrawal-countdown` Edge Function contracts.

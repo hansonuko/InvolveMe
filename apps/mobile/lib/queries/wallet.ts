@@ -8,6 +8,9 @@ export interface Wallet {
   id: string;
   kind: 'topup_credit' | 'earnings_pending' | 'withdrawable_cash';
   balance: number;
+  /** Also the clock fn_run_auto_withdraw_sweep itself reads for "how long
+   * has this sat unswept" — the withdrawal countdown ring's data source. */
+  updated_at: string;
 }
 
 /** All three of the current user's wallets, kept live via Realtime — per
@@ -27,7 +30,7 @@ export function useWallets(userId: string | undefined) {
     queryFn: async (): Promise<Wallet[]> => {
       const { data, error } = await supabase
         .from('wallets')
-        .select('id, kind, balance')
+        .select('id, kind, balance, updated_at')
         .eq('user_id', userId);
 
       if (error) throw error;
@@ -342,6 +345,47 @@ export function useWithdraw() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['wallets'] });
     },
+  });
+}
+
+export interface WithdrawalCountdown {
+  effective_sweep_hours: number;
+  force_sweep_below_minimum: boolean;
+}
+
+/** Wraps GET /functions/v1/get-withdrawal-countdown — the caller's own
+ * auto-sweep timing, per Phase 6's withdrawal countdown ring. Trust tier
+ * changes rarely (it's driven by account age and fraud-signal history, not
+ * anything the user does mid-session), so a generous staleTime avoids
+ * refetching this on every wallet-tab focus. */
+export function useWithdrawalCountdown(userId: string | undefined) {
+  return useQuery({
+    queryKey: ['withdrawalCountdown', userId],
+    enabled: !!userId,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      callEdgeFunction<WithdrawalCountdown>('get-withdrawal-countdown', undefined, 'GET'),
+  });
+}
+
+/** Direct read of one or more `pricing_config` values — fully
+ * authenticated-readable per its own RLS policy, so no Edge Function
+ * round trip is needed for values like `withdrawal_min_kobo` the client
+ * only needs to display, not enforce (enforcement stays server-side
+ * regardless, per CLAUDE.md rule #1). */
+export function usePricingConfig(keys: string[]) {
+  const sortedKeys = [...keys].sort();
+  return useQuery({
+    queryKey: ['pricingConfig', ...sortedKeys],
+    queryFn: async (): Promise<Record<string, number>> => {
+      const { data, error } = await supabase
+        .from('pricing_config')
+        .select('key, value')
+        .in('key', sortedKeys);
+      if (error) throw error;
+      return Object.fromEntries((data ?? []).map((r) => [r.key, Number(r.value)]));
+    },
+    staleTime: 10 * 60 * 1000,
   });
 }
 

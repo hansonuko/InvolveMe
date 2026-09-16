@@ -110,6 +110,15 @@ Requires KYC tier ≥ 1 and a `bank_accounts` row with `name_match_verified = tr
 
 `PaymentProvider.initiatePayout` calls the real live Flutterwave `/transfers` endpoint (see `packages/payments/flutterwave.ts`) — confirmed this session by actually calling it: a transfer to a deliberately-fake recipient id came back a real `RECIPIENT_NOT_FOUND` (404), proving the request shape and auth are correct end-to-end up to that point. **Bank-account linking (the flow that would populate a real `bank_accounts.provider_account_id` for a real user via `/transfers/recipients`) still isn't built** — every `bank_accounts` row usable by `withdraw` today is a manually-inserted test fixture, so no withdrawal has actually completed for real yet. That's the next real gap on the payout side, not the provider call itself.
 
+### `GET /functions/v1/get-withdrawal-countdown`
+
+```jsonc
+// Response 200
+{ "effective_sweep_hours": 24, "force_sweep_below_minimum": true }
+```
+
+Added Phase 6 (`20260916091500_fn_get_withdrawal_countdown.sql`) — lets the wallet tab render a real countdown ring for the caller's own `withdrawable_cash` auto-sweep, instead of inventing one. `effective_sweep_hours` is `withdrawal_auto_sweep_hours` (24, normal) or `withdrawal_auto_sweep_hours_untrusted` (72, per `20260915160000_settlement_aware_auto_sweep.sql`'s trust gate) depending on the caller's own `fn_is_withdrawal_trusted` result — never returned directly, since this app has no self-serve dispute/unfreeze path and a raw "you are untrusted" field would leak more than a ring needs. `force_sweep_below_minimum` is the one bit of that distinction actually needed client-side: whether a below-`withdrawal_min_kobo` balance will still force-sweep eventually (`true`, trusted) or is held indefinitely until it either clears the minimum or the account ages/clears into trusted (`false`, untrusted) — communicates the effect, not the diagnosis. Doesn't return `wallet.updated_at`, `withdrawal_min_kobo`, or `withdrawal_force_sweep_days` — all three are already directly client-readable (`wallets` row-level RLS; `pricing_config` is fully authenticated-readable).
+
 ### `POST /functions/v1/post-status`
 
 ```jsonc
@@ -193,6 +202,23 @@ Added 2026-09-14 alongside the read-cursor migration (`20260914080000_thread_rea
 ```
 
 Added 2026-09-14 (`20260914090000_settings_privacy_reports_push.sql`) — the actual write path for blocking. `threads.blocked_by` and its enforcement inside `fn_send_message` (rejects any send while non-null, with `thread_blocked`) both existed before this; nothing ever set it until this function. Idempotent both directions: blocking an already-blocked thread is a no-op success (doesn't overwrite who blocked it first); unblocking an already-unblocked thread is a no-op success. Only the user recorded in `blocked_by` can unblock — a blocked person can't unilaterally clear it themselves. Called from the thread screen's own overflow menu and from Settings > Privacy > Blocked contacts (unblock only).
+
+### `POST /functions/v1/mark-status-viewed`
+
+```jsonc
+// Request
+{ "status_id": "uuid" }
+// Response 200
+{ "ok": true }
+// Response 400
+{ "error": "invalid_request" } // missing status_id
+// Response 403
+{ "error": "not_visible" } // caller has no non-blocked thread with the poster
+// Response 404
+{ "error": "status_not_found" }
+```
+
+Added Phase 6 (`20260916090000_status_visibility_and_view_tracking.sql`) — records that the caller has seen a status update, driving the unseen(gold)/seen(grey) ring distinction on the mobile status feed. Re-checks the same visibility condition the `status_updates_select_visible_to_thread_partner` RLS policy enforces (a `SECURITY DEFINER` function bypasses RLS, so this has to be explicit rather than relied on implicitly) — a status is visible to, and viewable by, anyone with a non-blocked `threads` row with the poster. The poster marking their own status is a no-op 200, not an error. Idempotent (`on conflict do nothing` on `status_views`'s `(status_id, viewer_id)` primary key).
 
 ### `GET /functions/v1/estimate-message-cost?words=N` (or computed client-side from public `pricing_config` for instant UI feedback — server remains authoritative at actual send time regardless)
 

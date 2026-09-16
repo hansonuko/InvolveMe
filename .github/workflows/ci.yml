@@ -15,6 +15,16 @@ jobs:
   # repo regardless of what changed).
   changes:
     runs-on: ubuntu-latest
+    # dorny/paths-filter falls back to the GitHub API to diff base/head when
+    # it can't do it from the local git history alone (shallow checkout by
+    # default) — without this, that fallback 403s with "Resource not
+    # accessible by integration" on repos where the default GITHUB_TOKEN
+    # permissions aren't already broad enough, which silently skips
+    # test-wallet-code below (a skip, not a pass) instead of failing loudly.
+    # Read-only, scoped to this job only.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       wallet: ${{ steps.filter.outputs.wallet }}
     steps:
