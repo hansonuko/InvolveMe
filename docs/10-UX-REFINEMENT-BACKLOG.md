@@ -55,7 +55,9 @@ Do this first: it's low-risk, touches shared tokens/components only (no schema, 
 
 ## Batch B — Chat screen core UX
 
-### B1. No-chat-credit send flow
+**Part 1 (B1, B3, B4, and B2's avatar/phone-fallback half) — ✅ shipped (PR #54).** Online/last-seen (B2's genuinely-new half) is its own follow-up, tracked separately below.
+
+### B1. No-chat-credit send flow — ✅ shipped (PR #54)
 
 **Confirmed state:** Partially built, with a real bug. Server already returns a clean `402 insufficient_credit` (with `credits_required`/`credits_available`). But the client's generic error-transport layer has no `message` field to fall back to for this response shape, so **today a failed send due to low balance literally displays the string "Request failed with status 402"** in red text — not any human copy. No branch on `error.code` anywhere. No buy-credit CTA wired from a failed send. No draft/outbox/pending-send concept exists at all — a failed send just leaves the typed text sitting in the box.
 **Refined spec:**
@@ -65,7 +67,7 @@ Do this first: it's low-risk, touches shared tokens/components only (no schema, 
 - **Pending-until-funded send:** recommend keeping this **entirely client-local** — never touch server-side money logic for this (per CLAUDE.md rule #1, no financial logic lives client-side, and a server-side "pending send queue" would be new money-adjacent surface for no real benefit). Concretely: on a 402, keep the composed text in a small local "pending outbox" (one item, this thread), show it as a distinct pending bubble in the message list, and auto-retry the real send once `useWallets`' existing Realtime subscription reports `topup_credit` ≥ the required amount — no polling, reuses infrastructure that's already live.
 - Client-side pre-send balance check (comparing typed word-count-derived cost against the already-fetched wallet balance) to catch the common case _before_ even calling the server — matches the "Low-balance warning" motion spec already documented in `docs/04-DESIGN-SYSTEM.md` but never implemented. Server remains authoritative regardless (this is a UX nicety, not the enforcement).
 
-### B2. Chat screen header: avatar + name/phone + online/last-seen
+### B2. Chat screen header: avatar + name/phone + online/last-seen — avatar/phone-fallback half ✅ shipped (PR #54); online/last-seen still open (part 2, below)
 
 **Confirmed state:** Partially built. Title already shows the partner's `display_name` when available (falls back to literal "Chat" otherwise, not to their phone number). **No avatar renders in the header at all** (the shared `Avatar` component exists but isn't imported here). **No "saved contact name" concept exists** — there's no phonebook/contacts table; the name shown is simply the other user's own global `display_name`. **No online/last-seen mechanism exists anywhere, client or server** — `docs/05`'s presence-channel spec was explicitly never implemented (confirmed by the code's own comment).
 **Refined spec:**
@@ -75,13 +77,14 @@ Do this first: it's low-risk, touches shared tokens/components only (no schema, 
 - "Saved contact name" as literally described (a name **you** gave them, distinct from their own global profile name) requires Batch C's contacts integration to mean anything — without a device-contacts/phonebook concept, there's nothing to "save." Recommend: ship the phone-number-fallback now (cheap, real improvement), and revisit true per-viewer contact naming once Batch C lands.
 - **Online/last-seen is a genuinely new feature, not a UI tweak** — needs either a Supabase Realtime Presence channel (ephemeral, matches the original `docs/05` spec, no new column) or a persisted `last_seen_at` column updated on a heartbeat/foreground-event (simpler, survives app restarts, but is a new schema field). Recommend Presence for "online now" (cheap, ephemeral, no schema change) plus a `users.last_seen_at` column for the "last seen HH:MM" text when not currently online — gated by the same privacy-toggle pattern `read_receipts_enabled` already establishes (a `last_seen_enabled` column, default on, same self-scoped RLS-grant precedent).
 
-### B3. Find-user-by-phone screen → chat-row result, tap to open
+### B3. Find-user-by-phone screen → chat-row result, tap to open — ✅ shipped (PR #54)
 
 **Confirmed state:** Partially built. A match is found and the user's name is shown, but only as plain text ("Found {name}") forcing the user through a mandatory first-message box before a thread is created — no avatar rendered (even though `avatar_url` is already fetched and sitting unused), no tap-to-open. Threads are only ever created lazily, inside `fn_send_message`, on the first real message — there's no standalone "start an empty thread" server call today.
 **Refined spec:** Render the found user exactly like a `ThreadRow` (reusing Batch A7's now-updated component) with a real avatar. Tapping it navigates straight into `/thread/[id]` **using the recipient's user id, not a thread id** — the thread screen already needs to handle "no thread exists yet for this pair" gracefully as a natural side effect (first send creates it via the existing `fn_start_thread`-inside-`fn_send_message` path, no new backend surface needed). This is simpler and safer than adding a new "create empty thread" RPC.
+**What actually shipped, revised during implementation:** a new `start-thread` Edge Function (thin, non-money wrapper around the existing `fn_start_thread`) turned out cleaner than the "let the thread screen cope with no-thread-yet" plan above — it avoids adding branching state (loading messages/header-info/mark-read all assume a real thread id) throughout an already-complex screen, in exchange for one small new endpoint in the same class as `mark-thread-read`/`set-thread-blocked`. Tapping the found user now calls it and navigates straight to the real thread id it returns.
 **Notes:** Last-seen privacy gating for this screen only matters once B2's last-seen feature exists — sequence this after B2, or ship without last-seen info here initially and add it once B2 lands.
 
-### B4. Send icon button + keyboard-avoiding composer
+### B4. Send icon button + keyboard-avoiding composer — ✅ shipped (PR #54)
 
 **Confirmed state:** Confirmed. Send is a bare `<Text>` with an `onPress`, not an icon or the app's own `Button` component (real inconsistency: the _other_ "Send" button, in the find-user first-message flow, already uses `Button`). Tap target has no explicit sizing — likely under the 44×44pt minimum this app's own design doc requires. `KeyboardAvoidingView` is present but its `behavior` is `undefined` on Android (RN's documented no-op) — **on Android the composer can still sit behind the keyboard today**; iOS has no `keyboardVerticalOffset` accounting for the header height either.
 **Refined spec:** Real icon button (`Ionicons name="send"`, filled circle in `brandPrimary`, `textInverse` icon — matches the existing `Button` primary style), minimum 44×44pt hit area. Fix `KeyboardAvoidingView`: `behavior={Platform.select({ ios: 'padding', android: 'height' })}` (the standard RN cross-platform pattern) plus a correct `keyboardVerticalOffset` accounting for the header.
