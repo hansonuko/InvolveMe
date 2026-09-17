@@ -17,6 +17,7 @@
 // the DB function's exceptions to HTTP responses.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { runInBackground, sendPushToUser } from '../_shared/push.ts';
 
 interface TransferCreditRequestBody {
   recipient_phone?: string;
@@ -162,6 +163,21 @@ Deno.serve(async (req) => {
     );
     return errorResponse(500, 'internal_error', 'Something went wrong.');
   }
+
+  runInBackground(async () => {
+    const { data: sender } = await db
+      .from('users')
+      .select('display_name')
+      .eq('id', user.id)
+      .single();
+    await sendPushToUser(
+      db,
+      recipient.id,
+      sender?.display_name ?? 'Someone',
+      `Sent you ${transfer.credits_received} credits`,
+      { type: 'credit_transfer_received', transfer_id: transferId },
+    );
+  });
 
   return json(200, {
     transfer_id: transferId,

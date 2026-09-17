@@ -27,6 +27,7 @@
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
+import { notifyTopupConfirmed, runInBackground } from '../_shared/push.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
 function json(status: number, payload: unknown): Response {
@@ -114,6 +115,7 @@ Deno.serve(async (req) => {
         // there as a backstop regardless.
         return json(200, { status: 'pending' });
       }
+      runInBackground(() => notifyTopupConfirmed(db, topup.id));
       return json(200, { status: 'completed' });
     }
     // 'failed' isn't flipped here either, same posture as reconcile-topups

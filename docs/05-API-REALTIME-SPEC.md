@@ -106,6 +106,8 @@ Server-to-server only, not called by the app.
 
 **Ground-truth check performed before shipping this correction** (not just re-reading docs): queried `webhook_events_seen` directly against the dev DB — 0 rows, ever — then cross-checked Flutterwave's own `GET /charges?customer_id=...` and found two real ₦100 charges made the same day, both `status: "succeeded"`, both still stuck as `pending` topups in this DB. That's what proved the bug was live, not just theoretically possible from a doc re-read.
 
+**Push notification side effects (added docs/10-UX-REFINEMENT-BACKLOG.md Batch G):** a successful `fn_confirm_topup` here (or via `reconcile-topups`/`check-topup-status`, which hit the exact same shared helper — `notifyTopupConfirmed` in `_shared/push.ts`) pushes the payer "Credit purchased" / "N credits have landed in your wallet". A successful `fn_complete_withdrawal` pushes the withdrawing user "Withdrawal sent" / "₦X has been sent to your bank account" (`notifyWithdrawalCompleted`). Both best-effort, fired via `runInBackground` so a slow/failed push provider call never delays this webhook's own 200 to Flutterwave.
+
 ### `POST /functions/v1/withdraw`
 
 ```jsonc
@@ -302,6 +304,8 @@ Read-only proxy for Flutterwave's `/banks?country=NG`, for the bank-picker UI �
 ```
 
 Peer-to-peer chat-credit transfer, convertible to cash on the recipient's side — see `docs/03-ECONOMY-LEDGER.md` §9 and `docs/07-COMPLIANCE-LEGAL.md` §1 (this is the one feature that document names explicitly as needing a legal check before shipping; it shipped anyway, flagged). `recipient_phone` resolves the same way `find-user-by-phone` does. `credit_transfer_max_credits` in `pricing_config` caps a single call.
+
+**Push notification side effect (added docs/10-UX-REFINEMENT-BACKLOG.md Batch G):** on success, the recipient gets a best-effort push (sender's `display_name`, or "Someone" if unset, as title; "Sent you N credits" as body) — same `sendPushToUser`/`runInBackground` pattern `send-message` already established.
 
 ## 2. Scheduled jobs (pg_cron)
 
