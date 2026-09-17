@@ -145,15 +145,17 @@ Written only by `fn_transfer_credit` (`SECURITY DEFINER`). The sender's `topup_c
 
 ### `status_updates`
 
-| id, user_id, media_url, caption, credits_charged, expires_at (24h), created_at |
+| id, user_id, media_path, caption, text_style, credits_charged, expires_at (24h), created_at |
 
 Visible to the poster (always, including expired) and, per `20260916090000_status_visibility_and_view_tracking.sql` (Phase 6), to anyone with a non-blocked `threads` row with the poster while `expires_at > now()` — two permissive RLS policies, not one, since Postgres ORs them together. See §7.
+
+`media_path`/`text_style` renamed/added `20260917140000_status_media_pipeline.sql` (Batch F, session 18) — `media_path` was `media_url` (renamed for clarity: it holds a private `status-media` Storage object path, never a public URL, and had never been populated in production, so the rename was free). `text_style` is the fixed-palette template key a text-only post's background used (`apps/mobile/lib/statusTextTemplates.ts`), null for media posts. Own-row DELETE is allowed (`status_updates_delete_own`) — self-serve delete of your own content, not a money-adjacent write, so a direct RLS-scoped delete needed no new function. See §10.
 
 ### `status_views` (added `20260916090000_status_visibility_and_view_tracking.sql`)
 
 | status_id, viewer_id, viewed_at | PK `(status_id, viewer_id)` |
 
-Records a status has been seen — drives the unseen(gold)/seen(grey) ring distinction on the mobile status feed (`docs/04-DESIGN-SYSTEM.md`). Written only by `fn_mark_status_viewed`; no client INSERT policy. See §7.
+Records a status has been seen — drives the unseen(gold)/seen(grey) ring distinction on the mobile status feed (`docs/04-DESIGN-SYSTEM.md`). Written only by `fn_mark_status_viewed`; no client INSERT policy. A second permissive SELECT policy (`status_views_select_as_poster`, Batch F session 18) lets a poster read every view row on their own statuses — the mechanism behind the poster-only view count, and forward-compatible with a future full viewer-list without a further RLS change. See §7, §10.
 
 ### `push_tokens` (added `20260914090000_settings_privacy_reports_push.sql`)
 
@@ -257,3 +259,15 @@ Both new functions follow CLAUDE.md rule #11's mandatory grant pattern from crea
 Authenticated-readable, no client write grant (same posture as `pricing_config` — ops-controlled config, not user data). The onboarding currency-auto-detect step (E2 spec item 5) reads this table, not a hardcoded NGN/GHS check in app code, per CLAUDE.md rule #9. A country with `payments_live = false` still lets the user pick their real country/nickname/name during onboarding — only the currency step shows the honest "not supported yet for payments — NGN only" fallback instead of a live currency.
 
 **Not covered by this section:** the actual migration SQL, re-threading `pricing_config` callers to pass a currency, and the onboarding UI itself — tracked as separate, later steps in this session's own task list.
+
+## 10. Status media pipeline — Batch F (session 18, `20260917140000_status_media_pipeline.sql`)
+
+`docs/10-UX-REFINEMENT-BACKLOG.md` Batch F's hard prerequisite: this app's first real use of Supabase Storage. Scope decision, not an oversight: **photo + text status only, no video** — the refined spec's own wording only ever says "single compressed image"/"Photo viewing," and client-side video transcoding would need a heavy native dependency this app's "stay lite" rule doesn't currently justify. `docs/01-ARCHITECTURE.md` §5's "15s video, transcoded to H.264 720p" line is an old, aspirational budget target this batch doesn't implement — revisit if video status is ever explicitly scoped.
+
+**Storage bucket:** `status-media`, private (`public = false`), 5 MiB server-side ceiling, `image/jpeg`/`image/png` only. Never a client-side direct-to-bucket credential for writes: the only way to write is a signed _upload_ URL minted server-side (`create-status-upload-url` Edge Function, service role) — the Storage API authorizes the eventual upload via that signed token itself, not a Postgres RLS row, so there is deliberately no INSERT policy for `authenticated` on this bucket at all.
+
+**Reads** go through `createSignedUrl` from the client's own authenticated session, gated by a `storage.objects` SELECT RLS policy (`status_media_select_visible`) that re-derives the exact same visibility condition `status_updates_select_visible_to_thread_partner`/`fn_mark_status_viewed` already each independently encode (owner, or non-blocked thread partner while unexpired) — RLS can't reference another table's policy, so this is a third, deliberate repetition of the same predicate, not a new pattern (see `fn_mark_status_viewed`'s own comment for why this codebase already accepts that duplication over inventing a shared helper for it).
+
+**Delete** (`status_media_delete_own`, own media only) is real but **unverified end-to-end in this sandbox** — Supabase's storage schema hard-blocks raw SQL `DELETE` on `storage.objects` outright ("Direct deletion from storage tables is not allowed. Use the Storage API instead."), confirmed live, regardless of role or RLS. The real delete path only ever goes through the Storage REST API (the JS SDK's `.remove()`), which a raw `pg` connection can't exercise — same class of gap as this project's existing deployed-function-testing-gap. The policy's existence and predicate shape are confirmed structurally; its actual enforcement via the real Storage API is flagged as unverified, not silently assumed. The mobile client must delete the Storage object **before** the `status_updates` row, never after — the policy's `EXISTS` check has nothing left to authorize against once that row is gone (`apps/mobile/lib/queries/status.ts`'s `useDeleteStatus` does this in the correct order, documented inline).
+
+Every existing `pricing_config`-shaped read-site precedent doesn't apply here since Storage RLS, not `pricing_config`, is what's new — no equivalent hazard to flag beyond the one above.

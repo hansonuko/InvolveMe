@@ -170,21 +170,25 @@ Do this first: it's low-risk, touches shared tokens/components only (no schema, 
 
 ---
 
-## Batch F — Status feature: full story experience
+## Batch F — Status feature: full story experience — ✅ shipped session 18 (photo + text; video explicitly out of scope)
 
 The biggest single item on this list. Hard prerequisite: **a real Storage/media upload pipeline does not exist anywhere in this app** — this has been named as a gap in every session that's touched status so far, and photo status can't ship without solving it. Scoping this batch means scoping the pipeline too, not deferring it further.
+
+**✅ Shipped session 18 — all 7 items below, with one deliberate scope line drawn up front and documented everywhere it matters (`docs/02-DATA-MODEL.md` §10, `docs/03-ECONOMY-LEDGER.md`, the migration's own header comment): photo + text status only, no video.** The refined spec's own wording below only ever says "single compressed image"/"Photo viewing" — client-side video transcoding would need a heavy native dependency this app's "stay lite" rule doesn't currently justify. Two new native modules (`expo-image-picker`, `expo-image-manipulator`) ship JS/config-only, same as Batches C1/E1 — **nothing here actually works on-device until the held `eas build` runs**, now a three-feature queue (C1 contacts, E1 biometric lock, F status media), still not triggered per this project's standing "never build without explicit ask" rule.
+
+**One real, honestly-flagged gap:** the Storage `DELETE` RLS policy (`status_media_delete_own`) is unverified end-to-end — Supabase hard-blocks raw SQL `DELETE` on `storage.objects` regardless of role, so this sandbox's usual "verify against the dev DB directly" discipline couldn't exercise it; only the real Storage REST API can, once the build exists to test on a real device. See `docs/02-DATA-MODEL.md` §10 for the full detail.
 
 **Confirmed current state (post-merge, this repo, right now):** composer is a plain text box + post button — no template/style picker. Viewing opens a small centered modal dialog (not full-screen), listing captions in a static scrollable list — no per-item timing, no auto-advance. Text-caption only; `media_url` is plumbed through the backend and the type but never populated or rendered client-side. No view-count display anywhere (only a binary seen/unseen flag is computed). No delete capability — no DELETE RLS policy, no function, nothing. No swipe-between-posters gesture — the viewer only ever shows one poster at a time with a Close button.
 
 **Refined spec, best-practice story UX (matching the WhatsApp/Instagram-class pattern you referenced):**
 
-1. **Storage pipeline** (prerequisite): Supabase Storage bucket for status media, signed upload URLs issued by a new Edge Function (never a client-side direct-to-bucket credential), image compression/resizing client-side before upload (this app's own "stay lite" / no-full-resolution-media-by-default rule, `docs/01-ARCHITECTURE.md`).
-2. **Composer:** full-screen, camera-first (matches `docs/04`'s own already-documented IA note — "camera-first composer" was the intent from the start), with a small set of clean background/text-style templates for text-only posts (a fixed palette from the design tokens, not a free-color picker — keeps it "clean and modern" without ballooning scope).
-3. **Full-screen story viewer:** each status item displays full-screen with a per-item progress timer (**6 seconds per item, confirmed**), auto-advancing to the poster's next item, then closing/returning to the feed.
-4. **View count:** visible to the poster only, on their own status (tap to see a number now; a full viewer-list is a natural later add-on, not required to ship this). Needs a `count`-style query against `status_views` (the table exists, it's just never aggregated today).
-5. **Delete:** new RLS DELETE policy (own rows only) + a thin client action — no new function needed, a direct RLS-scoped delete is safe here since it's a pure self-serve delete of your own content, not a money-adjacent write.
-6. **Swipe-through:** from the "Recent updates" row, swiping horizontally in the full-screen viewer moves to the next contact's story set, matching the reference apps' pattern — the current "one poster per modal open" structure gets replaced by a single full-screen viewer that can page between posters.
-7. Photo viewing: full-screen for both the poster (reviewing their own post) and viewers (tapping to view), reusing the same full-screen viewer component as the story playback.
+1. **Storage pipeline** (prerequisite): Supabase Storage bucket for status media, signed upload URLs issued by a new Edge Function (never a client-side direct-to-bucket credential), image compression/resizing client-side before upload (this app's own "stay lite" / no-full-resolution-media-by-default rule, `docs/01-ARCHITECTURE.md`). — **✅ shipped**: private `status-media` bucket, `create-status-upload-url` Edge Function, client-side resize-to-1080px+JPEG-compress via `expo-image-manipulator` before upload.
+2. **Composer:** full-screen, camera-first (matches `docs/04`'s own already-documented IA note — "camera-first composer" was the intent from the start), with a small set of clean background/text-style templates for text-only posts (a fixed palette from the design tokens, not a free-color picker — keeps it "clean and modern" without ballooning scope). — **✅ shipped**: `components/status/StatusComposer.tsx` — camera/gallery lead, "Aa text status" secondary, 5-color fixed palette from `theme/tokens.ts`'s own values. "Camera-first" reuses `expo-image-picker`'s native full-screen camera launcher rather than a custom `expo-camera` preview screen.
+3. **Full-screen story viewer:** each status item displays full-screen with a per-item progress timer (**6 seconds per item, confirmed**), auto-advancing to the poster's next item, then closing/returning to the feed. — **✅ shipped**: `components/status/StoryViewer.tsx`, Reanimated-driven progress bars, `setTimeout`-driven advance.
+4. **View count:** visible to the poster only, on their own status (tap to see a number now; a full viewer-list is a natural later add-on, not required to ship this). Needs a `count`-style query against `status_views` (the table exists, it's just never aggregated today). — **✅ shipped**: `status_views_select_as_poster` RLS + `useStatusViewCount`, tap-to-reveal in the viewer's own-status controls.
+5. **Delete:** new RLS DELETE policy (own rows only) + a thin client action — no new function needed, a direct RLS-scoped delete is safe here since it's a pure self-serve delete of your own content, not a money-adjacent write. — **✅ shipped** (`status_updates_delete_own` verified; the paired `storage.objects` delete policy is real but unverified end-to-end — see the batch-level note above).
+6. **Swipe-through:** from the "Recent updates" row, swiping horizontally in the full-screen viewer moves to the next contact's story set, matching the reference apps' pattern — the current "one poster per modal open" structure gets replaced by a single full-screen viewer that can page between posters. — **✅ shipped** via a native paging `FlatList` (not a custom `PanGestureHandler`) — swipe is exactly what horizontal paging scroll already does, with none of a hand-rolled pan gesture's conflict-with-tap-zones edge cases.
+7. Photo viewing: full-screen for both the poster (reviewing their own post) and viewers (tapping to view), reusing the same full-screen viewer component as the story playback. — **✅ shipped**, same `StoryViewer`/`StoryBackground` for both.
 
 ---
 
@@ -216,7 +220,7 @@ Each batch is its own PR — built, tested, then merged — only starting on you
 4. **Batch G** — push notifications (independent; start with the 5-minute repro)
 5. **Batch C** — contacts & discovery (new native module — coordinate with E's native module into one `eas build`)
 6. **Batch E** — auth hardening + onboarding (new native module; bundle the build with C)
-7. **Batch F** — status story overhaul (biggest scope, needs the storage pipeline; last so the smaller batches de-risk the patterns first)
+7. **Batch F** — status story overhaul (biggest scope, needs the storage pipeline; last so the smaller batches de-risk the patterns first) — **✅ shipped session 18**
 
 ---
 

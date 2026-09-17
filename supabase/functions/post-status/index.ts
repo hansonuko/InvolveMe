@@ -12,14 +12,24 @@
 // No Flutterwave dependency at all — this was the one piece of real
 // progress docs/00-SESSION-HANDOFF.md flagged as fully buildable while the
 // Flutterwave API-generation question is still open.
+//
+// `media_path` (Batch F, session 18) — a `status-media` Storage object
+// path the caller already uploaded to via a signed URL from
+// create-status-upload-url, never a public URL. `text_style` is the fixed-
+// palette template key for a text-only post's background (docs/10-UX-
+// REFINEMENT-BACKLOG.md Batch F item 2) — an opaque, non-financial tag, not
+// validated against a server-side enum since a bad/unknown value can only
+// ever make a status render with a fallback background client-side, never
+// anything security- or money-relevant.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
 
 interface PostStatusRequestBody {
-  media_url?: string;
+  media_path?: string;
   caption?: string;
+  text_style?: string;
 }
 
 interface FnPostStatusRow {
@@ -90,17 +100,20 @@ Deno.serve(async (req) => {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (payload.media_url !== undefined && typeof payload.media_url !== 'string') {
-    return errorResponse(400, 'invalid_request', 'media_url must be a string.');
+  if (payload.media_path !== undefined && typeof payload.media_path !== 'string') {
+    return errorResponse(400, 'invalid_request', 'media_path must be a string.');
   }
   if (payload.caption !== undefined && typeof payload.caption !== 'string') {
     return errorResponse(400, 'invalid_request', 'caption must be a string.');
   }
+  if (payload.text_style !== undefined && typeof payload.text_style !== 'string') {
+    return errorResponse(400, 'invalid_request', 'text_style must be a string.');
+  }
   if (
-    (payload.media_url === undefined || payload.media_url.trim().length === 0) &&
+    (payload.media_path === undefined || payload.media_path.trim().length === 0) &&
     (payload.caption === undefined || payload.caption.trim().length === 0)
   ) {
-    return errorResponse(400, 'empty_status', 'A status needs a caption or a media_url.');
+    return errorResponse(400, 'empty_status', 'A status needs a caption or a media_path.');
   }
 
   const db = serviceRoleClient();
@@ -142,8 +155,9 @@ Deno.serve(async (req) => {
   const { data: rawData, error } = await db
     .rpc('fn_post_status', {
       p_user_id: user.id,
-      p_media_url: payload.media_url ?? null,
+      p_media_path: payload.media_path ?? null,
       p_caption: payload.caption ?? null,
+      p_text_style: payload.text_style ?? null,
     })
     .single();
 
