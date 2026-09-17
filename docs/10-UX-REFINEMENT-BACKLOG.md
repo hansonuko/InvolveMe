@@ -102,7 +102,7 @@ Do this first: it's low-risk, touches shared tokens/components only (no schema, 
 
 ---
 
-## Batch D — Wallet transaction history restructuring
+## Batch D — Wallet transaction history restructuring — ✅ shipped (PR #52)
 
 ### D1. Per-user chat transaction history + separate bought/sent-credit toggle
 
