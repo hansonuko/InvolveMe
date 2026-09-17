@@ -27,7 +27,7 @@ import {
   useThreadMessages,
 } from '@/lib/queries/messages';
 import { useReportUser } from '@/lib/queries/profile';
-import { useMarkThreadRead, useSetThreadBlocked } from '@/lib/queries/threads';
+import { useMarkThreadRead, useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { supabase } from '@/lib/supabase';
 import { useWallets, walletBalance } from '@/lib/queries/wallet';
@@ -45,6 +45,10 @@ interface ThreadHeaderInfo {
   isPayer: boolean;
   blockedByMe: boolean;
   blockedByPartner: boolean;
+  /** The caller's own mute flag on this thread (docs/10-UX-REFINEMENT-BACKLOG.md
+   * Batch G) — never the partner's, which the caller has no visibility into
+   * and no business rendering. */
+  mutedByMe: boolean;
   /** `null` if the partner has read receipts turned off — thread/[id].tsx
    * must not render a "read" indicator in that case, per the privacy
    * toggle's own contract (see lib/queries/profile.ts). */
@@ -76,7 +80,7 @@ function useThreadHeaderInfo(
       const { data: thread } = await supabase
         .from('threads')
         .select(
-          'participant_a, participant_b, blocked_by, participant_a_last_read_at, participant_b_last_read_at',
+          'participant_a, participant_b, blocked_by, muted_by_a, muted_by_b, participant_a_last_read_at, participant_b_last_read_at',
         )
         .eq('id', threadId)
         .maybeSingle();
@@ -105,6 +109,7 @@ function useThreadHeaderInfo(
         isPayer,
         blockedByMe: thread.blocked_by === currentUserId,
         blockedByPartner: !!thread.blocked_by && thread.blocked_by !== currentUserId,
+        mutedByMe: isPayer ? thread.muted_by_a : thread.muted_by_b,
         partnerLastReadAt: partner?.read_receipts_enabled ? partnerLastReadAtRaw : null,
         partnerLastSeenAt: partner?.last_seen_enabled ? (partner?.last_seen_at ?? null) : null,
       });
@@ -195,22 +200,28 @@ function ThreadOverflowMenu({
   threadId,
   partnerId,
   blockedByMe,
+  mutedByMe,
   currentUserId,
   onBlockedChange,
+  onMutedChange,
 }: {
   visible: boolean;
   onClose: () => void;
   threadId: string;
   partnerId: string;
   blockedByMe: boolean;
+  mutedByMe: boolean;
   currentUserId: string;
   /** Called after a block/unblock mutation succeeds — useThreadHeaderInfo
    * is a one-shot fetch, not a live subscription, so the parent needs an
    * explicit nudge to re-fetch rather than picking this up automatically. */
   onBlockedChange: () => void;
+  /** Same reasoning as onBlockedChange, for the mute toggle. */
+  onMutedChange: () => void;
 }) {
   const { colors, spacing, radius } = useTheme();
   const setBlocked = useSetThreadBlocked();
+  const setMuted = useSetThreadMuted();
   const reportUser = useReportUser();
   const [reportOpen, setReportOpen] = useState(false);
   const [reason, setReason] = useState<string | null>(null);
@@ -227,6 +238,11 @@ function ThreadOverflowMenu({
           setBlocked.mutate({ threadId, blocked: !blockedByMe }, { onSuccess: onBlockedChange }),
       },
     ]);
+  };
+
+  const handleToggleMute = () => {
+    onClose();
+    setMuted.mutate({ threadId, muted: !mutedByMe }, { onSuccess: onMutedChange });
   };
 
   const handleSubmitReport = () => {
@@ -257,6 +273,14 @@ function ThreadOverflowMenu({
               },
             ]}
           >
+            <Pressable
+              style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
+              onPress={handleToggleMute}
+            >
+              <Text variant="bodyMedium" color="primary">
+                {mutedByMe ? 'Unmute notifications' : 'Mute notifications'}
+              </Text>
+            </Pressable>
             <Pressable
               style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
               onPress={handleToggleBlock}
@@ -707,8 +731,10 @@ export default function ThreadScreen() {
           threadId={id}
           partnerId={headerInfo.partnerId}
           blockedByMe={headerInfo.blockedByMe}
+          mutedByMe={headerInfo.mutedByMe}
           currentUserId={currentUserId}
           onBlockedChange={() => setHeaderRefetchKey((k) => k + 1)}
+          onMutedChange={() => setHeaderRefetchKey((k) => k + 1)}
         />
       ) : null}
 

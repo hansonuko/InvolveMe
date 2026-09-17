@@ -202,6 +202,30 @@ export function useSetThreadBlocked() {
   });
 }
 
+interface SetThreadMutedResponse {
+  ok: boolean;
+  muted: boolean;
+}
+
+/** Wraps POST /functions/v1/set-thread-muted — sets the caller's own
+ * per-thread notification-mute flag (docs/10-UX-REFINEMENT-BACKLOG.md Batch
+ * G). Called from a thread's own overflow menu, mirroring
+ * useSetThreadBlocked's shape. `useThreadHeaderInfo` in thread/[id].tsx is a
+ * one-shot fetch (not a TanStack Query), so there's no query key to
+ * invalidate here — the caller bumps its own refetch key on success, same
+ * as it already does for block/unblock. Unlike blocking, mute has no "who
+ * can toggle it back" asymmetry, so there's no separate settings-list hook.
+ */
+export function useSetThreadMuted() {
+  return useMutation({
+    mutationFn: (params: { threadId: string; muted: boolean }) =>
+      callEdgeFunction<SetThreadMutedResponse>('set-thread-muted', {
+        thread_id: params.threadId,
+        muted: params.muted,
+      }),
+  });
+}
+
 export interface BlockedThread {
   thread_id: string;
   partner: { id: string; display_name: string | null };

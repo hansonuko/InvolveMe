@@ -226,13 +226,15 @@ Deno.serve(async (req) => {
   runInBackground(async () => {
     const { data: threadRow } = await db
       .from('threads')
-      .select('participant_a, participant_b')
+      .select('participant_a, participant_b, muted_by_a, muted_by_b')
       .eq('id', threadId)
       .maybeSingle();
     if (!threadRow) return;
 
-    const recipientId =
-      threadRow.participant_a === user.id ? threadRow.participant_b : threadRow.participant_a;
+    const recipientIsA = threadRow.participant_a !== user.id;
+    const recipientId = recipientIsA ? threadRow.participant_a : threadRow.participant_b;
+    const recipientMutedThisThread = recipientIsA ? threadRow.muted_by_a : threadRow.muted_by_b;
+    if (recipientMutedThisThread) return; // docs/10-UX-REFINEMENT-BACKLOG.md Batch G
 
     const { data: sender } = await db
       .from('users')
