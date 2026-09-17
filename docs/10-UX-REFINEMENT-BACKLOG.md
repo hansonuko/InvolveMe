@@ -6,9 +6,11 @@ Format per item: **Confirmed state** (cited) → **Refined spec** (best-practice
 
 ---
 
-## Batch A — Design-system foundation (theme + layout tokens)
+## Batch A — Design-system foundation (theme + layout tokens) — ✅ shipped (PR #50)
 
 Do this first: it's low-risk, touches shared tokens/components only (no schema, no new dependencies), and every other batch's screens inherit correct visuals from it.
+
+**One deviation from spec, worth flagging:** A5's title/icon shift-up was built at **8dp, not the requested 27dp (0.17in)**. Combined with A4's height reduction (bar 96 → 64dp) landing in the same PR, the full 27dp shift would push the header title's text against/past the bar's top edge (real clipping, not a style nitpick — see `AppHeader.tsx`'s own comment for the arithmetic). No live device/simulator was available to confirm visually, so this was a conservative judgment call rather than a verified-safe number — worth a real-device check to see if there's more headroom than estimated and the shift can go higher.
 
 ### A1. Light/Dark mode toggle in Settings
 
