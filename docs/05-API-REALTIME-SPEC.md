@@ -322,7 +322,8 @@ Despite this section's heading, `escrow-expiry-sweep`/`auto-withdraw-sweep`/`rec
 - `postgres_changes` on `messages` filtered by `thread_id=eq.<id>` — chat delivery.
 - `postgres_changes` on `wallets` filtered by `user_id=eq.<self>` — live balance updates driving the motion spec in `docs/04-DESIGN-SYSTEM.md`.
 - `postgres_changes` on `topups` filtered by `id=eq.<topup_id>` — lets the buy-credit screen detect a transfer clearing without the user backing out to check manually.
-- Presence channel per thread — typing indicators, online status (ephemeral, not persisted).
+- Presence channel per thread — typing indicators (still not built; online status below took a different path).
+- **Online/last-seen — built differently than originally spec'd here** (docs/10-UX-REFINEMENT-BACKLOG.md Batch B, `20260917100000_last_seen.sql`): not a Presence channel — a plain `users.last_seen_at` timestamp, updated by the client on a heartbeat, kept live for an open thread via a `postgres_changes` subscription on `users` (same shape as `useThreadMessages`/`useWallets`). "Online" is derived client-side (within ~45s of that timestamp) rather than a separate ephemeral state — avoids a second Realtime primitive's join/leave lifecycle for something that only needs to be this coarse. Gated by `users.last_seen_enabled` (default on), same privacy-toggle posture as `read_receipts_enabled`.
 - Broadcast channel per thread — read receipts (ephemeral by design; if a persisted read-receipt audit trail is ever needed for disputes, add a `message_reads` table deliberately rather than repurposing broadcast).
 
 ## 4. Sequence: a full paid exchange

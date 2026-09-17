@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
 import { useSession } from '@/lib/hooks/useSession';
+import { useLastSeenHeartbeat } from '@/lib/lastSeen';
 import { resyncPushTokenIfPermitted } from '@/lib/push';
 import { ThemeProvider } from '@/theme';
 
@@ -40,6 +41,7 @@ function useAuthGate(isLoading: boolean, hasSession: boolean) {
 export default function RootLayout() {
   const { session, isLoading } = useSession();
   useAuthGate(isLoading, !!session);
+  useLastSeenHeartbeat(session?.user.id);
 
   useEffect(() => {
     if (!isLoading) {
