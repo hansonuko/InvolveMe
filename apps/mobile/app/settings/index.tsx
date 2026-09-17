@@ -14,6 +14,7 @@ import {
   useProfile,
   useReportUser,
   useRequestAccountDeletion,
+  useSetLastSeenEnabled,
   useSetReadReceiptsEnabled,
   useUpdateProfile,
 } from '@/lib/queries/profile';
@@ -530,6 +531,7 @@ export default function SettingsScreen() {
   const { data: pushEnabled, isLoading: pushLoading } = usePushEnabled(userId);
   const setPushEnabled = useSetPushEnabled();
   const setReadReceipts = useSetReadReceiptsEnabled();
+  const setLastSeenEnabled = useSetLastSeenEnabled();
   const { data: deletionRequest } = useAccountDeletionRequest(userId);
   const requestDeletion = useRequestAccountDeletion();
 
@@ -630,6 +632,17 @@ export default function SettingsScreen() {
                 value={profile?.read_receipts_enabled ?? true}
                 onValueChange={(v) => {
                   if (userId) setReadReceipts.mutate({ userId, enabled: v });
+                }}
+              />
+            }
+          />
+          <SettingsRow
+            label="Last seen"
+            right={
+              <Switch
+                value={profile?.last_seen_enabled ?? true}
+                onValueChange={(v) => {
+                  if (userId) setLastSeenEnabled.mutate({ userId, enabled: v });
                 }}
               />
             }

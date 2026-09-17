@@ -28,6 +28,7 @@ import {
 } from '@/lib/queries/messages';
 import { useReportUser } from '@/lib/queries/profile';
 import { useMarkThreadRead, useSetThreadBlocked } from '@/lib/queries/threads';
+import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { supabase } from '@/lib/supabase';
 import { useWallets, walletBalance } from '@/lib/queries/wallet';
 import { useTheme, withAlpha } from '@/theme';
@@ -48,6 +49,10 @@ interface ThreadHeaderInfo {
    * must not render a "read" indicator in that case, per the privacy
    * toggle's own contract (see lib/queries/profile.ts). */
   partnerLastReadAt: string | null;
+  /** `null` if the partner has last-seen turned off, or has never been
+   * seen — same "gate at the source, not at render time" contract as
+   * `partnerLastReadAt` above. */
+  partnerLastSeenAt: string | null;
 }
 
 /** Title, payer/payee role, block state, and (privacy-gated) the
@@ -85,7 +90,9 @@ function useThreadHeaderInfo(
 
       const { data: partner } = await supabase
         .from('users')
-        .select('display_name, avatar_url, phone, read_receipts_enabled')
+        .select(
+          'display_name, avatar_url, phone, read_receipts_enabled, last_seen_at, last_seen_enabled',
+        )
         .eq('id', partnerId)
         .maybeSingle();
       if (cancelled) return;
@@ -99,6 +106,7 @@ function useThreadHeaderInfo(
         blockedByMe: thread.blocked_by === currentUserId,
         blockedByPartner: !!thread.blocked_by && thread.blocked_by !== currentUserId,
         partnerLastReadAt: partner?.read_receipts_enabled ? partnerLastReadAtRaw : null,
+        partnerLastSeenAt: partner?.last_seen_enabled ? (partner?.last_seen_at ?? null) : null,
       });
     })();
 
@@ -107,7 +115,67 @@ function useThreadHeaderInfo(
     };
   }, [threadId, currentUserId, refetchKey]);
 
+  // Live last-seen updates while the thread stays open — a separate
+  // effect from the one-shot fetch above (matching this hook's own
+  // documented "refetched wholesale... an acceptable v1 simplification"
+  // posture for everything else), keyed only on the partner id once it's
+  // known, so it doesn't need to redo the whole thread/partner lookup.
+  useEffect(() => {
+    if (!info?.partnerId) return;
+
+    const channel = supabase
+      .channel(`user-last-seen:${info.partnerId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${info.partnerId}` },
+        (payload) => {
+          const updated = payload.new as {
+            last_seen_at: string | null;
+            last_seen_enabled: boolean;
+          };
+          setInfo((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  partnerLastSeenAt: updated.last_seen_enabled ? updated.last_seen_at : null,
+                }
+              : prev,
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [info?.partnerId]);
+
   return info;
+}
+
+/** "online" (within the heartbeat's freshness window), or "last seen
+ * today at 3:45 PM" / "last seen Sep 12 at 3:45 PM" — `null` if never
+ * seen or the partner has last-seen turned off (already gated to `null`
+ * upstream in useThreadHeaderInfo). `now` is passed in rather than read
+ * via `Date.now()` internally so the ticking effect in ThreadScreen can
+ * force a re-evaluation over time, not just when `lastSeenAt` itself
+ * changes (a stale "online" needs to flip to "last seen ..." purely from
+ * time passing, with no new data ever arriving). */
+function formatLastSeen(lastSeenAt: string | null, now: number): string | null {
+  if (!lastSeenAt) return null;
+  const lastSeenMs = new Date(lastSeenAt).getTime();
+  if (now - lastSeenMs < ONLINE_THRESHOLD_MS) return 'online';
+
+  const date = new Date(lastSeenAt);
+  const today = new Date(now);
+  const isToday =
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate();
+  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return isToday
+    ? `last seen today at ${time}`
+    : `last seen ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${time}`;
 }
 
 const REPORT_REASONS = [
@@ -386,6 +454,16 @@ export default function ThreadScreen() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [buyCreditVisible, setBuyCreditVisible] = useState(false);
 
+  // Ticks every 15s purely so "online" can flip to "last seen ..." from
+  // time passing alone — see formatLastSeen's own comment for why this
+  // can't just be derived once from `partnerLastSeenAt` changing.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(interval);
+  }, []);
+  const lastSeenText = headerInfo ? formatLastSeen(headerInfo.partnerLastSeenAt, now) : null;
+
   const isBlocked = !!headerInfo?.blockedByMe || !!headerInfo?.blockedByPartner;
 
   const [body, setBody] = useState('');
@@ -482,10 +560,22 @@ export default function ThreadScreen() {
                   displayName={headerInfo.partnerName}
                   size={32}
                 />
-                <Text variant="bodyMedium" numberOfLines={1} style={{ maxWidth: 160 }}>
-                  {headerInfo.partnerName ??
-                    (headerInfo.partnerPhone ? `+${headerInfo.partnerPhone}` : 'Chat')}
-                </Text>
+                <View>
+                  <Text variant="bodyMedium" numberOfLines={1} style={{ maxWidth: 160 }}>
+                    {headerInfo.partnerName ??
+                      (headerInfo.partnerPhone ? `+${headerInfo.partnerPhone}` : 'Chat')}
+                  </Text>
+                  {lastSeenText ? (
+                    <Text
+                      variant="caption"
+                      color="tertiary"
+                      numberOfLines={1}
+                      style={{ maxWidth: 160 }}
+                    >
+                      {lastSeenText}
+                    </Text>
+                  ) : null}
+                </View>
               </View>
             ) : (
               <Text variant="bodyMedium">Chat</Text>

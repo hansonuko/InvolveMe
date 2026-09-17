@@ -7,13 +7,14 @@ export interface Profile {
   status_text: string | null;
   phone: string | null;
   read_receipts_enabled: boolean;
+  last_seen_enabled: boolean;
 }
 
 /** The current user's own editable profile fields, plus phone (read-only
  * here — changing it is a real re-verification flow, not a Settings
- * field, see docs/00-SESSION-HANDOFF.md) and the read-receipts privacy
- * flag. A plain read via the client, not an Edge Function — none of this
- * is financial. */
+ * field, see docs/00-SESSION-HANDOFF.md) and the read-receipts/last-seen
+ * privacy flags. A plain read via the client, not an Edge Function — none
+ * of this is financial. */
 export function useProfile(userId: string | undefined) {
   return useQuery({
     queryKey: ['profile', userId],
@@ -21,7 +22,7 @@ export function useProfile(userId: string | undefined) {
     queryFn: async (): Promise<Profile> => {
       const { data, error } = await supabase
         .from('users')
-        .select('display_name, status_text, phone, read_receipts_enabled')
+        .select('display_name, status_text, phone, read_receipts_enabled, last_seen_enabled')
         .eq('id', userId)
         .single();
       if (error) throw error;
@@ -99,6 +100,29 @@ export function useSetReadReceiptsEnabled() {
       const { error } = await supabase
         .from('users')
         .update({ read_receipts_enabled: params.enabled })
+        .eq('id', params.userId);
+      if (error) throw error;
+    },
+    onSuccess: (_data, params) => {
+      queryClient.invalidateQueries({ queryKey: ['profile', params.userId] });
+    },
+  });
+}
+
+/** Last-seen privacy toggle — mirrors useSetReadReceiptsEnabled exactly
+ * (new `last_seen_enabled` column, same client-writable-grant posture, see
+ * 20260917100000_last_seen.sql). Turning this off hides "online"/"last
+ * seen HH:MM" from thread partners (thread/[id].tsx's header) — it
+ * doesn't stop `last_seen_at` itself from being written, same reasoning
+ * read_receipts_enabled's own comment already gives for that column. */
+export function useSetLastSeenEnabled() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (params: { userId: string; enabled: boolean }) => {
+      const { error } = await supabase
+        .from('users')
+        .update({ last_seen_enabled: params.enabled })
         .eq('id', params.userId);
       if (error) throw error;
     },
