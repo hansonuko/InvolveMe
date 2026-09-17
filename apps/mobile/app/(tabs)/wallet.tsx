@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { AppHeader } from '@/components/ui/AppHeader';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Ring } from '@/components/ui/Ring';
 import { Screen } from '@/components/ui/Screen';
@@ -23,8 +24,10 @@ import { useSession } from '@/lib/hooks/useSession';
 import { useKycTier } from '@/lib/queries/kyc';
 import { toE164NigerianPhone } from '@/lib/phone';
 import {
+  isWalletOnlyLedgerReason,
   ledgerEntryLabel,
   useBuyCredit,
+  useChatTransactionHistory,
   useLedgerEntries,
   useLinkedBankAccount,
   usePricingConfig,
@@ -34,6 +37,8 @@ import {
   useWithdraw,
   useWithdrawalCountdown,
   walletBalance,
+  type ChatTransactionEntry,
+  type ChatTransactionGroup,
   type LedgerEntry,
   type Wallet,
   type WithdrawalCountdown,
@@ -552,8 +557,10 @@ function formatEntryTimestamp(iso: string) {
 /** `withdrawable_cash` is stored in kobo, the other two wallets in whole
  * credits — the unit shown depends entirely on which wallet the row
  * landed on, never guessed from the reason string. Converting to ₦ only
- * at this presentation layer, per CLAUDE.md rule #2. */
-function formatEntryAmount(entry: LedgerEntry): string {
+ * at this presentation layer, per CLAUDE.md rule #2. Takes the minimal
+ * shape both `LedgerEntry` and `ChatTransactionEntry` share, so the same
+ * formatter serves both transaction-history tabs below. */
+function formatEntryAmount(entry: { amount: number; wallet_kind: Wallet['kind'] }): string {
   const sign = entry.amount > 0 ? '+' : entry.amount < 0 ? '-' : '';
   const magnitude = Math.abs(entry.amount);
   return entry.wallet_kind === 'withdrawable_cash'
@@ -583,29 +590,126 @@ function TransactionRow({ entry }: { entry: LedgerEntry }) {
   );
 }
 
-/** Phase 6 (docs/08-BUILD-PHASES-ROADMAP.md): "full transaction history
- * rendered from ledger_entries, user-facing labels mapped from reason."
- * Plain mapped Views inside the screen's existing ScrollView, not a
- * nested FlatList — consistent with BalanceCard etc. above, and fine at
- * the 50-row cap useLedgerEntries defaults to. */
+/** One counterparty's chat/transfer history, collapsed to a summary row
+ * until tapped — "tapping a counterparty row expands/loads that person's
+ * history" per docs/10-UX-REFINEMENT-BACKLOG.md Batch D. Entries are
+ * already fetched (grouped client-side in useChatTransactionHistory), so
+ * "loads" here just means "reveals" — no second query per counterparty. */
+function ChatCounterpartyRow({ group }: { group: ChatTransactionGroup }) {
+  const { colors, spacing } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <View>
+      <Pressable
+        onPress={() => setExpanded((e) => !e)}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: spacing.sm,
+          paddingVertical: spacing.sm,
+        }}
+      >
+        <Avatar
+          uri={group.counterparty.avatar_url}
+          displayName={group.counterparty.display_name}
+          size={40}
+        />
+        <View style={{ flex: 1 }}>
+          <Text variant="bodyMedium">{group.counterparty.display_name ?? 'Unnamed'}</Text>
+          <Text variant="caption" color="tertiary">
+            {group.entries.length} {group.entries.length === 1 ? 'transaction' : 'transactions'}
+          </Text>
+        </View>
+        <Text color="tertiary">{expanded ? '▲' : '▼'}</Text>
+      </Pressable>
+      {expanded ? (
+        <View style={{ marginLeft: 40 + spacing.sm, gap: spacing.xs, marginBottom: spacing.sm }}>
+          {group.entries.map((entry: ChatTransactionEntry) => (
+            <View
+              key={entry.ledger_entry_id}
+              style={[
+                styles.transactionRow,
+                { paddingVertical: spacing.xs, borderBottomColor: colors.borderSubtle },
+              ]}
+            >
+              <View style={{ flex: 1 }}>
+                <Text variant="caption">{ledgerEntryLabel(entry.reason)}</Text>
+                <Text variant="caption" color="tertiary">
+                  {formatEntryTimestamp(entry.created_at)}
+                </Text>
+              </View>
+              <Text variant="caption" color={entry.amount >= 0 ? 'success' : 'primary'}>
+                {formatEntryAmount(entry)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+type HistoryTab = 'chats' | 'wallet';
+
+/** Phase 6 (docs/08-BUILD-PHASES-ROADMAP.md) shipped the flat list this
+ * split from — Batch D (docs/10-UX-REFINEMENT-BACKLOG.md) adds the
+ * "Chats" tab (per-counterparty, via ledger_entries_chat_counterparty)
+ * alongside it as "Wallet" (everything with no counterparty: top-ups,
+ * withdrawals, status posts, adjustments — the existing flat query,
+ * filtered rather than re-fetched). Plain mapped Views inside the
+ * screen's existing ScrollView, not a nested FlatList — consistent with
+ * BalanceCard etc. above. */
 function TransactionHistory({ userId }: { userId: string | undefined }) {
   const { spacing } = useTheme();
-  const { data: entries, isLoading } = useLedgerEntries(userId);
+  const [tab, setTab] = useState<HistoryTab>('chats');
+  const { data: entries, isLoading: entriesLoading } = useLedgerEntries(userId);
+  const { data: chatGroups, isLoading: chatLoading } = useChatTransactionHistory(userId);
+
+  const walletOnlyEntries = (entries ?? []).filter((e) => isWalletOnlyLedgerReason(e.reason));
 
   return (
     <View style={{ marginTop: spacing.xl }}>
       <Text variant="title">Transaction history</Text>
+
+      <View style={{ flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md }}>
+        <Pressable onPress={() => setTab('chats')}>
+          <Text variant="bodyMedium" color={tab === 'chats' ? 'secondary' : 'tertiary'}>
+            Chats
+          </Text>
+        </Pressable>
+        <Pressable onPress={() => setTab('wallet')}>
+          <Text variant="bodyMedium" color={tab === 'wallet' ? 'secondary' : 'tertiary'}>
+            Wallet
+          </Text>
+        </Pressable>
+      </View>
+
       <View style={{ marginTop: spacing.sm }}>
-        {isLoading ? (
+        {tab === 'chats' ? (
+          chatLoading ? (
+            <Text variant="body" color="tertiary">
+              Loading…
+            </Text>
+          ) : !chatGroups?.length ? (
+            <Text variant="body" color="tertiary">
+              No chat activity yet.
+            </Text>
+          ) : (
+            chatGroups.map((group) => (
+              <ChatCounterpartyRow key={group.counterparty.id} group={group} />
+            ))
+          )
+        ) : entriesLoading ? (
           <Text variant="body" color="tertiary">
             Loading…
           </Text>
-        ) : !entries?.length ? (
+        ) : !walletOnlyEntries.length ? (
           <Text variant="body" color="tertiary">
             No activity yet.
           </Text>
         ) : (
-          entries.map((entry) => <TransactionRow key={entry.id} entry={entry} />)
+          walletOnlyEntries.map((entry) => <TransactionRow key={entry.id} entry={entry} />)
         )}
       </View>
     </View>
