@@ -110,6 +110,107 @@ export function ledgerEntryLabel(reason: string): string {
   return LEDGER_ENTRY_LABELS[reason] ?? reason.replace(/_/g, ' ');
 }
 
+/** The only ledger reasons `ledger_entries_chat_counterparty`
+ * (20260917090000_ledger_entries_chat_counterparty_view.sql) actually
+ * resolves a counterparty for — see that migration's own comment for why
+ * the rest (topups, withdrawals, status posts, adjustments, reserve/
+ * chargeback bookkeeping, group-message reasons) have no single
+ * counterparty to group by. Exported so the wallet tab's "bought/sent
+ * credit" tab can filter the existing flat `useLedgerEntries` result to
+ * the complementary set, rather than this classification living
+ * separately in the UI layer. */
+const CHAT_COUNTERPARTY_REASONS = new Set([
+  'message_debit',
+  'escrow_release_earning',
+  'escrow_refund_unanswered',
+  'credit_transfer_sent',
+  'credit_transfer_received',
+  'credit_transfer_conversion',
+]);
+
+export function isWalletOnlyLedgerReason(reason: string): boolean {
+  return !CHAT_COUNTERPARTY_REASONS.has(reason);
+}
+
+interface ChatCounterpartyUser {
+  id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
+export interface ChatTransactionEntry {
+  ledger_entry_id: string;
+  amount: number;
+  reason: string;
+  created_at: string;
+  wallet_kind: Wallet['kind'];
+}
+
+export interface ChatTransactionGroup {
+  counterparty: ChatCounterpartyUser;
+  entries: ChatTransactionEntry[]; // newest first
+  lastActivityAt: string;
+}
+
+/** The caller's own ledger activity that involves another person (1:1
+ * chat earnings/debits, peer credit transfers), grouped by who it was
+ * with — the "chat transactions" half of Batch D's history split. Scoped
+ * by RLS through `ledger_entries_chat_counterparty`'s `security_invoker`
+ * view exactly like `useLedgerEntries` already relies on
+ * `ledger_entries_select_own`, not by an explicit filter here. */
+export function useChatTransactionHistory(userId: string | undefined, limit = 200) {
+  return useQuery({
+    queryKey: ['chatTransactionHistory', userId],
+    enabled: !!userId,
+    queryFn: async (): Promise<ChatTransactionGroup[]> => {
+      const { data: rows, error } = await supabase
+        .from('ledger_entries_chat_counterparty')
+        .select('ledger_entry_id, amount, reason, created_at, wallet_kind, counterparty_id')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      if (!rows?.length) return [];
+
+      const counterpartyIds = [...new Set(rows.map((r) => r.counterparty_id as string))];
+      const { data: users, error: usersError } = await supabase
+        .from('users')
+        .select('id, display_name, avatar_url')
+        .in('id', counterpartyIds);
+      if (usersError) throw usersError;
+
+      const usersById = new Map((users ?? []).map((u) => [u.id, u as ChatCounterpartyUser]));
+
+      const grouped = new Map<string, ChatTransactionGroup>();
+      for (const row of rows) {
+        const counterpartyId = row.counterparty_id as string;
+        const entry: ChatTransactionEntry = {
+          ledger_entry_id: row.ledger_entry_id,
+          amount: row.amount,
+          reason: row.reason,
+          created_at: row.created_at,
+          wallet_kind: row.wallet_kind,
+        };
+        const existing = grouped.get(counterpartyId);
+        if (existing) {
+          existing.entries.push(entry);
+        } else {
+          grouped.set(counterpartyId, {
+            counterparty: usersById.get(counterpartyId) ?? {
+              id: counterpartyId,
+              display_name: null,
+              avatar_url: null,
+            },
+            entries: [entry],
+            lastActivityAt: row.created_at,
+          });
+        }
+      }
+      return [...grouped.values()].sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1));
+    },
+  });
+}
+
 /** The current user's most recent ledger activity across all three
  * wallets, newest first — rendered straight from `ledger_entries` per
  * docs/04-DESIGN-SYSTEM.md §5's wallet-tab spec ("transaction history
