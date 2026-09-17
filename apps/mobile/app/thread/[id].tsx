@@ -13,19 +13,34 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { Avatar } from '@/components/ui/Avatar';
+import { Button } from '@/components/ui/Button';
+import { BuyCreditModal } from '@/components/ui/BuyCreditModal';
 import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
-import { type Message, useSendMessage, useThreadMessages } from '@/lib/queries/messages';
+import {
+  type InsufficientCreditDetails,
+  type Message,
+  useSendMessage,
+  useThreadMessages,
+} from '@/lib/queries/messages';
 import { useReportUser } from '@/lib/queries/profile';
 import { useMarkThreadRead, useSetThreadBlocked } from '@/lib/queries/threads';
 import { supabase } from '@/lib/supabase';
+import { useWallets, walletBalance } from '@/lib/queries/wallet';
 import { useTheme, withAlpha } from '@/theme';
 
 interface ThreadHeaderInfo {
   partnerId: string;
   partnerName: string | null;
+  partnerAvatarUrl: string | null;
+  /** E.164 digits, no leading `+` (same storage convention as everywhere
+   * else — see docs/02-DATA-MODEL.md). Shown in the header when the
+   * partner has no display_name set, instead of falling back to the
+   * literal word "Chat". */
+  partnerPhone: string | null;
   isPayer: boolean;
   blockedByMe: boolean;
   blockedByPartner: boolean;
@@ -70,7 +85,7 @@ function useThreadHeaderInfo(
 
       const { data: partner } = await supabase
         .from('users')
-        .select('display_name, read_receipts_enabled')
+        .select('display_name, avatar_url, phone, read_receipts_enabled')
         .eq('id', partnerId)
         .maybeSingle();
       if (cancelled) return;
@@ -78,6 +93,8 @@ function useThreadHeaderInfo(
       setInfo({
         partnerId,
         partnerName: partner?.display_name ?? null,
+        partnerAvatarUrl: partner?.avatar_url ?? null,
+        partnerPhone: partner?.phone ?? null,
         isPayer,
         blockedByMe: thread.blocked_by === currentUserId,
         blockedByPartner: !!thread.blocked_by && thread.blocked_by !== currentUserId,
@@ -324,6 +341,37 @@ function MessageBubble({
   );
 }
 
+/** A message held locally because the sender didn't have enough chat
+ * credit — never sent to the server (CLAUDE.md rule #1: no financial
+ * logic, and no new server-side "pending send" surface either), just
+ * shown so the typed text isn't lost while the real send auto-retries
+ * once the wallet's Realtime balance update reports enough credit. */
+function PendingMessageBubble({ body }: { body: string }) {
+  const { colors, spacing, radius } = useTheme();
+  return (
+    <View style={[styles.bubbleRow, { justifyContent: 'flex-end', marginBottom: spacing.sm }]}>
+      <View
+        style={[
+          styles.bubble,
+          {
+            backgroundColor: colors.bgSurfaceAlt,
+            borderRadius: radius.bubble,
+            padding: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.borderSubtle,
+            borderStyle: 'dashed',
+          },
+        ]}
+      >
+        <Text variant="body">{body}</Text>
+        <Text variant="caption" color="secondary" style={{ marginTop: spacing.xs }}>
+          Pending — will send once you buy credit
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { colors, spacing, radius } = useTheme();
@@ -336,10 +384,50 @@ export default function ThreadScreen() {
   const [headerRefetchKey, setHeaderRefetchKey] = useState(0);
   const headerInfo = useThreadHeaderInfo(id, currentUserId, headerRefetchKey);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [buyCreditVisible, setBuyCreditVisible] = useState(false);
 
   const isBlocked = !!headerInfo?.blockedByMe || !!headerInfo?.blockedByPartner;
 
   const [body, setBody] = useState('');
+
+  // A message that couldn't send for lack of chat credit — held locally
+  // (never sent to the server, see PendingMessageBubble's own comment)
+  // until useWallets' live balance update reports enough to retry.
+  const [pendingSend, setPendingSend] = useState<{ body: string; requiredCredits: number } | null>(
+    null,
+  );
+  const { data: wallets } = useWallets(currentUserId);
+  const topupBalance = walletBalance(wallets, 'topup_credit');
+
+  useEffect(() => {
+    if (!pendingSend || !id) return;
+    if (topupBalance < pendingSend.requiredCredits) return;
+    // Guards against firing a second retry while one is already in flight —
+    // `pendingSend` itself only changes once the mutate call below settles
+    // (in its own callbacks, not synchronously here), so without this a
+    // rapid second Realtime balance tick during that window would re-enter.
+    if (sendMessage.isPending) return;
+
+    const text = pendingSend.body;
+    sendMessage.mutate(
+      { threadId: id, body: text },
+      {
+        onSuccess: () => setPendingSend(null),
+        onError: (error) => {
+          if (error.code === 'insufficient_credit') {
+            const details = error.details as InsufficientCreditDetails | undefined;
+            setPendingSend({
+              body: text,
+              requiredCredits: details?.credits_required ?? pendingSend.requiredCredits,
+            });
+          } else {
+            setPendingSend(null); // a different failure — don't keep silently retrying
+          }
+        },
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topupBalance, pendingSend?.body, pendingSend?.requiredCredits, id, sendMessage.isPending]);
 
   // Marks this thread read the moment it's opened — per
   // docs/00-SESSION-HANDOFF.md's unread-tracking section. Fires once per
@@ -355,10 +443,19 @@ export default function ThreadScreen() {
 
   const handleSend = () => {
     if (!body.trim()) return;
+    const text = body;
     sendMessage.mutate(
-      { threadId: id, body },
+      { threadId: id, body: text },
       {
         onSuccess: () => setBody(''),
+        onError: (error) => {
+          if (error.code === 'insufficient_credit') {
+            const details = error.details as InsufficientCreditDetails | undefined;
+            setPendingSend({ body: text, requiredCredits: details?.credits_required ?? 0 });
+            setBody('');
+          }
+          // other errors: leave `body` as typed, the error banner below shows it
+        },
       },
     );
   };
@@ -368,10 +465,31 @@ export default function ThreadScreen() {
       <Stack.Screen
         options={{
           headerShown: true,
-          title: headerInfo?.partnerName ?? 'Chat',
+          title:
+            headerInfo?.partnerName ??
+            (headerInfo?.partnerPhone ? `+${headerInfo.partnerPhone}` : 'Chat'),
           headerStyle: { backgroundColor: colors.bgCanvas },
           headerTintColor: colors.textSecondary,
           headerTitleStyle: { color: colors.textPrimary },
+          // Custom headerTitle (not just the `title` string above, which
+          // still drives the OS-level back-swipe label) so the avatar can
+          // render alongside the name/phone-fallback text.
+          headerTitle: () =>
+            headerInfo ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Avatar
+                  uri={headerInfo.partnerAvatarUrl}
+                  displayName={headerInfo.partnerName}
+                  size={32}
+                />
+                <Text variant="bodyMedium" numberOfLines={1} style={{ maxWidth: 160 }}>
+                  {headerInfo.partnerName ??
+                    (headerInfo.partnerPhone ? `+${headerInfo.partnerPhone}` : 'Chat')}
+                </Text>
+              </View>
+            ) : (
+              <Text variant="bodyMedium">Chat</Text>
+            ),
           headerRight: () =>
             headerInfo ? (
               <Pressable onPress={() => setMenuVisible(true)} hitSlop={12}>
@@ -426,10 +544,23 @@ export default function ThreadScreen() {
                       : undefined;
               return <MessageBubble message={item} isOwn={isOwn} isRead={isRead} />;
             }}
+            ListFooterComponent={
+              pendingSend ? <PendingMessageBubble body={pendingSend.body} /> : null
+            }
           />
         )}
 
-        {sendMessage.isError ? (
+        {pendingSend ? (
+          <View
+            style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.sm }}
+          >
+            <Text variant="caption" color="secondary">
+              Buy chat credit to start your conversation — your message will send automatically once
+              it lands.
+            </Text>
+            <Button label="Buy credit" onPress={() => setBuyCreditVisible(true)} />
+          </View>
+        ) : sendMessage.isError ? (
           <View style={{ paddingHorizontal: spacing.lg }}>
             <Text variant="caption" color="danger">
               {sendMessage.error.message}
@@ -437,7 +568,7 @@ export default function ThreadScreen() {
           </View>
         ) : null}
 
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })}>
           <View
             style={[
               styles.composer,
@@ -461,14 +592,20 @@ export default function ThreadScreen() {
                 },
               ]}
             />
-            <Text
-              variant="caption"
-              color="secondary"
+            <Pressable
               onPress={sendMessage.isPending || !body.trim() || isBlocked ? undefined : handleSend}
-              style={{ opacity: sendMessage.isPending || !body.trim() || isBlocked ? 0.4 : 1 }}
+              disabled={sendMessage.isPending || !body.trim() || isBlocked}
+              hitSlop={4}
+              style={[
+                styles.sendButton,
+                {
+                  backgroundColor: colors.brandPrimary,
+                  opacity: sendMessage.isPending || !body.trim() || isBlocked ? 0.4 : 1,
+                },
+              ]}
             >
-              {sendMessage.isPending ? 'Sending…' : 'Send'}
-            </Text>
+              <Ionicons name="send" size={20} color={colors.textInverse} />
+            </Pressable>
           </View>
         </KeyboardAvoidingView>
       </Screen>
@@ -484,6 +621,8 @@ export default function ThreadScreen() {
           onBlockedChange={() => setHeaderRefetchKey((k) => k + 1)}
         />
       ) : null}
+
+      <BuyCreditModal visible={buyCreditVisible} onClose={() => setBuyCreditVisible(false)} />
     </>
   );
 }
@@ -499,6 +638,15 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 16,
     maxHeight: 120,
+  },
+  // 44x44 minimum tap target per docs/04-DESIGN-SYSTEM.md §6 — the old
+  // bare-text "Send" pressable had no explicit sizing at all.
+  sendButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   backdrop: { flex: 1 },
   menu: {
