@@ -44,6 +44,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
+import { notifyTopupConfirmed, runInBackground } from '../_shared/push.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
 function json(status: number, payload: unknown): Response {
@@ -119,6 +120,7 @@ Deno.serve(async (req) => {
           errors.push(`${topup.id}: ${confirmError.message}`);
         } else {
           confirmed++;
+          runInBackground(() => notifyTopupConfirmed(db, topup.id));
         }
       } else if (result.status === 'failed') {
         // Flutterwave itself says this charge failed — nothing to confirm,

@@ -72,6 +72,11 @@
 
 import { serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
+import {
+  notifyTopupConfirmed,
+  notifyWithdrawalCompleted,
+  runInBackground,
+} from '../_shared/push.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
 interface FlutterwaveWebhookPayload {
@@ -179,14 +184,17 @@ Deno.serve(async (req) => {
   const status = (payload.data?.status ?? '').toLowerCase();
 
   if (event === 'charge.completed' && payload.data?.tx_ref && status === 'successful') {
+    const topupId = payload.data.tx_ref;
     const { error } = await db.rpc('fn_confirm_topup', {
-      p_topup_id: payload.data.tx_ref,
+      p_topup_id: topupId,
       p_provider_ref: providerRef,
     });
     if (error) {
       // Logged, not thrown: a malformed/stale reference retrying forever
       // wouldn't resolve itself, and Flutterwave still needs its 200.
       console.error('webhook-flutterwave: fn_confirm_topup failed:', error.message);
+    } else {
+      runInBackground(() => notifyTopupConfirmed(db, topupId));
     }
   } else if (event === 'charge.completed' && payload.data?.tx_ref) {
     // completed but not successful (failed/voided) — mark the topup failed
@@ -202,12 +210,15 @@ Deno.serve(async (req) => {
       console.error('webhook-flutterwave: marking topup failed errored:', error.message);
     }
   } else if (event === 'transfer.completed' && payload.data?.reference && status === 'successful') {
+    const withdrawalId = payload.data.reference;
     const { error } = await db.rpc('fn_complete_withdrawal', {
-      p_withdrawal_id: payload.data.reference,
+      p_withdrawal_id: withdrawalId,
       p_provider_ref: providerRef,
     });
     if (error) {
       console.error('webhook-flutterwave: fn_complete_withdrawal failed:', error.message);
+    } else {
+      runInBackground(() => notifyWithdrawalCompleted(db, withdrawalId));
     }
   } else if (event === 'transfer.completed' && payload.data?.reference) {
     const { error } = await db.rpc('fn_fail_withdrawal', {

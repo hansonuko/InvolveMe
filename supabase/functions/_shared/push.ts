@@ -78,3 +78,62 @@ export async function sendPushToUser(
     console.error('sendPushToUser: unexpected failure (non-fatal):', e);
   }
 }
+
+/** Shared by every `fn_confirm_topup` call site (`webhook-flutterwave`,
+ * `reconcile-topups`, `check-topup-status`) — one place for the message
+ * copy and the `topups` read-back, rather than three near-duplicates.
+ * `fn_confirm_topup` itself `returns void`, so this reads `user_id`/
+ * `credits_issued` back off the row it just updated. Best-effort like
+ * `sendPushToUser` itself — a lookup failure here must never surface as an
+ * error to whichever caller triggered the confirm. */
+export async function notifyTopupConfirmed(db: SupabaseClient, topupId: string): Promise<void> {
+  try {
+    const { data: topup, error } = await db
+      .from('topups')
+      .select('user_id, credits_issued')
+      .eq('id', topupId)
+      .single();
+    if (error || !topup) {
+      console.error('notifyTopupConfirmed: topup lookup failed:', error?.message);
+      return;
+    }
+    await sendPushToUser(
+      db,
+      topup.user_id,
+      'Credit purchased',
+      `${topup.credits_issued} credits have landed in your wallet.`,
+      { type: 'topup_confirmed', topup_id: topupId },
+    );
+  } catch (e) {
+    console.error('notifyTopupConfirmed: unexpected failure (non-fatal):', e);
+  }
+}
+
+/** Same rationale as `notifyTopupConfirmed` — the one place
+ * `webhook-flutterwave`'s `fn_complete_withdrawal` success branch needs to
+ * read a completed withdrawal back to notify its owner. */
+export async function notifyWithdrawalCompleted(
+  db: SupabaseClient,
+  withdrawalId: string,
+): Promise<void> {
+  try {
+    const { data: withdrawal, error } = await db
+      .from('withdrawals')
+      .select('user_id, amount_kobo')
+      .eq('id', withdrawalId)
+      .single();
+    if (error || !withdrawal) {
+      console.error('notifyWithdrawalCompleted: withdrawal lookup failed:', error?.message);
+      return;
+    }
+    await sendPushToUser(
+      db,
+      withdrawal.user_id,
+      'Withdrawal sent',
+      `₦${(withdrawal.amount_kobo / 100).toLocaleString()} has been sent to your bank account.`,
+      { type: 'withdrawal_completed', withdrawal_id: withdrawalId },
+    );
+  } catch (e) {
+    console.error('notifyWithdrawalCompleted: unexpected failure (non-fatal):', e);
+  }
+}
