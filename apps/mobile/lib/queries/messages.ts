@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
-import { callEdgeFunction } from '@/lib/edgeFunctions';
+import { callEdgeFunction, EdgeFunctionError } from '@/lib/edgeFunctions';
 import { supabase } from '@/lib/supabase';
 
 export interface Message {
@@ -81,14 +81,26 @@ interface SendMessageResponse {
   payer_balance_after: number;
 }
 
+/** The `{ error: 'insufficient_credit', credits_required, credits_available }`
+ * shape `send-message` returns on a 402 — surfaced via `EdgeFunctionError.
+ * details` so the thread screen's no-credit prompt can show/auto-retry
+ * against the real required amount instead of guessing at it. */
+export interface InsufficientCreditDetails {
+  error: 'insufficient_credit';
+  credits_required: number;
+  credits_available: number;
+}
+
 /** Wraps POST /functions/v1/send-message — the only place a message ever
  * gets sent from. No cost/credit computation here (CLAUDE.md rule #1); the
  * response's `credits_charged`/`payer_balance_after` are display-only,
- * already computed server-side. */
+ * already computed server-side. Typed `EdgeFunctionError` (not the default
+ * `Error`) so callers can branch on `.code`/`.details` — the thread
+ * screen's no-credit prompt is the first caller that needs to. */
 export function useSendMessage() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation<SendMessageResponse, EdgeFunctionError, SendMessageRequest>({
     mutationFn: (request: SendMessageRequest) =>
       callEdgeFunction<SendMessageResponse>('send-message', {
         thread_id: request.threadId,

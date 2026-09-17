@@ -141,6 +141,21 @@ export function useTotalUnreadCount(userId: string | undefined) {
   });
 }
 
+interface StartThreadResponse {
+  thread_id: string;
+}
+
+/** Wraps POST /functions/v1/start-thread — resolves/creates a thread with
+ * another user without sending a message, for "tap a found user, go
+ * straight into their chat" (see NewChatModal in chats.tsx). Idempotent:
+ * calling this again for the same pair just returns the existing thread. */
+export function useStartThread() {
+  return useMutation({
+    mutationFn: (recipientId: string) =>
+      callEdgeFunction<StartThreadResponse>('start-thread', { recipient_id: recipientId }),
+  });
+}
+
 interface MarkThreadReadResponse {
   ok: boolean;
 }

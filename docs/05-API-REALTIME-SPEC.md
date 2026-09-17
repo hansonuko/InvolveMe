@@ -9,7 +9,8 @@ All money-affecting endpoints are Supabase **Edge Functions** (Deno/TypeScript),
 ```jsonc
 // Request — either an existing thread_id, or a recipient_id to start one
 { "thread_id": "uuid", "body": "text (max 500 words, enforced server-side)" }
-// or, starting a new conversation (no documented "start thread" call otherwise):
+// or, starting a new conversation (see start-thread below for creating an
+// empty thread without sending a message at the same time):
 { "recipient_id": "uuid", "body": "text (max 500 words, enforced server-side)" }
 
 // Response 200
@@ -33,6 +34,20 @@ Error codes: `thread_not_found` (404), `not_a_participant` (403), `thread_blocke
 Response now includes `thread_id` — required so the client can continue the conversation. Once a thread exists, replies **must** pass its `thread_id`, not `recipient_id`: `fn_start_thread(payer, payee)` looks up `(participant_a, participant_b)` as an ordered pair, so the payee replying with `recipient_id` set to the payer would look up (and, finding none, create) a second, reversed-role thread rather than continuing the first — participant_a/payer is fixed for the life of a thread and is always whoever opened it.
 
 **Push notification side effect (added 2026-09-14):** after a successful send, the recipient gets a best-effort Expo push notification (`_shared/push.ts`'s `sendPushToUser`, fired via `EdgeRuntime.waitUntil` so it can never delay or fail this response) with the sender's `display_name` as title and a truncated message preview as body. Silently a no-op if the recipient has no row in `push_tokens` (no dedicated notification-preference flag exists — see that table's note in `docs/02-DATA-MODEL.md`).
+
+### `POST /functions/v1/start-thread`
+
+```jsonc
+// Request
+{ "recipient_id": "uuid" }
+// Response 200
+{ "thread_id": "uuid" }
+// Response 400
+{ "error": "invalid_request" }          // missing recipient_id
+{ "error": "cannot_thread_with_self" }
+```
+
+Added Phase 6 (docs/10-UX-REFINEMENT-BACKLOG.md Batch B) — resolves/creates a thread with another user without sending a message, for "tap a found user in the new-chat flow, go straight into their chat" instead of forcing a first message through `send-message`. A thin wrapper around `fn_start_thread` (the same function `send-message`'s own `recipient_id` path already calls internally) — idempotent, no financial logic. The caller is always participant_a/payer for a brand-new thread, same rule `send-message` documents above.
 
 ### `POST /functions/v1/buy-credit`
 

@@ -18,8 +18,7 @@ import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useFindUserByPhone, type FoundUser } from '@/lib/queries/findUserByPhone';
-import { useSendMessage } from '@/lib/queries/messages';
-import { type ThreadWithPartner, useThreads } from '@/lib/queries/threads';
+import { type ThreadWithPartner, useStartThread, useThreads } from '@/lib/queries/threads';
 import { useSession } from '@/lib/hooks/useSession';
 import { toE164NigerianPhone } from '@/lib/phone';
 import { useTheme } from '@/theme';
@@ -184,26 +183,25 @@ function ChatsSubHeader({
   );
 }
 
-/** New-chat flow: phone -> lookup -> first message -> navigates into the
- * real thread once send-message creates it. A plain Modal, not a
- * bottom-sheet library — no such dependency exists in this app yet and one
- * isn't worth adding for this ("stay lite" per CLAUDE.md). */
+/** New-chat flow: phone -> lookup -> tap the found user to go straight
+ * into their chat (start-thread resolves/creates it with no message
+ * required — see lib/queries/threads.ts's useStartThread). A plain Modal,
+ * not a bottom-sheet library — no such dependency exists in this app yet
+ * and one isn't worth adding for this ("stay lite" per CLAUDE.md). */
 function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { colors, spacing, radius } = useTheme();
   const router = useRouter();
   const findUser = useFindUserByPhone();
-  const sendMessage = useSendMessage();
+  const startThread = useStartThread();
 
   const [phone, setPhone] = useState('');
   const [found, setFound] = useState<FoundUser | null>(null);
-  const [body, setBody] = useState('');
 
   const reset = () => {
     setPhone('');
     setFound(null);
-    setBody('');
     findUser.reset();
-    sendMessage.reset();
+    startThread.reset();
   };
 
   const handleClose = () => {
@@ -217,17 +215,14 @@ function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => v
     });
   };
 
-  const handleSend = () => {
+  const handleOpenChat = () => {
     if (!found) return;
-    sendMessage.mutate(
-      { recipientId: found.id, body },
-      {
-        onSuccess: (data) => {
-          handleClose();
-          router.push(`/thread/${data.thread_id}`);
-        },
+    startThread.mutate(found.id, {
+      onSuccess: (data) => {
+        handleClose();
+        router.push(`/thread/${data.thread_id}`);
       },
-    );
+    });
   };
 
   return (
@@ -280,39 +275,34 @@ function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => v
             />
           ) : (
             <>
-              <Text variant="bodyMedium" color="success">
-                Found {found.display_name ?? 'this user'}
-              </Text>
-              <Text variant="caption" color="secondary">
-                First message (this is what starts the chat)
-              </Text>
-              <TextInput
-                value={body}
-                onChangeText={setBody}
-                placeholder="Say hello…"
-                placeholderTextColor={colors.textSecondary}
-                multiline
-                style={[
-                  styles.input,
-                  styles.multiline,
-                  {
-                    backgroundColor: colors.bgSurfaceAlt,
-                    color: colors.textPrimary,
-                    borderRadius: radius.card,
-                    borderColor: colors.borderSubtle,
-                  },
-                ]}
-              />
-              {sendMessage.isError ? (
+              {startThread.isError ? (
                 <Text variant="caption" color="danger">
-                  {sendMessage.error.message}
+                  {startThread.error.message}
                 </Text>
               ) : null}
-              <Button
-                label={sendMessage.isPending ? 'Sending…' : 'Send'}
-                onPress={handleSend}
-                disabled={sendMessage.isPending || body.trim().length === 0}
-              />
+              <Pressable
+                onPress={startThread.isPending ? undefined : handleOpenChat}
+                disabled={startThread.isPending}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: spacing.md,
+                    paddingVertical: spacing.sm,
+                    borderRadius: radius.card,
+                    backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
+                    opacity: startThread.isPending ? 0.6 : 1,
+                  },
+                ]}
+              >
+                <Avatar uri={found.avatar_url} displayName={found.display_name} size={52} />
+                <View style={{ flex: 1 }}>
+                  <Text variant="bodyMedium">{found.display_name ?? 'Unnamed'}</Text>
+                  <Text variant="caption" color="tertiary">
+                    {startThread.isPending ? 'Opening chat…' : 'Tap to start chatting'}
+                  </Text>
+                </View>
+              </Pressable>
             </>
           )}
         </View>
@@ -441,7 +431,6 @@ const styles = StyleSheet.create({
   rowEnd: { alignItems: 'flex-end' },
   unreadBadge: { minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   input: { borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16 },
-  multiline: { minHeight: 80, textAlignVertical: 'top' },
   subHeaderRow: { flexDirection: 'row', paddingVertical: 8 },
   subHeaderCol: { flex: 1, alignItems: 'center' },
   subHeaderIndicator: { height: 2, width: 32, borderRadius: 1 },
