@@ -98,7 +98,7 @@ Worked example: A sends a 30-word message (2 credits, escrowed). B replies with 
 
 ## 7. Status updates
 
-Spending credit on a status upload debits `topup_credit` directly (no escrow, no earning — nobody "responds" to a status the same way), per `status_upload_credits_text` / `status_upload_credits_media` in `pricing_config`. Status media follows the same compression pipeline as chat media (`docs/01-ARCHITECTURE.md` §5) to stay lite.
+Spending credit on a status upload debits `topup_credit` directly (no escrow, no earning — nobody "responds" to a status the same way), per `status_upload_credits_text` / `status_upload_credits_media` in `pricing_config`. Status media has its own client-side resize/compress pipeline (Batch F, session 18 — `docs/02-DATA-MODEL.md` §10), built and live; chat media has no pipeline of any kind yet, so "follows the same pipeline as chat media" (this line's older wording) was never accurate and is corrected here — the two are unrelated, independently-scoped pieces of work, photo status only, no video (`docs/01-ARCHITECTURE.md` §5).
 
 ## 8. Revenue summary (the fee lines, and only these)
 

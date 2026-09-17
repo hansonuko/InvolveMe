@@ -52,6 +52,13 @@
         {
           "faceIDPermission": "InvolveMe uses Face ID to keep your account locked when the app isn't in your hands."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "InvolveMe uses your photo library to post a photo status update.",
+          "cameraPermission": "InvolveMe uses your camera to post a photo status update."
+        }
       ]
     ],
     "experiments": {

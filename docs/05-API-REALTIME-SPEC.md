@@ -136,11 +136,23 @@ Requires KYC tier ≥ 1 and a `bank_accounts` row with `name_match_verified = tr
 
 Added Phase 6 (`20260916091500_fn_get_withdrawal_countdown.sql`) — lets the wallet tab render a real countdown ring for the caller's own `withdrawable_cash` auto-sweep, instead of inventing one. `effective_sweep_hours` is `withdrawal_auto_sweep_hours` (24, normal) or `withdrawal_auto_sweep_hours_untrusted` (72, per `20260915160000_settlement_aware_auto_sweep.sql`'s trust gate) depending on the caller's own `fn_is_withdrawal_trusted` result — never returned directly, since this app has no self-serve dispute/unfreeze path and a raw "you are untrusted" field would leak more than a ring needs. `force_sweep_below_minimum` is the one bit of that distinction actually needed client-side: whether a below-`withdrawal_min_kobo` balance will still force-sweep eventually (`true`, trusted) or is held indefinitely until it either clears the minimum or the account ages/clears into trusted (`false`, untrusted) — communicates the effect, not the diagnosis. Doesn't return `wallet.updated_at`, `withdrawal_min_kobo`, or `withdrawal_force_sweep_days` — all three are already directly client-readable (`wallets` row-level RLS; `pricing_config` is fully authenticated-readable).
 
+### `POST /functions/v1/create-status-upload-url`
+
+```jsonc
+// Request — no body
+{}
+
+// Response 200
+{ "path": "{user_id}/{uuid}.jpg", "token": "...", "signed_url": "https://.../storage/v1/object/upload/sign/status-media/..." }
+```
+
+Added Batch F (session 18, `20260917140000_status_media_pipeline.sql`) — mints a one-time signed upload slot in the private `status-media` bucket, scoped to the caller's own folder (`path` is server-derived from the verified JWT, never client-supplied). The client uploads directly to `signed_url` using `token` (supabase-js's `storage.uploadToSignedUrl`), then calls `post-status` with the same `path` as `media_path`. No financial logic here — this never touches `status_updates` or the ledger. See `docs/02-DATA-MODEL.md` §10 for the bucket/RLS design.
+
 ### `POST /functions/v1/post-status`
 
 ```jsonc
-// Request — at least one of media_url/caption required
-{ "media_url": "optional url", "caption": "optional text" }
+// Request — at least one of media_path/caption required
+{ "media_path": "optional status-media object path", "caption": "optional text", "text_style": "optional fixed-palette template key" }
 
 // Response 200
 { "status_id": "uuid", "credits_charged": 6, "payer_balance_after": 92 }
@@ -153,7 +165,7 @@ Added Phase 6 (`20260916091500_fn_get_withdrawal_countdown.sql`) — lets the wa
 { "error": "wallet_frozen" }
 ```
 
-Debits `status_upload_credits_media` if `media_url` is present, else `status_upload_credits_text`, from `topup_credit` — no escrow, no earning (see `docs/03-ECONOMY-LEDGER.md` §7). Inserts a `status_updates` row with `expires_at = now() + 24h`. All billing/validation happens inside `fn_post_status`, called by the `post-status` Edge Function (built — see `docs/00-SESSION-HANDOFF.md`); the client's request never carries a computed credit amount.
+Debits `status_upload_credits_media` if `media_path` is present, else `status_upload_credits_text`, from `topup_credit` — no escrow, no earning (see `docs/03-ECONOMY-LEDGER.md` §7). Inserts a `status_updates` row with `expires_at = now() + 24h`. All billing/validation happens inside `fn_post_status`, called by the `post-status` Edge Function (built — see `docs/00-SESSION-HANDOFF.md`); the client's request never carries a computed credit amount. `media_path` — renamed from `media_url` Batch F, session 18 — is a `status-media` object path already uploaded via `create-status-upload-url`, never a public URL. `text_style` is an opaque fixed-palette template key (`apps/mobile/lib/statusTextTemplates.ts`), not validated against a server-side enum since a bad value can only ever make a status render with a fallback background client-side.
 
 ### `POST /functions/v1/find-user-by-phone`
 

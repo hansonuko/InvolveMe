@@ -2,16 +2,16 @@
 
 ## 1. Stack decisions on record
 
-| Layer | Choice | Why |
-|---|---|---|
-| Mobile client | React Native + Expo (managed, prebuild when a native module demands it), TypeScript | Fastest path to iOS+Android from one codebase, OTA updates via EAS Update for non-native changes, mature payment/animation ecosystem. |
-| Realtime + DB + Auth + Storage | Supabase (managed Postgres) | Chosen over a fully custom Node backend to move faster; the money-moving logic that would normally justify a custom backend is instead pushed **into Postgres itself** (see §3) rather than trusted to the client or to ad-hoc triggers. |
-| Server-side business logic | Supabase Edge Functions (Deno/TypeScript) calling `SECURITY DEFINER` Postgres functions | Every credit/wallet/payment mutation is a database transaction, invoked only through an Edge Function that authenticates the caller — never directly from the client via the anon key. |
-| Payments (collections + payouts) | Flutterwave now, Paystack provisioned behind an interface | Per product decision; see `docs/07-COMPLIANCE-LEGAL.md` for why a licensed PSP — not InvolveMe — must be the one actually touching bank rails. |
-| Push notifications | Expo Notifications (FCM/APNs under the hood) | Native Expo integration, no extra SDK. |
-| Media storage | Supabase Storage, aggressively compressed | Keeps the app "lite" — see §5. |
-| Observability | Sentry (client + Edge Functions), Supabase's own log drains | Minimal footprint, one vendor for both sides. |
-| Scheduled jobs (auto-withdrawal sweep, escrow expiry, KYC re-checks) | `pg_cron` inside Supabase + a dedicated Edge Function per job | No separate worker fleet needed at this scale. |
+| Layer                                                                | Choice                                                                                  | Why                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mobile client                                                        | React Native + Expo (managed, prebuild when a native module demands it), TypeScript     | Fastest path to iOS+Android from one codebase, OTA updates via EAS Update for non-native changes, mature payment/animation ecosystem.                                                                                                    |
+| Realtime + DB + Auth + Storage                                       | Supabase (managed Postgres)                                                             | Chosen over a fully custom Node backend to move faster; the money-moving logic that would normally justify a custom backend is instead pushed **into Postgres itself** (see §3) rather than trusted to the client or to ad-hoc triggers. |
+| Server-side business logic                                           | Supabase Edge Functions (Deno/TypeScript) calling `SECURITY DEFINER` Postgres functions | Every credit/wallet/payment mutation is a database transaction, invoked only through an Edge Function that authenticates the caller — never directly from the client via the anon key.                                                   |
+| Payments (collections + payouts)                                     | Flutterwave now, Paystack provisioned behind an interface                               | Per product decision; see `docs/07-COMPLIANCE-LEGAL.md` for why a licensed PSP — not InvolveMe — must be the one actually touching bank rails.                                                                                           |
+| Push notifications                                                   | Expo Notifications (FCM/APNs under the hood)                                            | Native Expo integration, no extra SDK.                                                                                                                                                                                                   |
+| Media storage                                                        | Supabase Storage, aggressively compressed                                               | Keeps the app "lite" — see §5.                                                                                                                                                                                                           |
+| Observability                                                        | Sentry (client + Edge Functions), Supabase's own log drains                             | Minimal footprint, one vendor for both sides.                                                                                                                                                                                            |
+| Scheduled jobs (auto-withdrawal sweep, escrow expiry, KYC re-checks) | `pg_cron` inside Supabase + a dedicated Edge Function per job                           | No separate worker fleet needed at this scale.                                                                                                                                                                                           |
 
 ## 2. High-level system diagram
 
@@ -84,16 +84,16 @@ If usage outgrows Postgres-function-as-backend (heavy custom fraud ML, complex p
 
 Concrete budgets, not vibes:
 
-| Budget | Target |
-|---|---|
-| Cold start (mid-tier Android) | < 2.5s to first interactive chat list |
-| APK/IPA size | < 40 MB at v1 GA |
-| JS bundle (Hermes bytecode) | < 6 MB |
-| Chat image upload | Client-side resize to max 1600px longest edge, WebP, before upload |
-| Status media | Max 15s video, transcoded to H.264 720p, or single compressed image |
-| Avatar | 256×256 max, served via Supabase Storage image transform |
-| Dependencies | Every new package requires a one-line justification in the PR description; prefer Expo-provided modules over third-party |
-| Animation | Reanimated (runs on UI thread) over `Animated` API or heavy Lottie files; Lottie reserved for rare empty-state illustrations under 50KB |
+| Budget                        | Target                                                                                                                                                                              |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cold start (mid-tier Android) | < 2.5s to first interactive chat list                                                                                                                                               |
+| APK/IPA size                  | < 40 MB at v1 GA                                                                                                                                                                    |
+| JS bundle (Hermes bytecode)   | < 6 MB                                                                                                                                                                              |
+| Chat image upload             | Client-side resize to max 1600px longest edge, WebP, before upload                                                                                                                  |
+| Status media                  | Max 15s video, transcoded to H.264 720p, or single compressed image (video not yet built — Batch F, session 18, shipped photo + text only; see `docs/02-DATA-MODEL.md` §10 for why) |
+| Avatar                        | 256×256 max, served via Supabase Storage image transform                                                                                                                            |
+| Dependencies                  | Every new package requires a one-line justification in the PR description; prefer Expo-provided modules over third-party                                                            |
+| Animation                     | Reanimated (runs on UI thread) over `Animated` API or heavy Lottie files; Lottie reserved for rare empty-state illustrations under 50KB                                             |
 
 ## 6. Environments
 

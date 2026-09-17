@@ -176,15 +176,28 @@ async function testTextAndMediaCharges(admin) {
   const token = mintAccessToken(A);
   await fundTopupCredit(admin, A, textCredits + mediaCredits);
 
-  const textRes = await callPostStatus(token, { caption: 'Just a caption, no media' });
+  const textRes = await callPostStatus(token, {
+    caption: 'Just a caption, no media',
+    text_style: 'wine',
+  });
   log(
     `text-only status charges status_upload_credits_text (${textCredits})`,
     textRes.status === 200 && textRes.json?.credits_charged === textCredits,
     JSON.stringify(textRes.json),
   );
 
+  const textStyleRow = await admin.query(
+    'select text_style from public.status_updates where id = $1',
+    [textRes.json?.status_id],
+  );
+  log(
+    'text_style round-trips into the status_updates row',
+    textStyleRow.rows[0]?.text_style === 'wine',
+    JSON.stringify(textStyleRow.rows[0]),
+  );
+
   const mediaRes = await callPostStatus(token, {
-    media_url: 'https://cdn.example.com/status/1.jpg',
+    media_path: `${A}/1.jpg`,
     caption: 'with a photo',
   });
   log(
@@ -208,7 +221,7 @@ async function testTextAndMediaCharges(admin) {
   );
 
   const rows = await admin.query(
-    'select media_url, caption, credits_charged, expires_at, created_at from public.status_updates where user_id = $1 order by created_at',
+    'select media_path, caption, credits_charged, expires_at, created_at from public.status_updates where user_id = $1 order by created_at',
     [A],
   );
   log(
@@ -241,14 +254,14 @@ async function testErrorMapping(admin) {
 
   const empty = await callPostStatus(token, {});
   log(
-    'neither caption nor media_url -> 400 empty_status',
+    'neither caption nor media_path -> 400 empty_status',
     empty.status === 400 && empty.json?.error === 'empty_status',
     JSON.stringify(empty.json),
   );
 
-  const blank = await callPostStatus(token, { caption: '   ', media_url: '' });
+  const blank = await callPostStatus(token, { caption: '   ', media_path: '' });
   log(
-    'whitespace-only caption and empty media_url -> 400 empty_status',
+    'whitespace-only caption and empty media_path -> 400 empty_status',
     blank.status === 400 && blank.json?.error === 'empty_status',
     JSON.stringify(blank.json),
   );
@@ -258,6 +271,13 @@ async function testErrorMapping(admin) {
     'non-string caption -> 400 invalid_request',
     badType.status === 400 && badType.json?.error === 'invalid_request',
     JSON.stringify(badType.json),
+  );
+
+  const badTextStyle = await callPostStatus(token, { caption: 'hi', text_style: 42 });
+  log(
+    'non-string text_style -> 400 invalid_request',
+    badTextStyle.status === 400 && badTextStyle.json?.error === 'invalid_request',
+    JSON.stringify(badTextStyle.json),
   );
 
   // A has zero balance (default state) — insufficient_credit with the
