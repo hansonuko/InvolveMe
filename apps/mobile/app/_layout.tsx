@@ -10,6 +10,7 @@ import { useAppLock } from '@/lib/appLock';
 import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
 import { useSession } from '@/lib/hooks/useSession';
 import { useLastSeenHeartbeat } from '@/lib/lastSeen';
+import { useOnboardingStatusStore } from '@/lib/onboardingStore';
 import { resyncPushTokenIfPermitted } from '@/lib/push';
 import { ThemeProvider } from '@/theme';
 
@@ -22,27 +23,55 @@ const queryClient = new QueryClient();
  * session state. Manual segment check rather than a routing library feature,
  * kept simple on purpose for Phase 0 — revisit if expo-router's protected-route
  * API covers this more cleanly by the time Phase 2 chat screens land.
+ *
+ * `needsOnboarding` (docs/10-UX-REFINEMENT-BACKLOG.md Batch E, E2) is
+ * `null` while unchecked — same "don't redirect on unknown state" posture
+ * as `isLoading` — so a fresh session doesn't flash into /chats before
+ * onboarding status resolves. `null` is treated as "not onboarding" for
+ * the purposes of leaving /(auth)/onboarding, not entering it — see the
+ * two branches below.
  */
-function useAuthGate(isLoading: boolean, hasSession: boolean) {
+function useAuthGate(isLoading: boolean, hasSession: boolean, needsOnboarding: boolean | null) {
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
     if (isLoading) return;
 
-    const inAuthGroup = segments[0] === '(auth)';
+    // Cast away expo-router's fixed-length typed-route tuple — this is a
+    // plain runtime segments array, and its length varies by exactly the
+    // amount this check needs to inspect (index 1 only exists once inside
+    // a group).
+    const segmentList = segments as string[];
+    const inAuthGroup = segmentList[0] === '(auth)';
+    const inOnboarding = inAuthGroup && segmentList[1] === 'onboarding';
 
-    if (!hasSession && !inAuthGroup) {
-      router.replace('/(auth)');
-    } else if (hasSession && inAuthGroup) {
+    if (!hasSession) {
+      if (!inAuthGroup) router.replace('/(auth)');
+      return;
+    }
+
+    // hasSession is true below this point. Wait for the onboarding check
+    // to resolve before deciding between /onboarding and /chats — `null`
+    // is deliberately not treated as "false" here (unlike a plain `!`
+    // check), or a fresh session would flash straight into /chats for the
+    // one tick before the real answer comes back.
+    if (needsOnboarding === null) return;
+
+    if (needsOnboarding && !inOnboarding) {
+      router.replace('/(auth)/onboarding');
+    } else if (!needsOnboarding && inAuthGroup) {
       router.replace('/(tabs)/chats');
     }
-  }, [isLoading, hasSession, segments, router]);
+  }, [isLoading, hasSession, needsOnboarding, segments, router]);
 }
 
 export default function RootLayout() {
   const { session, isLoading } = useSession();
-  useAuthGate(isLoading, !!session);
+  const needsOnboarding = useOnboardingStatusStore((s) => s.needsOnboarding);
+  const checkOnboardingStatus = useOnboardingStatusStore((s) => s.checkOnboardingStatus);
+  const resetOnboardingStatus = useOnboardingStatusStore((s) => s.reset);
+  useAuthGate(isLoading, !!session, needsOnboarding);
   useLastSeenHeartbeat(session?.user.id);
   const { locked, retry } = useAppLock(!!session);
 
@@ -51,6 +80,18 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [isLoading]);
+
+  // Resolves whether this session's user still needs (auth)/onboarding
+  // (docs/10-UX-REFINEMENT-BACKLOG.md Batch E, E2) — reset on sign-out so a
+  // different user signing in on the same device gets a fresh check rather
+  // than reusing the previous user's cached answer.
+  useEffect(() => {
+    if (session?.user.id) {
+      void checkOnboardingStatus(session.user.id);
+    } else {
+      resetOnboardingStatus();
+    }
+  }, [session?.user.id, checkOnboardingStatus, resetOnboardingStatus]);
 
   // Silent re-sync only (never prompts) — see lib/push.ts's header
   // comment. The only place that ever requests notification permission
