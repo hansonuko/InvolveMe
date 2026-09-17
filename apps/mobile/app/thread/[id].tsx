@@ -369,6 +369,9 @@ export default function ThreadScreen() {
         options={{
           headerShown: true,
           title: headerInfo?.partnerName ?? 'Chat',
+          headerStyle: { backgroundColor: colors.bgCanvas },
+          headerTintColor: colors.textSecondary,
+          headerTitleStyle: { color: colors.textPrimary },
           headerRight: () =>
             headerInfo ? (
               <Pressable onPress={() => setMenuVisible(true)} hitSlop={12}>

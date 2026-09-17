@@ -135,13 +135,16 @@ export const radius = {
   pill: 999,
 } as const;
 
-// Added 2026-09-14, on an explicit "0.6 inch bars, bigger icons" ask.
-// `barHeight` targets ~0.6in using the 160dp-per-inch baseline both
+// Originally added 2026-09-14 at 0.6in (96dp at this file's 160dp/in
+// baseline), on an explicit "0.6 inch bars, bigger icons" ask. Reduced by
+// 0.2in (32dp) here on a later explicit "header/footer bars are too tall"
+// ask — 96 - 32 = 64dp, ~0.4in. Same 160dp-per-inch baseline both
 // platforms' "device-independent pixel" units are conventionally defined
 // against (RN's own unit, same as CSS px on the mdpi/1x reference) — the
 // OS scales this to each device's real pixel density, so it lands close
-// to 0.6in on real hardware without being pixel-exact on every device
-// (dp/pt were never meant to guarantee that, only to approximate it).
+// to the target on real hardware without being pixel-exact on every
+// device (dp/pt were never meant to guarantee that, only to approximate
+// it).
 //
 // These are the *reference* values, measured at `RESPONSIVE_BASE_WIDTH` —
 // `ThemeProvider` is what actually hands out the screen-size-adjusted
@@ -151,7 +154,7 @@ export const radius = {
 // object directly for `barHeight`/`tabIconSize`/`headerIconSize` — go
 // through `useTheme()` so the responsive scaling is never bypassed.
 export const layout = {
-  barHeight: 96,
+  barHeight: 64,
   tabIconSize: 28,
   headerIconSize: 26,
 } as const;

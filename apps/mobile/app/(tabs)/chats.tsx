@@ -11,7 +11,9 @@ import {
   View,
 } from 'react-native';
 
+import { ActionSheet } from '@/components/ui/ActionSheet';
 import { AppHeader } from '@/components/ui/AppHeader';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
@@ -21,6 +23,11 @@ import { type ThreadWithPartner, useThreads } from '@/lib/queries/threads';
 import { useSession } from '@/lib/hooks/useSession';
 import { toE164NigerianPhone } from '@/lib/phone';
 import { useTheme } from '@/theme';
+
+// Was 44dp; +0.3in (48dp at this app's 160dp/in baseline, see
+// theme/tokens.ts's layout comment) per an explicit "bigger chat-list
+// avatars" ask -> 92dp.
+const AVATAR_SIZE = 92;
 
 /** Same-day -> "3:00 PM", otherwise a short date — enough to match the
  * mockup's per-row timestamp without pulling in a date library for it. */
@@ -38,6 +45,9 @@ function formatThreadTimestamp(iso: string) {
 
 function ThreadRow({ thread, onPress }: { thread: ThreadWithPartner; onPress: () => void }) {
   const { colors, spacing, radius } = useTheme();
+  const router = useRouter();
+  const [sheetVisible, setSheetVisible] = useState(false);
+
   return (
     <Pressable
       onPress={onPress}
@@ -45,19 +55,34 @@ function ThreadRow({ thread, onPress }: { thread: ThreadWithPartner; onPress: ()
         styles.row,
         {
           paddingVertical: spacing.md,
-          paddingHorizontal: spacing.lg,
           borderRadius: radius.card,
           backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
         },
       ]}
     >
-      <View
-        style={[styles.avatar, { backgroundColor: colors.bgSurfaceAlt, borderRadius: radius.pill }]}
-      >
-        <Text variant="bodyMedium" color="secondary">
-          {(thread.partner.display_name ?? '?').slice(0, 1).toUpperCase()}
-        </Text>
-      </View>
+      <Pressable onPress={() => setSheetVisible(true)} hitSlop={4}>
+        <Avatar
+          uri={thread.partner.avatar_url}
+          displayName={thread.partner.display_name}
+          size={AVATAR_SIZE}
+        />
+      </Pressable>
+      <ActionSheet
+        visible={sheetVisible}
+        onClose={() => setSheetVisible(false)}
+        title={thread.partner.display_name ?? 'Unnamed'}
+        actions={[
+          { label: 'Message', onPress },
+          {
+            label: 'Profile',
+            onPress: () =>
+              router.push({
+                pathname: '/profile/[id]',
+                params: { id: thread.partner.id, threadId: thread.id },
+              }),
+          },
+        ]}
+      />
       <View style={{ flex: 1, marginLeft: spacing.md }}>
         <Text variant="bodyMedium">{thread.partner.display_name ?? 'Unnamed'}</Text>
         {thread.blocked_by ? (
@@ -326,11 +351,13 @@ export default function ChatsScreen() {
   const searchBar = (
     <View
       style={{
-        paddingHorizontal: spacing.lg,
         // ~0.1in of breathing room below the fixed header/sub-header
         // stack, per an explicit ask — spacing.lg (16dp) already lands
         // exactly there at the same 160dp/in convention layout.barHeight
-        // uses, so no new token was needed for this.
+        // uses, so no new token was needed for this. No horizontal padding
+        // here (or on ThreadRow below) — flush with Screen's own 16px
+        // inset, matching wallet.tsx's padding exactly, per an explicit
+        // "use the same margin as the wallet screen" ask.
         paddingTop: spacing.lg,
         paddingBottom: spacing.md,
       }}
@@ -413,7 +440,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   rowEnd: { alignItems: 'flex-end' },
   unreadBadge: { minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
-  avatar: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   input: { borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16 },
   multiline: { minHeight: 80, textAlignVertical: 'top' },
   subHeaderRow: { flexDirection: 'row', paddingVertical: 8 },

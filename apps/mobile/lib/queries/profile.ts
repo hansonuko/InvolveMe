@@ -30,6 +30,35 @@ export function useProfile(userId: string | undefined) {
   });
 }
 
+export interface PublicProfile {
+  id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  status_text: string | null;
+}
+
+/** Another user's read-only public profile fields — for the "Profile"
+ * action-sheet destination from a chat-list avatar tap. Deliberately a
+ * narrower column set than `useProfile` (no `phone`/`read_receipts_enabled`)
+ * even though `users_select_own_or_thread_partner` RLS would allow reading
+ * the full row — good practice to only select what a *viewer* of someone
+ * else's profile should see, not everything the row-level policy permits. */
+export function usePublicProfile(userId: string | undefined) {
+  return useQuery({
+    queryKey: ['publicProfile', userId],
+    enabled: !!userId,
+    queryFn: async (): Promise<PublicProfile> => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, display_name, avatar_url, status_text')
+        .eq('id', userId)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
 /** Updates the caller's own display_name/status_text — both already
  * client-updatable per the RLS grant in rls_policies.sql (`grant update
  * (display_name, avatar_url, status_text) on public.users to
