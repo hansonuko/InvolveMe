@@ -23,12 +23,15 @@ import { useTheme } from '@/theme';
  * needsOnboarding (users.display_name is null, the natural "first time"
  * signal E2's own spec names).
  *
- * Deliberately NOT item 1 of E2's spec ("country code picker for the phone
- * step itself, generalizing lib/phone.ts's Nigeria-only
- * toE164NigerianPhone") — that's a change to the login funnel every
- * existing and new user goes through, not just first-time onboarding, and
- * is scoped as its own separate follow-up in docs/00-SESSION-HANDOFF.md
- * rather than bundled in here.
+ * This screen's own country step is separate from — and shipped after —
+ * E2 spec item 1 (the phone-entry screen's own country-code picker,
+ * session 18, `app/(auth)/index.tsx`): that one drives *which dial code*
+ * the login OTP goes out on, this one drives *which currency* the
+ * account's wallets use. They intentionally use different data sources
+ * (a static dial-code list vs. the authenticated-only
+ * `country_currency_config` table this screen reads) and aren't unified
+ * into one picker, since a user's phone country and their wallet currency
+ * aren't guaranteed to be the same choice.
  */
 export default function OnboardingScreen() {
   const [step, setStep] = useState<'country' | 'profile' | 'welcome'>('country');
