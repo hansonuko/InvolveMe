@@ -53,9 +53,7 @@ Do this first: it's low-risk, touches shared tokens/components only (no schema, 
 
 ---
 
-## Batch B — Chat screen core UX
-
-**Part 1 (B1, B3, B4, and B2's avatar/phone-fallback half) — ✅ shipped (PR #54).** Online/last-seen (B2's genuinely-new half) is its own follow-up, tracked separately below.
+## Batch B — Chat screen core UX — ✅ fully shipped (PR #54 + PR #56)
 
 ### B1. No-chat-credit send flow — ✅ shipped (PR #54)
 
@@ -67,7 +65,7 @@ Do this first: it's low-risk, touches shared tokens/components only (no schema, 
 - **Pending-until-funded send:** recommend keeping this **entirely client-local** — never touch server-side money logic for this (per CLAUDE.md rule #1, no financial logic lives client-side, and a server-side "pending send queue" would be new money-adjacent surface for no real benefit). Concretely: on a 402, keep the composed text in a small local "pending outbox" (one item, this thread), show it as a distinct pending bubble in the message list, and auto-retry the real send once `useWallets`' existing Realtime subscription reports `topup_credit` ≥ the required amount — no polling, reuses infrastructure that's already live.
 - Client-side pre-send balance check (comparing typed word-count-derived cost against the already-fetched wallet balance) to catch the common case _before_ even calling the server — matches the "Low-balance warning" motion spec already documented in `docs/04-DESIGN-SYSTEM.md` but never implemented. Server remains authoritative regardless (this is a UX nicety, not the enforcement).
 
-### B2. Chat screen header: avatar + name/phone + online/last-seen — avatar/phone-fallback half ✅ shipped (PR #54); online/last-seen still open (part 2, below)
+### B2. Chat screen header: avatar + name/phone + online/last-seen — ✅ fully shipped (avatar/phone-fallback: PR #54; online/last-seen: PR #56)
 
 **Confirmed state:** Partially built. Title already shows the partner's `display_name` when available (falls back to literal "Chat" otherwise, not to their phone number). **No avatar renders in the header at all** (the shared `Avatar` component exists but isn't imported here). **No "saved contact name" concept exists** — there's no phonebook/contacts table; the name shown is simply the other user's own global `display_name`. **No online/last-seen mechanism exists anywhere, client or server** — `docs/05`'s presence-channel spec was explicitly never implemented (confirmed by the code's own comment).
 **Refined spec:**
