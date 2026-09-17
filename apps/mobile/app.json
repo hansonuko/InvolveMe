@@ -59,6 +59,16 @@
           "photosPermission": "InvolveMe uses your photo library to post a photo status update.",
           "cameraPermission": "InvolveMe uses your camera to post a photo status update."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "buildArchs": ["arm64-v8a"]
+          }
+        }
       ]
     ],
     "experiments": {
