@@ -1,11 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   FlatList,
+  Linking,
   Modal,
   Pressable,
   RefreshControl,
+  SectionList,
   StyleSheet,
   TextInput,
   View,
@@ -17,6 +19,9 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { type DeviceContact, useDeviceContacts } from '@/lib/contacts';
+import { shareInvite } from '@/lib/invite';
+import { type MatchedContactUser, useFindUsersByPhones } from '@/lib/queries/contacts';
 import { useFindUserByPhone, type FoundUser } from '@/lib/queries/findUserByPhone';
 import { type ThreadWithPartner, useStartThread, useThreads } from '@/lib/queries/threads';
 import { useSession } from '@/lib/hooks/useSession';
@@ -136,13 +141,12 @@ const SUB_TABS: { key: ChatsSubTab; label: string }[] = [
   { key: 'contacts', label: 'Contacts' },
 ];
 
-/** Chats/Groups/Contacts segmented row under the header. Only "Chats" is
- * a real feature — this app has no groups concept anywhere in the data
- * model or docs/02-DATA-MODEL.md, and "Contacts" would mean phone-book
- * matching, explicitly out of scope per docs/00-SESSION-HANDOFF.md ("no
- * contacts-sync/phone-book matching"). Rather than build either a fake
- * list or silently drop the two tabs, they're wired up as the same kind
- * of honest stub calls.tsx already uses for a deferred feature.
+/** Chats/Groups/Contacts segmented row under the header. "Groups" stays a
+ * stub — this app has no groups concept anywhere in the data model or
+ * docs/02-DATA-MODEL.md — rendered via the same honest "Not available
+ * yet." pattern calls.tsx already uses elsewhere for a deferred feature.
+ * "Contacts" is real as of docs/10-UX-REFINEMENT-BACKLOG.md Batch C1 (see
+ * ContactsList below) — it was the same kind of stub before that.
  *
  * **2026-09-14:** each tab is now an equal-width flex column spanning the
  * full screen width (rather than left-clustered with a fixed gap), per
@@ -311,6 +315,178 @@ function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => v
   );
 }
 
+interface ContactsSection {
+  title: 'On InvolveMe' | 'Invite';
+  data: { contact: DeviceContact; user: MatchedContactUser | null }[];
+}
+
+function ContactRow({
+  contact,
+  user,
+  onPress,
+}: {
+  contact: DeviceContact;
+  user: MatchedContactUser | null;
+  onPress: () => void;
+}) {
+  const { colors, spacing } = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.row,
+        {
+          paddingVertical: spacing.md,
+          backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
+        },
+      ]}
+    >
+      <Avatar
+        uri={user?.avatar_url ?? null}
+        displayName={contact.name ?? user?.display_name ?? null}
+        size={52}
+      />
+      <View style={{ flex: 1, marginLeft: spacing.md }}>
+        <Text variant="bodyMedium">{contact.name ?? user?.display_name ?? 'Unnamed'}</Text>
+        <Text variant="caption" color="tertiary">
+          {user ? 'On InvolveMe' : 'Invite to InvolveMe'}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/** Device-contacts sync (docs/10-UX-REFINEMENT-BACKLOG.md Batch C1):
+ * permission requested on first mount of this component (i.e. first time
+ * the Contacts sub-tab is actually rendered, never at app launch), then
+ * the whole phonebook is normalized and checked against InvolveMe's user
+ * base in one batch call. Split into two sections — matched contacts tap
+ * straight into a chat (reusing useStartThread, same as NewChatModal
+ * above); unmatched contacts get the same generic Share.share invite
+ * Settings already uses, per-row rather than a single bulk share (a share
+ * sheet is inherently a one-recipient-at-a-time interaction on both
+ * platforms). A `SectionList` (built into react-native, no new dependency)
+ * rather than two separate FlatLists, so long lists still virtualize. */
+function ContactsList() {
+  const router = useRouter();
+  const { colors, spacing } = useTheme();
+  const { status, error, sync } = useDeviceContacts();
+  const findUsers = useFindUsersByPhones();
+  const startThread = useStartThread();
+  const [contacts, setContacts] = useState<DeviceContact[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const deviceContacts = await sync();
+      if (cancelled || deviceContacts.length === 0) return;
+      setContacts(deviceContacts);
+
+      const allPhones = [
+        ...new Set(deviceContacts.flatMap((c) => c.phones.map(toE164NigerianPhone))),
+      ];
+      findUsers.mutate(allPhones);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Runs once, on this component's own mount (i.e. the first time the
+    // Contacts sub-tab is switched to) — not on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleOpenChat = (user: MatchedContactUser) => {
+    startThread.mutate(user.id, {
+      onSuccess: (data) => router.push(`/thread/${data.thread_id}`),
+    });
+  };
+
+  if (status === 'denied') {
+    return (
+      <View style={styles.empty}>
+        <Text
+          variant="body"
+          color="tertiary"
+          style={{ textAlign: 'center', marginBottom: spacing.md }}
+        >
+          Allow contacts access to see which of your contacts are already on InvolveMe.
+        </Text>
+        <Button label="Open settings" onPress={() => void Linking.openSettings()} />
+      </View>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <View style={styles.empty}>
+        <Text variant="body" color="danger">
+          {error}
+        </Text>
+      </View>
+    );
+  }
+
+  if (status === 'idle' || status === 'requesting' || status === 'loading' || findUsers.isPending) {
+    return (
+      <View style={styles.empty}>
+        <Text variant="body" color="tertiary">
+          {status === 'requesting' ? 'Requesting contacts access…' : 'Loading contacts…'}
+        </Text>
+      </View>
+    );
+  }
+
+  const matchByPhone = new Map((findUsers.data?.matches ?? []).map((m) => [m.phone, m] as const));
+
+  const onInvolveMe: { contact: DeviceContact; user: MatchedContactUser | null }[] = [];
+  const toInvite: { contact: DeviceContact; user: MatchedContactUser | null }[] = [];
+  for (const c of contacts) {
+    const match = c.phones
+      .map((p) => matchByPhone.get(toE164NigerianPhone(p).replace(/^\+/, '')))
+      .find((m): m is MatchedContactUser => !!m);
+    (match ? onInvolveMe : toInvite).push({ contact: c, user: match ?? null });
+  }
+
+  const sections: ContactsSection[] = [
+    ...(onInvolveMe.length ? [{ title: 'On InvolveMe' as const, data: onInvolveMe }] : []),
+    ...(toInvite.length ? [{ title: 'Invite' as const, data: toInvite }] : []),
+  ];
+
+  if (sections.length === 0) {
+    return (
+      <View style={styles.empty}>
+        <Text variant="body" color="tertiary">
+          No contacts with phone numbers found.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <SectionList
+      sections={sections}
+      keyExtractor={(item) => item.contact.id}
+      contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm }}
+      renderSectionHeader={({ section }) => (
+        <Text
+          variant="caption"
+          color="tertiary"
+          style={{ backgroundColor: colors.bgCanvas, paddingVertical: spacing.sm }}
+        >
+          {section.title}
+        </Text>
+      )}
+      renderItem={({ item }) => (
+        <ContactRow
+          contact={item.contact}
+          user={item.user}
+          onPress={() => (item.user ? handleOpenChat(item.user) : void shareInvite())}
+        />
+      )}
+    />
+  );
+}
+
 export default function ChatsScreen() {
   const router = useRouter();
   const { session } = useSession();
@@ -390,36 +566,43 @@ export default function ChatsScreen() {
       {/* Fixed, non-scrolling — only the search bar + list below it scroll. */}
       <ChatsSubHeader active={subTab} onChange={setSubTab} />
 
-      <FlatList
-        data={filteredThreads}
-        keyExtractor={(t) => t.id}
-        ListHeaderComponent={searchBar}
-        renderItem={({ item }) => (
-          <ThreadRow thread={item} onPress={() => router.push(`/thread/${item.id}`)} />
-        )}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            {subTab !== 'chats' ? (
-              <Text variant="body" color="tertiary">
-                Not available yet.
-              </Text>
-            ) : isLoading ? (
-              <Text variant="body" color="tertiary">
-                Loading…
-              </Text>
-            ) : (
-              <Text variant="body" color="tertiary">
-                {search
-                  ? 'No conversations match your search.'
-                  : 'No conversations yet — tap + to start one.'}
-              </Text>
-            )}
-          </View>
-        }
-        refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={() => void refetchThreads()} />
-        }
-      />
+      {subTab === 'contacts' ? (
+        // A different data shape (device contacts, not threads) and its
+        // own loading/permission states — a dedicated component rather
+        // than overloading the threads FlatList below, per Batch C1.
+        <ContactsList />
+      ) : (
+        <FlatList
+          data={filteredThreads}
+          keyExtractor={(t) => t.id}
+          ListHeaderComponent={searchBar}
+          renderItem={({ item }) => (
+            <ThreadRow thread={item} onPress={() => router.push(`/thread/${item.id}`)} />
+          )}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              {subTab === 'groups' ? (
+                <Text variant="body" color="tertiary">
+                  Not available yet.
+                </Text>
+              ) : isLoading ? (
+                <Text variant="body" color="tertiary">
+                  Loading…
+                </Text>
+              ) : (
+                <Text variant="body" color="tertiary">
+                  {search
+                    ? 'No conversations match your search.'
+                    : 'No conversations yet — tap + to start one.'}
+                </Text>
+              )}
+            </View>
+          }
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={() => void refetchThreads()} />
+          }
+        />
+      )}
 
       <NewChatModal visible={modalVisible} onClose={() => setModalVisible(false)} />
     </Screen>

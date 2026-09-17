@@ -172,6 +172,24 @@ Added this session — a real gap found wiring up the mobile "start a new chat" 
 
 Client input must be E.164 **with** a leading `+` (matching what's used for `signInWithOtp`) — the function strips it before comparing, since `users.phone` itself is stored without one (see `docs/02-DATA-MODEL.md`'s note on this — found by testing, not by reading the schema comment, which had said plain "E.164").
 
+### `POST /functions/v1/find-users-by-phones`
+
+```jsonc
+// Request
+{ "phones": ["+2348012345678", "+2347098765432"] }
+// Response 200
+{
+  "matches": [
+    { "phone": "2348012345678", "id": "uuid", "display_name": "string | null", "avatar_url": "string | null" }
+  ]
+}
+// Response 400
+{ "error": "invalid_request" } // missing/empty phones array, or a non-string entry
+{ "error": "too_many_phones" } // over 2000 entries in one call
+```
+
+Added docs/10-UX-REFINEMENT-BACKLOG.md Batch C1 — batch counterpart to `find-user-by-phone`, for the device-contacts sync flow (syncing a whole phonebook one number at a time would be N round trips). Same posture: no financial logic, plain service-role read, phone numbers normalized the same way (leading `+` stripped, deduplicated). Unlike the single-lookup version, an unmatched number or the caller's own number is never an error — both are just silently absent from `matches`, since a batch call's whole point is "tell me which of these exist," not "assert this one specific number exists." `matches[].phone` is echoed back (unlike the single-lookup response) so the client can correlate a match back to which of the caller's device contacts it came from. **Known gap, same posture as `find-user-by-phone`'s:** the `MAX_PHONES_PER_CALL` cap (2000) bounds a single request's cost but there's no actual rate-limiting (calls-per-user-per-day) — flagged, not solved, same as the single-lookup version's own documented gap.
+
 ### `POST /functions/v1/register-device-fingerprint`
 
 ```jsonc
