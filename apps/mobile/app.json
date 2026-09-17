@@ -46,6 +46,12 @@
         {
           "contactsPermission": "InvolveMe uses your contacts to show you which of your contacts are already on InvolveMe."
         }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "InvolveMe uses Face ID to keep your account locked when the app isn't in your hands."
+        }
       ]
     ],
     "experiments": {

@@ -4,7 +4,9 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { AppLockScreen } from '@/components/AppLockScreen';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { useAppLock } from '@/lib/appLock';
 import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
 import { useSession } from '@/lib/hooks/useSession';
 import { useLastSeenHeartbeat } from '@/lib/lastSeen';
@@ -42,6 +44,7 @@ export default function RootLayout() {
   const { session, isLoading } = useSession();
   useAuthGate(isLoading, !!session);
   useLastSeenHeartbeat(session?.user.id);
+  const { locked, retry } = useAppLock(!!session);
 
   useEffect(() => {
     if (!isLoading) {
@@ -84,14 +87,24 @@ export default function RootLayout() {
             leave a half-torn-down query cache behind. */}
         <ErrorBoundary>
           <QueryClientProvider client={queryClient}>
-            {/* Only the two route groups are registered here — thread/[id] and
-                settings/index set their own header options inline via
-                <Stack.Screen options={...} /> from within the screen itself,
-                which avoids relying on exact nested-route name matching. */}
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="(tabs)" />
-            </Stack>
+            {locked ? (
+              // Covers the whole app rather than gating per-screen — see
+              // lib/appLock.ts's header comment for why this is purely a
+              // client-side check on top of the already-valid session,
+              // never a new server-side auth step (docs/10-UX-REFINEMENT-BACKLOG.md
+              // Batch E1). Never reached while `!session`, since
+              // useAppLock reports `unlocked` with nothing to protect yet.
+              <AppLockScreen onRetry={retry} />
+            ) : (
+              /* Only the two route groups are registered here — thread/[id] and
+                 settings/index set their own header options inline via
+                 <Stack.Screen options={...} /> from within the screen itself,
+                 which avoids relying on exact nested-route name matching. */
+              <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="(auth)" />
+                <Stack.Screen name="(tabs)" />
+              </Stack>
+            )}
           </QueryClientProvider>
         </ErrorBoundary>
       </ThemeProvider>
