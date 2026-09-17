@@ -40,6 +40,12 @@
           "icon": "./assets/images/android-icon-monochrome.png",
           "color": "#5F1B31"
         }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "InvolveMe uses your contacts to show you which of your contacts are already on InvolveMe."
+        }
       ]
     ],
     "experiments": {

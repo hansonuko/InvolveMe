@@ -89,17 +89,21 @@ Do this first: it's low-risk, touches shared tokens/components only (no schema, 
 
 ---
 
-## Batch C — Contacts & discovery
+## Batch C — Contacts & discovery — ✅ C1 shipped (PR #62), needs a native build before it's live on-device
 
-### C1. Device contacts sync with InvolveMe-user detection + Invite
+### C1. Device contacts sync with InvolveMe-user detection + Invite — ✅ shipped (PR #62)
 
-**Confirmed state:** Not built at all. No `expo-contacts` dependency, no contacts permission code, no batch phone-lookup (the one lookup Edge Function that exists, `find-user-by-phone`, is single-number only). There's an existing "Contacts" sub-tab on the Chats screen today, but it's an explicit, documented non-feature stub (renders "Not available yet.") — this batch is what would actually fill it in. A generic "Invite a friend" share-sheet action already exists in Settings (fixed message, not contacts-aware) and can be reused/extended rather than rebuilt.
+**Confirmed state (pre-build):** Not built at all. No `expo-contacts` dependency, no contacts permission code, no batch phone-lookup (the one lookup Edge Function that exists, `find-user-by-phone`, is single-number only). There's an existing "Contacts" sub-tab on the Chats screen today, but it's an explicit, documented non-feature stub (renders "Not available yet.") — this batch is what would actually fill it in. A generic "Invite a friend" share-sheet action already exists in Settings (fixed message, not contacts-aware) and can be reused/extended rather than rebuilt.
 **Refined spec:**
 
 - New `expo-contacts` dependency + standard iOS/Android contacts-permission flow (ask on first use of this screen, not on app launch — platform best practice, avoids the "why does this app want my contacts" cold-open friction).
 - New batch Edge Function (`find-users-by-phones` or similar) taking an array of normalized phone numbers, returning which match existing users — avoids N single-lookup round trips and avoids ever sending raw contact data anywhere except this one auth'd call.
 - List device contacts split into two sections: "On InvolveMe" (tap → chat, reusing B3's chat-row-result pattern) and "Invite" (share-sheet deep link, per-contact — extends the existing `Share.share` call already in Settings rather than a new mechanism).
 - **This needs `expo-contacts`, a new native module — not OTA-eligible.** Same category as the still-pending device-fingerprinting build from an earlier session. Worth bundling into one `eas build` together with Batch E's biometric module (also native) rather than two separate native builds — flagging this coordination opportunity now so it's a deliberate choice, not an accident.
+
+**Shipped as designed above**, with one real API-surface correction found while building: this app's installed `expo-contacts` version (57.x, matched to Expo SDK 57) has **replaced** the classic `getContactsAsync`/`Fields`-array API the refined spec above implicitly assumed — that function now throws at runtime in this version, kept only as a deprecated `expo-contacts/legacy` shim. Built against the current class-based API instead: `Contact.getAllDetails([ContactField.FULL_NAME, ContactField.PHONES])` for the bulk read, `requestPermissionsAsync()` for the permission gate — found by reading the installed package's own `.d.ts` files rather than assuming an older tutorial's API surface was still current.
+
+**⚠️ Not usable on-device yet — needs an `eas build`, which was NOT triggered by this work per this project's own "never build without explicit ask" rule.** `expo-contacts` is a native module; the existing OTA update channel can ship the JS/config side (already merged) but can't add a native module to an already-installed binary. The Contacts tab will render but the `expo-contacts` native calls will fail (or the module won't exist) until a real `eas build` ships a binary containing it. Per the original spec's own note, consider bundling this into the same build as Batch E's biometric module (also native) rather than two separate native builds — hold both features' native work until there's a deliberate "build now" decision.
 
 ---
 

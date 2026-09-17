@@ -1,12 +1,13 @@
 import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Modal, Pressable, Share, Switch, TextInput, View } from 'react-native';
+import { Alert, Modal, Pressable, Switch, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
+import { shareInvite } from '@/lib/invite';
 import { useKycTier, useSubmitKyc } from '@/lib/queries/kyc';
 import { useSetPushEnabled, usePushEnabled } from '@/lib/queries/notifications';
 import {
@@ -580,10 +581,7 @@ export default function SettingsScreen() {
   };
 
   const handleInviteFriend = () => {
-    void Share.share({
-      message:
-        'Join me on InvolveMe — a chat app where your time has real value. Every message counts, literally.',
-    });
+    void shareInvite();
   };
 
   return (
