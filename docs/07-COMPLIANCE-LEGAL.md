@@ -44,6 +44,7 @@ Nigeria Data Protection Act (NDPA) applies: lawful basis for processing phone nu
 ## 6. Pre-launch legal checklist
 
 - [ ] **Get the peer-to-peer credit transfer feature (§1, "built anyway") in front of counsel specifically** — it shipped live before this checklist item was checked, not after
+- [ ] **Get multi-currency support in front of counsel before it ships** (docs/10-UX-REFINEMENT-BACKLOG.md Batch E2, decided end of session 16, not yet built) — this document is written entirely against Nigeria/CBN's regulatory posture and says nothing about the money-transmission licensing implications of collecting/paying out in a second country's currency. The decision to build full live multi-currency support (not the safer collect-and-display-only alternative) was made explicitly and is on record in docs/10 — same "informed decision, flagged, not an oversight" shape as the peer-to-peer transfer item above, not a second instance of the same mistake.
 - [ ] Confirm InvolveMe's licensing posture with Nigerian fintech counsel given the "wallet on top of a licensed PSP" architecture
 - [ ] KYC vendor contract with proper BVN/NIN data-sharing agreement in place
 - [x] ToS + Privacy Policy drafted covering §4/§5 above (2026-09-15) — **still needs counsel review**, drafting alone doesn't close this item
