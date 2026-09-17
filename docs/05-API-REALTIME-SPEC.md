@@ -220,6 +220,23 @@ Added 2026-09-14 alongside the read-cursor migration (`20260914080000_thread_rea
 
 Added 2026-09-14 (`20260914090000_settings_privacy_reports_push.sql`) — the actual write path for blocking. `threads.blocked_by` and its enforcement inside `fn_send_message` (rejects any send while non-null, with `thread_blocked`) both existed before this; nothing ever set it until this function. Idempotent both directions: blocking an already-blocked thread is a no-op success (doesn't overwrite who blocked it first); unblocking an already-unblocked thread is a no-op success. Only the user recorded in `blocked_by` can unblock — a blocked person can't unilaterally clear it themselves. Called from the thread screen's own overflow menu and from Settings > Privacy > Blocked contacts (unblock only).
 
+### `POST /functions/v1/set-thread-muted`
+
+```jsonc
+// Request
+{ "thread_id": "uuid", "muted": true }
+// Response 200
+{ "ok": true, "muted": true }
+// Response 400
+{ "error": "invalid_request" } // missing thread_id, or muted isn't a boolean
+// Response 403
+{ "error": "not_a_participant" }
+// Response 404
+{ "error": "thread_not_found" }
+```
+
+Added 2026-09-17 (`20260917110000_thread_mute.sql`), Batch G part 2. Sets the caller's own `threads.muted_by_a`/`muted_by_b` flag via `fn_set_thread_muted` — unlike blocking, either participant can mute/unmute independently with no "who set it first" precedence, so there's no `not_the_blocker`-style rejection. `send-message`'s push-notification block checks the recipient's own mute flag before calling `sendPushToUser` and silently skips the push (never the message send itself) when muted. Called from the thread screen's own overflow menu.
+
 ### `POST /functions/v1/mark-status-viewed`
 
 ```jsonc
