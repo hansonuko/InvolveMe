@@ -1,4 +1,13 @@
-import { createContext, useContext, useMemo, type PropsWithChildren } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type PropsWithChildren,
+} from 'react';
 import { useColorScheme, useWindowDimensions } from 'react-native';
 
 import {
@@ -12,6 +21,14 @@ import {
   typography,
   type ThemeMode,
 } from './tokens';
+
+/** The user's stored preference — `'system'` (default) tracks the OS
+ * setting; `'light'`/`'dark'` pins it regardless of OS. Distinct from
+ * `ThemeMode` (`'light' | 'dark'`, the actual palette key), since
+ * `'system'` isn't a palette — it's resolved to one at render time. */
+export type ThemePreference = 'system' | ThemeMode;
+
+const THEME_PREFERENCE_STORAGE_KEY = 'involveme.themePreference';
 
 /** Scales `layout`'s reference sizes (measured at `RESPONSIVE_BASE_WIDTH`)
  * to the device's actual screen width, clamped to a modest range — added
@@ -33,8 +50,15 @@ function responsiveLayout(windowWidth: number) {
   };
 }
 
-const themeValue = (mode: ThemeMode, windowWidth: number) => ({
+const themeValue = (
+  mode: ThemeMode,
+  preference: ThemePreference,
+  setPreference: (p: ThemePreference) => void,
+  windowWidth: number,
+) => ({
   mode,
+  preference,
+  setPreference,
   colors: palette[mode],
   spacing,
   radius,
@@ -44,19 +68,49 @@ const themeValue = (mode: ThemeMode, windowWidth: number) => ({
 
 export type Theme = ReturnType<typeof themeValue>;
 
-const ThemeContext = createContext<Theme>(themeValue('light', RESPONSIVE_BASE_WIDTH));
+const noopSetPreference = () => {
+  throw new Error('setPreference called outside ThemeProvider');
+};
+
+const ThemeContext = createContext<Theme>(
+  themeValue('light', 'system', noopSetPreference, RESPONSIVE_BASE_WIDTH),
+);
 
 /**
- * Defaults to the device color scheme. A manual override (Settings > Appearance)
- * can be layered on top later by passing an explicit `mode` prop — not needed
- * for Phase 0.
+ * Defaults to the device color scheme (`preference: 'system'`). Settings >
+ * Appearance can pin `'light'`/`'dark'` instead via `setPreference`,
+ * persisted to AsyncStorage (same storage this app already uses for the
+ * Supabase session — see lib/supabase.ts) so the choice survives an app
+ * restart before the persisted value has even loaded.
  */
 export function ThemeProvider({ children }: PropsWithChildren) {
   const scheme = useColorScheme();
   const { width } = useWindowDimensions();
+  const [preference, setPreferenceState] = useState<ThemePreference>('system');
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(THEME_PREFERENCE_STORAGE_KEY).then((stored) => {
+      if (!cancelled && (stored === 'light' || stored === 'dark' || stored === 'system')) {
+        setPreferenceState(stored);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setPreference = useCallback((next: ThemePreference) => {
+    setPreferenceState(next);
+    void AsyncStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, next);
+  }, []);
+
+  const mode: ThemeMode =
+    preference === 'system' ? (scheme === 'dark' ? 'dark' : 'light') : preference;
+
   const value = useMemo(
-    () => themeValue(scheme === 'dark' ? 'dark' : 'light', width),
-    [scheme, width],
+    () => themeValue(mode, preference, setPreference, width),
+    [mode, preference, setPreference, width],
   );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

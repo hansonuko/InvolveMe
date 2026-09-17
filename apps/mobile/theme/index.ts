@@ -1,4 +1,5 @@
 export { ThemeProvider, useTheme } from './ThemeProvider';
+export type { ThemePreference } from './ThemeProvider';
 export { layout, palette, radius, spacing, typography } from './tokens';
 export type { ColorToken, ThemeMode } from './tokens';
 

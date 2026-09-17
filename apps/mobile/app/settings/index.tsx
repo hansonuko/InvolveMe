@@ -20,7 +20,7 @@ import {
 import { useBlockedThreads, useSetThreadBlocked } from '@/lib/queries/threads';
 import { unregisterPushToken } from '@/lib/push';
 import { supabase } from '@/lib/supabase';
-import { useTheme } from '@/theme';
+import { useTheme, type ThemePreference } from '@/theme';
 
 function KycSection() {
   const { colors, spacing, radius } = useTheme();
@@ -152,6 +152,40 @@ function SettingsRow({
         {right ?? (onPress ? <Text color="tertiary">›</Text> : null)}
       </View>
     </Pressable>
+  );
+}
+
+const THEME_PREFERENCE_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
+/** System / Light / Dark — same radio-row pattern `ReportUserModal`'s
+ * reason picker already establishes in this file, reused here rather than
+ * inventing a second selector style for one more three-way choice. */
+function AppearanceSection() {
+  const { preference, setPreference, spacing } = useTheme();
+  return (
+    <View style={{ gap: spacing.xs }}>
+      {THEME_PREFERENCE_OPTIONS.map((option) => (
+        <Pressable
+          key={option.value}
+          onPress={() => setPreference(option.value)}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: spacing.sm,
+            paddingVertical: spacing.xs,
+          }}
+        >
+          <Text color={preference === option.value ? 'secondary' : 'tertiary'}>
+            {preference === option.value ? '●' : '○'}
+          </Text>
+          <Text variant="body">{option.label}</Text>
+        </Pressable>
+      ))}
+    </View>
   );
 }
 
@@ -487,7 +521,7 @@ function ReportUserModal({
  * account linking lives in the Wallet tab instead (a wallet action, not
  * account-level settings). */
 export default function SettingsScreen() {
-  const { spacing } = useTheme();
+  const { colors, spacing } = useTheme();
   const router = useRouter();
   const { session } = useSession();
   const userId = session?.user.id;
@@ -552,7 +586,15 @@ export default function SettingsScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ headerShown: true, title: 'Settings' }} />
+      <Stack.Screen
+        options={{
+          headerShown: true,
+          title: 'Settings',
+          headerStyle: { backgroundColor: colors.bgCanvas },
+          headerTintColor: colors.textSecondary,
+          headerTitleStyle: { color: colors.textPrimary },
+        }}
+      />
       <Screen>
         <View style={{ flex: 1 }}>
           <SectionHeader label="Profile" />
@@ -564,6 +606,9 @@ export default function SettingsScreen() {
           {profile?.status_text ? (
             <SettingsRow label={profile.status_text} onPress={() => setEditProfileVisible(true)} />
           ) : null}
+
+          <SectionHeader label="Appearance" />
+          <AppearanceSection />
 
           <SectionHeader label="Account" />
           <KycSection />
