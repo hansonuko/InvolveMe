@@ -50,15 +50,24 @@ export interface PublicProfile {
   id: string;
   display_name: string | null;
   avatar_url: string | null;
+  cover_url: string | null;
   status_text: string | null;
+  links: ProfileLink[];
+  /** E.164 digits, no leading `+` (docs/02-DATA-MODEL.md storage
+   * convention) — shown on the profile screen the same way
+   * thread/[id].tsx's header already surfaces a partner's phone
+   * (`ThreadHeaderInfo.partnerPhone`), so this isn't a new exposure, just
+   * the same field reused here. */
+  phone: string | null;
 }
 
-/** Another user's read-only public profile fields — for the "Profile"
- * action-sheet destination from a chat-list avatar tap. Deliberately a
- * narrower column set than `useProfile` (no `phone`/`read_receipts_enabled`)
- * even though `users_select_own_or_thread_partner` RLS would allow reading
- * the full row — good practice to only select what a *viewer* of someone
- * else's profile should see, not everything the row-level policy permits. */
+/** Another user's read-only public profile fields — for the profile screen
+ * reached from a chat-row avatar tap or the thread header. Wider than the
+ * original minimal version (adds cover_url/links/phone) to support full
+ * WhatsApp-style contact-info parity, but still deliberately excludes
+ * anything privacy-gated or account-internal (read_receipts_enabled,
+ * last_seen_*, two_step_*) — those stay on `useProfile`/`useThreadHeaderInfo`,
+ * which already apply the right gating for their own contexts. */
 export function usePublicProfile(userId: string | undefined) {
   return useQuery({
     queryKey: ['publicProfile', userId],
@@ -73,11 +82,12 @@ export function usePublicProfile(userId: string | undefined) {
       // `null` here lets the screen render both states correctly.
       const { data, error } = await supabase
         .from('users')
-        .select('id, display_name, avatar_url, status_text')
+        .select('id, display_name, avatar_url, cover_url, status_text, links, phone')
         .eq('id', userId)
         .maybeSingle();
       if (error) throw error;
-      return data;
+      if (!data) return null;
+      return { ...data, links: (data.links ?? []) as ProfileLink[] };
     },
   });
 }
