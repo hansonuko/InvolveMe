@@ -10,7 +10,12 @@ import { Text } from '@/components/ui/Text';
 import { StatusComposer } from '@/components/status/StatusComposer';
 import { StoryViewer } from '@/components/status/StoryViewer';
 import { useSession } from '@/lib/hooks/useSession';
-import { useDeleteStatus, useMyStatusUpdates, useStatusFeed } from '@/lib/queries/status';
+import {
+  type StatusFeedGroup,
+  useDeleteStatus,
+  useMyStatusUpdates,
+  useStatusFeed,
+} from '@/lib/queries/status';
 import { useTheme } from '@/theme';
 
 /** Horizontal "Recent updates" row of thread partners' active statuses —
@@ -21,7 +26,19 @@ import { useTheme } from '@/theme';
 function RecentUpdatesRow({ userId }: { userId: string | undefined }) {
   const { spacing } = useTheme();
   const { data: feed } = useStatusFeed(userId);
-  const [openPosterIndex, setOpenPosterIndex] = useState<number | null>(null);
+  // A frozen snapshot taken the moment the viewer opens, not the live
+  // query result — `feed` re-sorts the instant a poster's last unseen
+  // status gets marked viewed (see useStatusFeed's own comment on its
+  // two-tier sort), and StoryViewer tracks its position as a plain array
+  // index. Without freezing this, marking the currently-open poster's
+  // status as viewed would reorder the array out from under it mid-view,
+  // silently swapping in whoever else now sits at that index. The grid
+  // behind it still updates live; only an in-progress viewing session is
+  // shielded from it.
+  const [openViewer, setOpenViewer] = useState<{
+    feed: StatusFeedGroup[];
+    posterIndex: number;
+  } | null>(null);
 
   if (!feed?.length) return null;
 
@@ -37,7 +54,7 @@ function RecentUpdatesRow({ userId }: { userId: string | undefined }) {
         keyExtractor={(g) => g.poster.id}
         renderItem={({ item, index }) => (
           <Pressable
-            onPress={() => setOpenPosterIndex(index)}
+            onPress={() => setOpenViewer({ feed, posterIndex: index })}
             style={{ alignItems: 'center', width: 72, marginRight: spacing.sm }}
           >
             <Avatar
@@ -57,12 +74,12 @@ function RecentUpdatesRow({ userId }: { userId: string | undefined }) {
           </Pressable>
         )}
       />
-      {openPosterIndex !== null ? (
+      {openViewer ? (
         <StoryViewer
-          feed={feed}
-          initialPosterIndex={openPosterIndex}
+          feed={openViewer.feed}
+          initialPosterIndex={openViewer.posterIndex}
           currentUserId={userId}
-          onClose={() => setOpenPosterIndex(null)}
+          onClose={() => setOpenViewer(null)}
         />
       ) : null}
     </View>
