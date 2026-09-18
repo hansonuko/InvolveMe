@@ -36,13 +36,23 @@ export default function ProfileScreen() {
           <Text variant="body" color="secondary">
             Loading…
           </Text>
+        ) : !profile ? (
+          // A genuinely honest state, not a silently-blank card — the most
+          // common real cause is `users_select_own_or_thread_partner` RLS
+          // (docs/02-DATA-MODEL.md §2) returning nothing because no thread
+          // exists with this person yet, not a crash or a loading glitch.
+          <View style={{ alignItems: 'center', marginTop: spacing.xxl, gap: spacing.sm }}>
+            <Text variant="body" color="secondary" style={{ textAlign: 'center' }}>
+              This profile isn&apos;t available.
+            </Text>
+          </View>
         ) : (
           <View style={{ alignItems: 'center', marginTop: spacing.xxl, gap: spacing.sm }}>
-            <Avatar uri={profile?.avatar_url} displayName={profile?.display_name} size={120} />
+            <Avatar uri={profile.avatar_url} displayName={profile.display_name} size={120} />
             <Text variant="title" style={{ marginTop: spacing.md }}>
-              {profile?.display_name ?? 'Unnamed'}
+              {profile.display_name ?? 'Unnamed'}
             </Text>
-            {profile?.status_text ? (
+            {profile.status_text ? (
               <Text variant="body" color="secondary" style={{ textAlign: 'center' }}>
                 {profile.status_text}
               </Text>

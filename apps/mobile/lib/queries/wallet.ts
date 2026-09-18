@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import { callEdgeFunction } from '@/lib/edgeFunctions';
+import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 
 export interface Wallet {
@@ -38,23 +39,11 @@ export function useWallets(userId: string | undefined) {
     },
   });
 
-  useEffect(() => {
-    if (!userId) return;
-
-    const channel = supabase
-      .channel(`wallets:${userId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` },
-        () => queryClient.invalidateQueries({ queryKey }),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  useRealtimeTableChanges(
+    userId ? `wallets:${userId}` : undefined,
+    { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` },
+    () => queryClient.invalidateQueries({ queryKey }),
+  );
 
   return query;
 }
@@ -251,23 +240,11 @@ export function useLedgerEntries(userId: string | undefined, limit = 50) {
   // wallets.balance change, so piggybacking on useWallets' own realtime
   // channel (same table/filter) keeps this live without adding a second
   // table to the publication for one more subscriber.
-  useEffect(() => {
-    if (!userId) return;
-
-    const channel = supabase
-      .channel(`ledger-entries-via-wallets:${userId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` },
-        () => queryClient.invalidateQueries({ queryKey }),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  useRealtimeTableChanges(
+    userId ? `ledger-entries-via-wallets:${userId}` : undefined,
+    { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` },
+    () => queryClient.invalidateQueries({ queryKey }),
+  );
 
   return query;
 }
@@ -378,23 +355,11 @@ export function useTopupStatus(topupId: string | undefined) {
     refetchInterval: 5000,
   });
 
-  useEffect(() => {
-    if (!topupId) return;
-
-    const channel = supabase
-      .channel(`topups:${topupId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'topups', filter: `id=eq.${topupId}` },
-        () => queryClient.invalidateQueries({ queryKey }),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topupId]);
+  useRealtimeTableChanges(
+    topupId ? `topups:${topupId}` : undefined,
+    { event: 'UPDATE', schema: 'public', table: 'topups', filter: `id=eq.${topupId}` },
+    () => queryClient.invalidateQueries({ queryKey }),
+  );
 
   // The active fast-path poll — stops itself the moment the topup resolves
   // (no point spending Flutterwave API calls once there's nothing left to

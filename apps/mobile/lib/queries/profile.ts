@@ -48,12 +48,19 @@ export function usePublicProfile(userId: string | undefined) {
   return useQuery({
     queryKey: ['publicProfile', userId],
     enabled: !!userId,
-    queryFn: async (): Promise<PublicProfile> => {
+    queryFn: async (): Promise<PublicProfile | null> => {
+      // `.maybeSingle()`, not `.single()` — `users_select_own_or_thread_partner`
+      // RLS (docs/02-DATA-MODEL.md §2) means this legitimately returns zero
+      // rows for anyone the caller has no thread with yet, and `.single()`
+      // throws on zero rows rather than resolving `data: null`. That throw
+      // surfaced as a silently-blank profile screen (the query's own error
+      // state was never checked) instead of an honest "not available" —
+      // `null` here lets the screen render both states correctly.
       const { data, error } = await supabase
         .from('users')
         .select('id, display_name, avatar_url, status_text')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
       if (error) throw error;
       return data;
     },

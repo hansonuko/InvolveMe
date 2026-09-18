@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
 
 import { callEdgeFunction, EdgeFunctionError } from '@/lib/edgeFunctions';
+import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 
 export interface Message {
@@ -39,29 +39,17 @@ export function useThreadMessages(threadId: string | undefined) {
     },
   });
 
-  useEffect(() => {
-    if (!threadId) return;
-
-    const channel = supabase
-      .channel(`messages:${threadId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages', filter: `thread_id=eq.${threadId}` },
-        () => {
-          // Re-fetch rather than patch the cache from the payload directly —
-          // an UPDATE (e.g. escrow release flipping status) only carries the
-          // changed row, and refetching keeps this trivially correct at the
-          // cost of one extra read per event, acceptable at this app's scale.
-          queryClient.invalidateQueries({ queryKey });
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId]);
+  useRealtimeTableChanges(
+    threadId ? `messages:${threadId}` : undefined,
+    { event: '*', schema: 'public', table: 'messages', filter: `thread_id=eq.${threadId}` },
+    () => {
+      // Re-fetch rather than patch the cache from the payload directly —
+      // an UPDATE (e.g. escrow release flipping status) only carries the
+      // changed row, and refetching keeps this trivially correct at the
+      // cost of one extra read per event, acceptable at this app's scale.
+      queryClient.invalidateQueries({ queryKey });
+    },
+  );
 
   return query;
 }
