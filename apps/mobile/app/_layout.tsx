@@ -12,6 +12,7 @@ import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
 import { useSession } from '@/lib/hooks/useSession';
 import { useLastSeenHeartbeat } from '@/lib/lastSeen';
 import { useOnboardingStatusStore } from '@/lib/onboardingStore';
+import { checkForOtaUpdateOnLaunch } from '@/lib/otaUpdates';
 import { resyncPushTokenIfPermitted } from '@/lib/push';
 import { ThemeProvider } from '@/theme';
 
@@ -81,6 +82,17 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [isLoading]);
+
+  // Runs once per cold start, unconditional on session state — see
+  // lib/otaUpdates.ts's header comment for why this exists (this app's
+  // default expo-updates check policy silently defers a downloaded
+  // update to the *next* restart, not this one). Deliberately not
+  // awaited or blocking splash-hide above: if it has something newer, it
+  // reloads the whole JS context transparently once ready, same as
+  // ErrorBoundary's own reload path.
+  useEffect(() => {
+    void checkForOtaUpdateOnLaunch();
+  }, []);
 
   // Resolves whether this session's user still needs (auth)/onboarding
   // (docs/10-UX-REFINEMENT-BACKLOG.md Batch E, E2) — reset on sign-out so a
