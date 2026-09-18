@@ -111,6 +111,7 @@ jobs:
           FLW_WEBHOOK_SECRET_HASH: ${{ secrets.FLW_WEBHOOK_SECRET_HASH }}
           FLW_TRANSFER_SENDER_ID: ${{ secrets.FLW_TRANSFER_SENDER_ID }}
           CRON_INTERNAL_SECRET: ${{ secrets.CRON_INTERNAL_SECRET }}
+          TWO_STEP_PIN_PEPPER: ${{ secrets.TWO_STEP_PIN_PEPPER }}
           # Optional — moderation-functions.test.js fails open (send still
           # succeeds) when unset, same as this app does in production
           # before a real key is added. Add OPENAI_API_KEY as a repo

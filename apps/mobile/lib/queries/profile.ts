@@ -2,12 +2,25 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { supabase } from '@/lib/supabase';
 
+export interface ProfileLink {
+  label: string;
+  url: string;
+}
+
 export interface Profile {
   display_name: string | null;
   status_text: string | null;
   phone: string | null;
   read_receipts_enabled: boolean;
   last_seen_enabled: boolean;
+  avatar_url: string | null;
+  cover_url: string | null;
+  links: ProfileLink[];
+  /** Whether two-step verification is currently on — never the PIN hash
+   * itself, which this app's own column grant (20260918110000_profile_
+   * media_and_two_step.sql) doesn't even let the client update, let alone
+   * read back meaningfully. */
+  two_step_enabled: boolean;
 }
 
 /** The current user's own editable profile fields, plus phone (read-only
@@ -22,11 +35,13 @@ export function useProfile(userId: string | undefined) {
     queryFn: async (): Promise<Profile> => {
       const { data, error } = await supabase
         .from('users')
-        .select('display_name, status_text, phone, read_receipts_enabled, last_seen_enabled')
+        .select(
+          'display_name, status_text, phone, read_receipts_enabled, last_seen_enabled, avatar_url, cover_url, links, two_step_enabled',
+        )
         .eq('id', userId)
         .single();
       if (error) throw error;
-      return data;
+      return { ...data, links: (data.links ?? []) as ProfileLink[] };
     },
   });
 }
@@ -67,20 +82,32 @@ export function usePublicProfile(userId: string | undefined) {
   });
 }
 
-/** Updates the caller's own display_name/status_text — both already
- * client-updatable per the RLS grant in rls_policies.sql (`grant update
- * (display_name, avatar_url, status_text) on public.users to
- * authenticated`), no new backend needed. Avatar upload isn't included —
- * deferred, see docs/00-SESSION-HANDOFF.md (needs a Storage bucket this
- * app doesn't have yet for any media type). */
+/** Updates the caller's own display_name/status_text/avatar_url/cover_url/
+ * links — all client-updatable per the RLS grant in
+ * 20260912072749_rls_policies.sql + 20260918110000_profile_media_and_two_
+ * step.sql (which widened it to add cover_url/links). Avatar/cover here
+ * take an already-uploaded public URL (from create-profile-upload-url +
+ * uploadProfileMedia, see lib/queries/profileMedia.ts) — this mutation
+ * itself does no uploading, just the same plain field write every other
+ * profile field already goes through. */
 export function useUpdateProfile() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (params: { userId: string; displayName?: string; statusText?: string }) => {
-      const update: Record<string, string> = {};
+    mutationFn: async (params: {
+      userId: string;
+      displayName?: string;
+      statusText?: string;
+      avatarUrl?: string;
+      coverUrl?: string;
+      links?: ProfileLink[];
+    }) => {
+      const update: Record<string, unknown> = {};
       if (params.displayName !== undefined) update.display_name = params.displayName;
       if (params.statusText !== undefined) update.status_text = params.statusText;
+      if (params.avatarUrl !== undefined) update.avatar_url = params.avatarUrl;
+      if (params.coverUrl !== undefined) update.cover_url = params.coverUrl;
+      if (params.links !== undefined) update.links = params.links;
 
       const { error } = await supabase.from('users').update(update).eq('id', params.userId);
       if (error) throw error;
