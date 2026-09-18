@@ -17,6 +17,7 @@ import { ActionSheet } from '@/components/ui/ActionSheet';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { type DeviceContact, useDeviceContacts } from '@/lib/contacts';
@@ -28,10 +29,14 @@ import { useSession } from '@/lib/hooks/useSession';
 import { toE164NigerianPhone } from '@/lib/phone';
 import { useTheme } from '@/theme';
 
-// Was 44dp; +0.3in (48dp at this app's 160dp/in baseline, see
-// theme/tokens.ts's layout comment) per an explicit "bigger chat-list
-// avatars" ask -> 92dp.
-const AVATAR_SIZE = 92;
+// Was pushed to 92dp on an earlier "bigger chat-list avatars" ask, which
+// overshot into looking oversized/unbalanced against the row's text —
+// pulled back to 52dp on 2026-09-18, matching the size this app's own
+// other list-row avatars already use (NewChatModal's found-user row,
+// ContactRow below) rather than inventing a fourth bespoke value, and in
+// line with the ~52-56dp row-avatar size WhatsApp and similar chat apps
+// use.
+const AVATAR_SIZE = 52;
 
 /** Same-day -> "3:00 PM", otherwise a short date — enough to match the
  * mockup's per-row timestamp without pulling in a date library for it. */
@@ -232,84 +237,86 @@ function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => v
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <Screen>
-        <View
-          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-        >
-          <Text variant="title">New chat</Text>
-          <Pressable onPress={handleClose} hitSlop={12}>
-            <Text variant="body" color="secondary">
-              Close
+        <KeyboardAvoidingScreen isModal>
+          <View
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <Text variant="title">New chat</Text>
+            <Pressable onPress={handleClose} hitSlop={12}>
+              <Text variant="body" color="secondary">
+                Close
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
+            <Text variant="caption" color="secondary">
+              Their phone number
             </Text>
-          </Pressable>
-        </View>
-
-        <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
-          <Text variant="caption" color="secondary">
-            Their phone number
-          </Text>
-          <TextInput
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="0801 234 5678"
-            placeholderTextColor={colors.textSecondary}
-            keyboardType="phone-pad"
-            editable={!found}
-            style={[
-              styles.input,
-              {
-                backgroundColor: colors.bgSurfaceAlt,
-                color: colors.textPrimary,
-                borderRadius: radius.card,
-                borderColor: colors.borderSubtle,
-              },
-            ]}
-          />
-
-          {findUser.isError ? (
-            <Text variant="caption" color="danger">
-              {findUser.error.message}
-            </Text>
-          ) : null}
-
-          {!found ? (
-            <Button
-              label={findUser.isPending ? 'Looking up…' : 'Find'}
-              onPress={handleLookup}
-              disabled={findUser.isPending || phone.length < 8}
+            <TextInput
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="0801 234 5678"
+              placeholderTextColor={colors.textSecondary}
+              keyboardType="phone-pad"
+              editable={!found}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.bgSurfaceAlt,
+                  color: colors.textPrimary,
+                  borderRadius: radius.card,
+                  borderColor: colors.borderSubtle,
+                },
+              ]}
             />
-          ) : (
-            <>
-              {startThread.isError ? (
-                <Text variant="caption" color="danger">
-                  {startThread.error.message}
-                </Text>
-              ) : null}
-              <Pressable
-                onPress={startThread.isPending ? undefined : handleOpenChat}
-                disabled={startThread.isPending}
-                style={({ pressed }) => [
-                  {
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: spacing.md,
-                    paddingVertical: spacing.sm,
-                    borderRadius: radius.card,
-                    backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
-                    opacity: startThread.isPending ? 0.6 : 1,
-                  },
-                ]}
-              >
-                <Avatar uri={found.avatar_url} displayName={found.display_name} size={52} />
-                <View style={{ flex: 1 }}>
-                  <Text variant="bodyMedium">{found.display_name ?? 'Unnamed'}</Text>
-                  <Text variant="caption" color="tertiary">
-                    {startThread.isPending ? 'Opening chat…' : 'Tap to start chatting'}
+
+            {findUser.isError ? (
+              <Text variant="caption" color="danger">
+                {findUser.error.message}
+              </Text>
+            ) : null}
+
+            {!found ? (
+              <Button
+                label={findUser.isPending ? 'Looking up…' : 'Find'}
+                onPress={handleLookup}
+                disabled={findUser.isPending || phone.length < 8}
+              />
+            ) : (
+              <>
+                {startThread.isError ? (
+                  <Text variant="caption" color="danger">
+                    {startThread.error.message}
                   </Text>
-                </View>
-              </Pressable>
-            </>
-          )}
-        </View>
+                ) : null}
+                <Pressable
+                  onPress={startThread.isPending ? undefined : handleOpenChat}
+                  disabled={startThread.isPending}
+                  style={({ pressed }) => [
+                    {
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: spacing.md,
+                      paddingVertical: spacing.sm,
+                      borderRadius: radius.card,
+                      backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
+                      opacity: startThread.isPending ? 0.6 : 1,
+                    },
+                  ]}
+                >
+                  <Avatar uri={found.avatar_url} displayName={found.display_name} size={52} />
+                  <View style={{ flex: 1 }}>
+                    <Text variant="bodyMedium">{found.display_name ?? 'Unnamed'}</Text>
+                    <Text variant="caption" color="tertiary">
+                      {startThread.isPending ? 'Opening chat…' : 'Tap to start chatting'}
+                    </Text>
+                  </View>
+                </Pressable>
+              </>
+            )}
+          </View>
+        </KeyboardAvoidingScreen>
       </Screen>
     </Modal>
   );

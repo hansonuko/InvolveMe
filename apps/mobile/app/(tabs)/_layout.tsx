@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import type { ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSession } from '@/lib/hooks/useSession';
 import { useTotalUnreadCount } from '@/lib/queries/threads';
@@ -75,6 +76,7 @@ function TabIcon({
 export default function TabsLayout() {
   const { colors, typography, layout } = useTheme();
   const { session } = useSession();
+  const insets = useSafeAreaInsets();
   // Real count from thread_unread_counts (migration
   // 20260914080000_thread_read_cursor.sql) — undefined/0 renders no
   // badge at all, never a fabricated number.
@@ -87,8 +89,18 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: colors.bgCanvas,
           borderTopColor: colors.borderSubtle,
-          height: layout.barHeight,
+          // An explicit `height` (rather than letting React Navigation size
+          // the bar itself) opts this bar out of the library's own
+          // automatic safe-area handling, which is why the icon/label used
+          // to sit flush against the bottom edge/home indicator — fixed by
+          // adding the same 12dp the top already has as bottom padding
+          // (equal top/bottom margin around the icon+label content, per the
+          // 2026-09-18 punch-list ask), plus the device's own bottom safe
+          // area beneath that, and growing the bar's height by exactly that
+          // added padding so the content area itself doesn't shrink.
+          height: layout.barHeight + 12 + insets.bottom,
           paddingTop: 12,
+          paddingBottom: 12 + insets.bottom,
         },
         tabBarActiveTintColor: colors.textSecondary,
         tabBarInactiveTintColor: colors.textTertiary,

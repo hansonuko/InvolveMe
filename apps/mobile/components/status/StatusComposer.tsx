@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Image, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
+import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Text } from '@/components/ui/Text';
 import { withAppLockSuppressed } from '@/lib/appLock';
 import { useCreateStatusUploadUrl, uploadStatusMedia, usePostStatus } from '@/lib/queries/status';
@@ -119,7 +120,8 @@ export function StatusComposer({ visible, onClose }: { visible: boolean; onClose
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
-      <View
+      <KeyboardAvoidingScreen
+        isModal
         style={[styles.flex, { backgroundColor: step === 'text' ? template.background : '#000' }]}
       >
         <View style={[styles.closeRow, { paddingHorizontal: spacing.lg }]}>
@@ -240,7 +242,7 @@ export function StatusComposer({ visible, onClose }: { visible: boolean; onClose
             />
           </View>
         ) : null}
-      </View>
+      </KeyboardAvoidingScreen>
     </Modal>
   );
 }
