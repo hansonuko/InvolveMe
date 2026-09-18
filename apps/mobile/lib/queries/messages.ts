@@ -54,6 +54,65 @@ export function useThreadMessages(threadId: string | undefined) {
   return query;
 }
 
+export interface SharedLink {
+  url: string;
+  messageId: string;
+  createdAt: string;
+}
+
+const URL_PATTERN = /https?:\/\/[^\s]+/gi;
+
+/** Extracts URLs out of a batch of message bodies, most-recent-first,
+ * de-duplicated by URL (keeping the most recent occurrence). Not a
+ * TanStack Query hook's own field — this is pure text processing over data
+ * `useThreadSharedLinks` already fetched, split out only so it's testable
+ * without a Supabase round-trip. */
+function extractSharedLinks(
+  rows: { id: string; body: string; created_at: string }[],
+): SharedLink[] {
+  const seen = new Set<string>();
+  const links: SharedLink[] = [];
+  for (const row of rows) {
+    const matches = row.body.match(URL_PATTERN);
+    if (!matches) continue;
+    for (const raw of matches) {
+      // Trim common trailing punctuation a sentence would leave attached
+      // ("check out https://example.com." or "(https://example.com)").
+      const url = raw.replace(/[).,!?;:'"]+$/, '');
+      if (seen.has(url)) continue;
+      seen.add(url);
+      links.push({ url, messageId: row.id, createdAt: row.created_at });
+    }
+  }
+  return links;
+}
+
+/** "Shared links" for a thread's contact-info screen — the honest
+ * WhatsApp-parity equivalent of its shared-media grid. This app's chat
+ * messages are text-only with no photo/video attachment pipeline at all
+ * (docs/03-ECONOMY-LEDGER.md: "chat media has no pipeline of any kind
+ * yet"), so a faked media grid would have nothing real behind it; links
+ * mentioned in message text are real, already-stored data this can surface
+ * without inventing anything. A one-shot fetch, not kept live via
+ * Realtime — this is a secondary contact-info panel, not the active chat
+ * view, so it doesn't need `useThreadMessages`' subscription cost. */
+export function useThreadSharedLinks(threadId: string | undefined) {
+  return useQuery({
+    queryKey: ['threadSharedLinks', threadId],
+    enabled: !!threadId,
+    queryFn: async (): Promise<SharedLink[]> => {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('id, body, created_at')
+        .eq('thread_id', threadId)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return extractSharedLinks(data ?? []);
+    },
+  });
+}
+
 interface SendMessageRequest {
   threadId?: string;
   recipientId?: string;

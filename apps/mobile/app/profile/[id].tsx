@@ -1,24 +1,214 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  Alert,
+  Image,
+  Linking,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
-import { usePublicProfile } from '@/lib/queries/profile';
+import { useSession } from '@/lib/hooks/useSession';
+import { useThreadSharedLinks } from '@/lib/queries/messages';
+import { usePublicProfile, useReportUser } from '@/lib/queries/profile';
+import { useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
+import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/theme';
 
-/** Minimal read-only profile view — reached from a chat-row avatar's
- * "Profile" action (see chats.tsx's ThreadRow). `threadId` is an optional
- * param: entry points that already know a thread id (like the chat list,
- * where a thread already exists with this person) pass it through so
- * "Message" can jump straight there; entry points that don't have one yet
- * just don't show that button, rather than guessing at one. */
+const COVER_HEIGHT = 140;
+const AVATAR_SIZE = 96;
+
+const REPORT_REASONS = [
+  'Spam or scam',
+  'Harassment or abuse',
+  'Inappropriate content',
+  'Something else',
+];
+
+interface ThreadRelationInfo {
+  blockedByMe: boolean;
+  mutedByMe: boolean;
+}
+
+/** The caller's own block/mute state on this thread — a one-shot fetch,
+ * not a TanStack Query, mirroring thread/[id].tsx's own useThreadHeaderInfo
+ * (same "refetch wholesale after a mutation, via a bumped key" shape,
+ * rather than keeping this live). Only fetched when a threadId is actually
+ * known — an entry point with no thread yet has nothing to block/mute. */
+function useThreadRelationInfo(
+  threadId: string | undefined,
+  currentUserId: string | undefined,
+  refetchKey: number,
+) {
+  const [info, setInfo] = useState<ThreadRelationInfo | null>(null);
+
+  useEffect(() => {
+    if (!threadId || !currentUserId) return;
+    let cancelled = false;
+
+    (async () => {
+      const { data: thread } = await supabase
+        .from('threads')
+        .select('participant_a, blocked_by, muted_by_a, muted_by_b')
+        .eq('id', threadId)
+        .maybeSingle();
+      if (!thread || cancelled) return;
+
+      const isPayer = thread.participant_a === currentUserId;
+      setInfo({
+        blockedByMe: thread.blocked_by === currentUserId,
+        mutedByMe: isPayer ? thread.muted_by_a : thread.muted_by_b,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, currentUserId, refetchKey]);
+
+  return info;
+}
+
+function SectionLabel({ children }: { children: string }) {
+  const { spacing } = useTheme();
+  return (
+    <Text
+      variant="caption"
+      color="tertiary"
+      style={{ paddingHorizontal: spacing.lg, marginBottom: spacing.xs }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function ReportModal({
+  visible,
+  onClose,
+  onSubmit,
+  submitting,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+  submitting: boolean;
+}) {
+  const { colors, spacing, radius } = useTheme();
+  const [reason, setReason] = useState<string | null>(null);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <Pressable
+          style={[
+            styles.reportCard,
+            { backgroundColor: colors.bgSurface, borderRadius: radius.card },
+          ]}
+        >
+          <Text variant="bodyMedium" style={{ padding: spacing.lg, paddingBottom: spacing.sm }}>
+            Report this contact
+          </Text>
+          {REPORT_REASONS.map((r) => (
+            <Pressable
+              key={r}
+              style={{
+                paddingVertical: spacing.md,
+                paddingHorizontal: spacing.lg,
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+              onPress={() => setReason(r)}
+            >
+              <Text variant="body">{r}</Text>
+              {reason === r ? (
+                <Ionicons name="checkmark-circle" size={20} color={colors.brandPrimary} />
+              ) : null}
+            </Pressable>
+          ))}
+          <View style={{ padding: spacing.lg, gap: spacing.sm }}>
+            <Button
+              label={submitting ? 'Reporting…' : 'Submit report'}
+              onPress={() => reason && onSubmit(reason)}
+              disabled={!reason || submitting}
+            />
+            <Button label="Cancel" variant="secondary" onPress={onClose} disabled={submitting} />
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** Another user's profile — reached from a chat-row avatar's "Profile"
+ * action or the open-thread header (see chats.tsx's ThreadRow and
+ * thread/[id].tsx's headerTitle). `threadId` is an optional param: entry
+ * points that already know a thread id pass it through so "Message" can
+ * jump straight there and the contact-info actions (mute/block/report,
+ * shared links) can render; entry points that don't have one yet just
+ * don't show those, rather than guessing at one. Full WhatsApp-parity
+ * contact-info layout — punch-list item 3B. */
 export default function ProfileScreen() {
-  const { colors, spacing } = useTheme();
+  const { colors, spacing, radius } = useTheme();
   const router = useRouter();
+  const { session } = useSession();
+  const currentUserId = session?.user.id;
   const { id, threadId } = useLocalSearchParams<{ id: string; threadId?: string }>();
   const { data: profile, isLoading } = usePublicProfile(id);
+  const { data: sharedLinks } = useThreadSharedLinks(threadId);
+
+  const [relationRefetchKey, setRelationRefetchKey] = useState(0);
+  const relation = useThreadRelationInfo(threadId, currentUserId, relationRefetchKey);
+  const setBlocked = useSetThreadBlocked();
+  const setMuted = useSetThreadMuted();
+  const reportUser = useReportUser();
+  const [reportOpen, setReportOpen] = useState(false);
+
+  const handleToggleMute = () => {
+    if (!threadId || !relation) return;
+    setMuted.mutate(
+      { threadId, muted: !relation.mutedByMe },
+      { onSuccess: () => setRelationRefetchKey((k) => k + 1) },
+    );
+  };
+
+  const handleToggleBlock = () => {
+    if (!threadId || !relation) return;
+    const action = relation.blockedByMe ? 'Unblock' : 'Block';
+    Alert.alert(`${action} this contact?`, undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: action,
+        style: relation.blockedByMe ? 'default' : 'destructive',
+        onPress: () =>
+          setBlocked.mutate(
+            { threadId, blocked: !relation.blockedByMe },
+            { onSuccess: () => setRelationRefetchKey((k) => k + 1) },
+          ),
+      },
+    ]);
+  };
+
+  const handleSubmitReport = (reason: string) => {
+    if (!currentUserId || !profile) return;
+    reportUser.mutate(
+      { reporterId: currentUserId, reportedUserId: profile.id, threadId, reason },
+      {
+        onSuccess: () => {
+          setReportOpen(false);
+          Alert.alert('Reported', 'Thanks — our team will review this.');
+        },
+      },
+    );
+  };
 
   return (
     <>
@@ -31,43 +221,237 @@ export default function ProfileScreen() {
           headerTitleStyle: { color: colors.textPrimary },
         }}
       />
-      <Screen>
+      <Screen style={{ paddingHorizontal: 0 }}>
         {isLoading ? (
-          <Text variant="body" color="secondary">
+          <Text variant="body" color="secondary" style={{ paddingHorizontal: spacing.lg }}>
             Loading…
           </Text>
         ) : !profile ? (
-          // A genuinely honest state, not a silently-blank card — the most
-          // common real cause is `users_select_own_or_thread_partner` RLS
-          // (docs/02-DATA-MODEL.md §2) returning nothing because no thread
-          // exists with this person yet, not a crash or a loading glitch.
           <View style={{ alignItems: 'center', marginTop: spacing.xxl, gap: spacing.sm }}>
             <Text variant="body" color="secondary" style={{ textAlign: 'center' }}>
               This profile isn&apos;t available.
             </Text>
           </View>
         ) : (
-          <View style={{ alignItems: 'center', marginTop: spacing.xxl, gap: spacing.sm }}>
-            <Avatar uri={profile.avatar_url} displayName={profile.display_name} size={120} />
-            <Text variant="title" style={{ marginTop: spacing.md }}>
-              {profile.display_name ?? 'Unnamed'}
-            </Text>
-            {profile.status_text ? (
-              <Text variant="body" color="secondary" style={{ textAlign: 'center' }}>
-                {profile.status_text}
+          <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
+            <View style={[styles.cover, { backgroundColor: colors.bgSurfaceAlt }]}>
+              {profile.cover_url ? (
+                <Image source={{ uri: profile.cover_url }} style={StyleSheet.absoluteFill} />
+              ) : null}
+            </View>
+
+            <View style={{ alignItems: 'center', marginTop: -AVATAR_SIZE / 2 }}>
+              <View
+                style={[
+                  styles.avatarWrap,
+                  { borderColor: colors.bgCanvas, backgroundColor: colors.bgCanvas },
+                ]}
+              >
+                <Avatar
+                  uri={profile.avatar_url}
+                  displayName={profile.display_name}
+                  size={AVATAR_SIZE}
+                />
+              </View>
+              <Text variant="title" style={{ marginTop: spacing.md }}>
+                {profile.display_name ?? 'Unnamed'}
               </Text>
+              {profile.status_text ? (
+                <Text
+                  variant="body"
+                  color="secondary"
+                  style={{
+                    textAlign: 'center',
+                    marginTop: spacing.xs,
+                    paddingHorizontal: spacing.xl,
+                  }}
+                >
+                  {profile.status_text}
+                </Text>
+              ) : null}
+            </View>
+
+            {threadId ? (
+              <View style={{ alignItems: 'center', marginTop: spacing.lg }}>
+                <Button
+                  label="Message"
+                  onPress={() => router.push(`/thread/${threadId}`)}
+                  style={{ minWidth: 160 }}
+                />
+              </View>
+            ) : null}
+
+            {profile.phone ? (
+              <View style={{ marginTop: spacing.xl }}>
+                <SectionLabel>Phone</SectionLabel>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.sm,
+                    gap: spacing.md,
+                  }}
+                >
+                  <Ionicons name="call-outline" size={20} color={colors.textSecondary} />
+                  <Text variant="body">+{profile.phone}</Text>
+                </View>
+              </View>
+            ) : null}
+
+            {profile.links.length > 0 ? (
+              <View style={{ marginTop: spacing.lg }}>
+                <SectionLabel>Links</SectionLabel>
+                {profile.links.map((link, index) => (
+                  <Pressable
+                    key={index}
+                    onPress={() => Linking.openURL(link.url)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: spacing.lg,
+                      paddingVertical: spacing.sm,
+                      gap: spacing.md,
+                    }}
+                  >
+                    <Ionicons name="link-outline" size={20} color={colors.textSecondary} />
+                    <View style={{ flex: 1 }}>
+                      <Text variant="body">{link.label}</Text>
+                      <Text variant="caption" color="secondary" numberOfLines={1}>
+                        {link.url}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
             ) : null}
 
             {threadId ? (
-              <Button
-                label="Message"
-                onPress={() => router.push(`/thread/${threadId}`)}
-                style={{ marginTop: spacing.xl, minWidth: 160 }}
-              />
+              <View style={{ marginTop: spacing.lg }}>
+                <SectionLabel>Shared links</SectionLabel>
+                {sharedLinks && sharedLinks.length > 0 ? (
+                  sharedLinks.map((link) => (
+                    <Pressable
+                      key={link.messageId}
+                      onPress={() => Linking.openURL(link.url)}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        paddingHorizontal: spacing.lg,
+                        paddingVertical: spacing.sm,
+                        gap: spacing.md,
+                      }}
+                    >
+                      <Ionicons name="globe-outline" size={20} color={colors.textSecondary} />
+                      <Text variant="body" color="secondary" numberOfLines={1} style={{ flex: 1 }}>
+                        {link.url}
+                      </Text>
+                    </Pressable>
+                  ))
+                ) : (
+                  <Text
+                    variant="caption"
+                    color="tertiary"
+                    style={{ paddingHorizontal: spacing.lg }}
+                  >
+                    No links shared in this chat yet.
+                  </Text>
+                )}
+                {/* Photo/video sharing has no pipeline in this app yet
+                 * (docs/03-ECONOMY-LEDGER.md) — surfaced honestly instead
+                 * of a media grid with nothing behind it. */}
+                <Text
+                  variant="caption"
+                  color="tertiary"
+                  style={{ paddingHorizontal: spacing.lg, marginTop: spacing.sm }}
+                >
+                  Photo and video sharing isn&apos;t available in chat yet.
+                </Text>
+              </View>
             ) : null}
-          </View>
+
+            {threadId && relation ? (
+              <View
+                style={{
+                  marginTop: spacing.xl,
+                  marginHorizontal: spacing.lg,
+                  borderRadius: radius.card,
+                  backgroundColor: colors.bgSurface,
+                  overflow: 'hidden',
+                }}
+              >
+                <Pressable
+                  onPress={handleToggleMute}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: spacing.md,
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.md,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: colors.borderSubtle,
+                  }}
+                >
+                  <Ionicons
+                    name={
+                      relation.mutedByMe ? 'notifications-off-outline' : 'notifications-outline'
+                    }
+                    size={20}
+                    color={colors.textPrimary}
+                  />
+                  <Text variant="body">{relation.mutedByMe ? 'Unmute' : 'Mute notifications'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleToggleBlock}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: spacing.md,
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.md,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: colors.borderSubtle,
+                  }}
+                >
+                  <Ionicons name="ban-outline" size={20} color={colors.danger} />
+                  <Text variant="body" color="danger">
+                    {relation.blockedByMe ? 'Unblock' : 'Block'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setReportOpen(true)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: spacing.md,
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.md,
+                  }}
+                >
+                  <Ionicons name="flag-outline" size={20} color={colors.danger} />
+                  <Text variant="body" color="danger">
+                    Report
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </ScrollView>
         )}
       </Screen>
+
+      <ReportModal
+        visible={reportOpen}
+        onClose={() => setReportOpen(false)}
+        onSubmit={handleSubmitReport}
+        submitting={reportUser.isPending}
+      />
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  cover: { height: COVER_HEIGHT, overflow: 'hidden' },
+  avatarWrap: { borderRadius: 999, borderWidth: 4 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
+  reportCard: { width: '100%', maxWidth: 420, alignSelf: 'center' },
+});
