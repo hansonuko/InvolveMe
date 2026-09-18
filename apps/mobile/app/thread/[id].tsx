@@ -1,4 +1,4 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -457,6 +457,7 @@ function PendingMessageBubble({ body }: { body: string }) {
 
 export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const { colors, spacing, radius } = useTheme();
   const { session } = useSession();
   const currentUserId = session?.user.id;
@@ -567,9 +568,22 @@ export default function ThreadScreen() {
           // Custom headerTitle (not just the `title` string above, which
           // still drives the OS-level back-swipe label) so the avatar can
           // render alongside the name/phone-fallback text.
+          // The whole title block is tappable — opens the partner's
+          // profile (name + InvolveMe About), the same screen the chat
+          // list's own avatar tap already reaches, just from inside an
+          // open conversation too (2026-09-18 punch-list item 12).
           headerTitle: () =>
             headerInfo ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: '/profile/[id]',
+                    params: { id: headerInfo.partnerId, threadId: id },
+                  })
+                }
+                hitSlop={8}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+              >
                 <Avatar
                   uri={headerInfo.partnerAvatarUrl}
                   displayName={headerInfo.partnerName}
@@ -591,7 +605,7 @@ export default function ThreadScreen() {
                     </Text>
                   ) : null}
                 </View>
-              </View>
+              </Pressable>
             ) : (
               <Text variant="bodyMedium">Chat</Text>
             ),
