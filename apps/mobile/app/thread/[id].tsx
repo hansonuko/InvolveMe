@@ -20,6 +20,7 @@ import {
 import { useReportUser } from '@/lib/queries/profile';
 import { useMarkThreadRead, useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
+import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 import { useWallets, walletBalance } from '@/lib/queries/wallet';
 import { useTheme, withAlpha } from '@/theme';
@@ -116,35 +117,24 @@ function useThreadHeaderInfo(
   // documented "refetched wholesale... an acceptable v1 simplification"
   // posture for everything else), keyed only on the partner id once it's
   // known, so it doesn't need to redo the whole thread/partner lookup.
-  useEffect(() => {
-    if (!info?.partnerId) return;
-
-    const channel = supabase
-      .channel(`user-last-seen:${info.partnerId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${info.partnerId}` },
-        (payload) => {
-          const updated = payload.new as {
-            last_seen_at: string | null;
-            last_seen_enabled: boolean;
-          };
-          setInfo((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  partnerLastSeenAt: updated.last_seen_enabled ? updated.last_seen_at : null,
-                }
-              : prev,
-          );
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [info?.partnerId]);
+  useRealtimeTableChanges(
+    info?.partnerId ? `user-last-seen:${info.partnerId}` : undefined,
+    { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${info?.partnerId}` },
+    (payload) => {
+      const updated = payload.new as {
+        last_seen_at: string | null;
+        last_seen_enabled: boolean;
+      };
+      setInfo((prev) =>
+        prev
+          ? {
+              ...prev,
+              partnerLastSeenAt: updated.last_seen_enabled ? updated.last_seen_at : null,
+            }
+          : prev,
+      );
+    },
+  );
 
   return info;
 }

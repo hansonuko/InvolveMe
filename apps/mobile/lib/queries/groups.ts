@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
 
 import { callEdgeFunction, EdgeFunctionError } from '@/lib/edgeFunctions';
+import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 
 export interface GroupThread {
@@ -177,30 +177,18 @@ export function useGroupMessages(groupThreadId: string | undefined) {
     },
   });
 
-  useEffect(() => {
-    if (!groupThreadId) return;
-
-    const channel = supabase
-      .channel(`group-messages:${groupThreadId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'group_messages',
-          filter: `group_thread_id=eq.${groupThreadId}`,
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey });
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupThreadId]);
+  useRealtimeTableChanges(
+    groupThreadId ? `group-messages:${groupThreadId}` : undefined,
+    {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'group_messages',
+      filter: `group_thread_id=eq.${groupThreadId}`,
+    },
+    () => {
+      queryClient.invalidateQueries({ queryKey });
+    },
+  );
 
   return query;
 }
