@@ -1,9 +1,10 @@
 import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Modal, Pressable, Switch, TextInput, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
+import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
@@ -235,69 +236,71 @@ function EditProfileModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <Screen>
-        <View
-          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-        >
-          <Text variant="title">Edit profile</Text>
-          <Pressable onPress={onClose} hitSlop={12}>
-            <Text variant="body" color="secondary">
-              Close
-            </Text>
-          </Pressable>
-        </View>
+        <KeyboardAvoidingScreen isModal>
+          <View
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <Text variant="title">Edit profile</Text>
+            <Pressable onPress={onClose} hitSlop={12}>
+              <Text variant="body" color="secondary">
+                Close
+              </Text>
+            </Pressable>
+          </View>
 
-        <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
-          <Text variant="caption" color="tertiary">
-            Name
-          </Text>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="Your name"
-            placeholderTextColor={colors.textTertiary}
-            maxLength={60}
-            style={{
-              borderWidth: 1,
-              borderColor: colors.borderSubtle,
-              backgroundColor: colors.bgSurfaceAlt,
-              color: colors.textPrimary,
-              borderRadius: radius.card,
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              fontSize: 16,
-            }}
-          />
-          <Text variant="caption" color="tertiary">
-            About
-          </Text>
-          <TextInput
-            value={status}
-            onChangeText={setStatus}
-            placeholder="Hey there! I'm using InvolveMe"
-            placeholderTextColor={colors.textTertiary}
-            maxLength={120}
-            style={{
-              borderWidth: 1,
-              borderColor: colors.borderSubtle,
-              backgroundColor: colors.bgSurfaceAlt,
-              color: colors.textPrimary,
-              borderRadius: radius.card,
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              fontSize: 16,
-            }}
-          />
-          {updateProfile.isError ? (
-            <Text variant="caption" color="danger">
-              {updateProfile.error.message}
+          <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
+            <Text variant="caption" color="tertiary">
+              Name
             </Text>
-          ) : null}
-          <Button
-            label={updateProfile.isPending ? 'Saving…' : 'Save'}
-            onPress={handleSave}
-            disabled={updateProfile.isPending || name.trim().length === 0}
-          />
-        </View>
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Your name"
+              placeholderTextColor={colors.textTertiary}
+              maxLength={60}
+              style={{
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                backgroundColor: colors.bgSurfaceAlt,
+                color: colors.textPrimary,
+                borderRadius: radius.card,
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                fontSize: 16,
+              }}
+            />
+            <Text variant="caption" color="tertiary">
+              About
+            </Text>
+            <TextInput
+              value={status}
+              onChangeText={setStatus}
+              placeholder="Hey there! I'm using InvolveMe"
+              placeholderTextColor={colors.textTertiary}
+              maxLength={120}
+              style={{
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                backgroundColor: colors.bgSurfaceAlt,
+                color: colors.textPrimary,
+                borderRadius: radius.card,
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                fontSize: 16,
+              }}
+            />
+            {updateProfile.isError ? (
+              <Text variant="caption" color="danger">
+                {updateProfile.error.message}
+              </Text>
+            ) : null}
+            <Button
+              label={updateProfile.isPending ? 'Saving…' : 'Save'}
+              onPress={handleSave}
+              disabled={updateProfile.isPending || name.trim().length === 0}
+            />
+          </View>
+        </KeyboardAvoidingScreen>
       </Screen>
     </Modal>
   );
@@ -432,88 +435,90 @@ function ReportUserModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <Screen>
-        <View
-          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-        >
-          <Text variant="title">Report a user</Text>
-          <Pressable onPress={handleClose} hitSlop={12}>
-            <Text variant="body" color="secondary">
-              Close
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
-          <Text variant="caption" color="tertiary">
-            Their phone number
-          </Text>
-          <TextInput
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="0801 234 5678"
-            placeholderTextColor={colors.textTertiary}
-            keyboardType="phone-pad"
-            style={{
-              borderWidth: 1,
-              borderColor: colors.borderSubtle,
-              backgroundColor: colors.bgSurfaceAlt,
-              color: colors.textPrimary,
-              borderRadius: radius.card,
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              fontSize: 16,
-            }}
-          />
-
-          <Text variant="caption" color="tertiary">
-            Reason
-          </Text>
-          <View style={{ gap: spacing.xs }}>
-            {REPORT_REASONS.map((r) => (
-              <Pressable
-                key={r}
-                onPress={() => setReason(r)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: spacing.sm,
-                  paddingVertical: spacing.xs,
-                }}
-              >
-                <Text color={reason === r ? 'secondary' : 'tertiary'}>
-                  {reason === r ? '●' : '○'}
-                </Text>
-                <Text variant="body">{r}</Text>
-              </Pressable>
-            ))}
+        <KeyboardAvoidingScreen isModal>
+          <View
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <Text variant="title">Report a user</Text>
+            <Pressable onPress={handleClose} hitSlop={12}>
+              <Text variant="body" color="secondary">
+                Close
+              </Text>
+            </Pressable>
           </View>
 
-          <TextInput
-            value={details}
-            onChangeText={setDetails}
-            placeholder="Anything else we should know? (optional)"
-            placeholderTextColor={colors.textTertiary}
-            multiline
-            style={{
-              minHeight: 70,
-              textAlignVertical: 'top',
-              borderWidth: 1,
-              borderColor: colors.borderSubtle,
-              backgroundColor: colors.bgSurfaceAlt,
-              color: colors.textPrimary,
-              borderRadius: radius.card,
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              fontSize: 16,
-            }}
-          />
+          <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
+            <Text variant="caption" color="tertiary">
+              Their phone number
+            </Text>
+            <TextInput
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="0801 234 5678"
+              placeholderTextColor={colors.textTertiary}
+              keyboardType="phone-pad"
+              style={{
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                backgroundColor: colors.bgSurfaceAlt,
+                color: colors.textPrimary,
+                borderRadius: radius.card,
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                fontSize: 16,
+              }}
+            />
 
-          <Button
-            label={reportUser.isPending ? 'Submitting…' : 'Submit report'}
-            onPress={handleSubmit}
-            disabled={reportUser.isPending || !reason || phone.length < 8}
-          />
-        </View>
+            <Text variant="caption" color="tertiary">
+              Reason
+            </Text>
+            <View style={{ gap: spacing.xs }}>
+              {REPORT_REASONS.map((r) => (
+                <Pressable
+                  key={r}
+                  onPress={() => setReason(r)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: spacing.sm,
+                    paddingVertical: spacing.xs,
+                  }}
+                >
+                  <Text color={reason === r ? 'secondary' : 'tertiary'}>
+                    {reason === r ? '●' : '○'}
+                  </Text>
+                  <Text variant="body">{r}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <TextInput
+              value={details}
+              onChangeText={setDetails}
+              placeholder="Anything else we should know? (optional)"
+              placeholderTextColor={colors.textTertiary}
+              multiline
+              style={{
+                minHeight: 70,
+                textAlignVertical: 'top',
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                backgroundColor: colors.bgSurfaceAlt,
+                color: colors.textPrimary,
+                borderRadius: radius.card,
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                fontSize: 16,
+              }}
+            />
+
+            <Button
+              label={reportUser.isPending ? 'Submitting…' : 'Submit report'}
+              onPress={handleSubmit}
+              disabled={reportUser.isPending || !reason || phone.length < 8}
+            />
+          </View>
+        </KeyboardAvoidingScreen>
       </Screen>
     </Modal>
   );
@@ -596,83 +601,92 @@ export default function SettingsScreen() {
         }}
       />
       <Screen>
-        <View style={{ flex: 1 }}>
-          <SectionHeader label="Profile" />
-          <SettingsRow
-            label={profile?.display_name ?? 'Add your name'}
-            value={profile?.phone ? `+${profile.phone}` : undefined}
-            onPress={() => setEditProfileVisible(true)}
-          />
-          {profile?.status_text ? (
-            <SettingsRow label={profile.status_text} onPress={() => setEditProfileVisible(true)} />
-          ) : null}
-
-          <SectionHeader label="Appearance" />
-          <AppearanceSection />
-
-          <SectionHeader label="Account" />
-          <KycSection />
-          <SettingsRow
-            label={
-              deletionRequest?.status === 'pending'
-                ? 'Deletion request pending'
-                : 'Delete my account'
-            }
-            onPress={deletionRequest?.status === 'pending' ? undefined : handleDeleteAccount}
-            destructive={deletionRequest?.status !== 'pending'}
-          />
-
-          <SectionHeader label="Privacy" />
-          <SettingsRow
-            label="Read receipts"
-            right={
-              <Switch
-                value={profile?.read_receipts_enabled ?? true}
-                onValueChange={(v) => {
-                  if (userId) setReadReceipts.mutate({ userId, enabled: v });
-                }}
+        <KeyboardAvoidingScreen>
+          <ScrollView
+            contentContainerStyle={{ paddingBottom: spacing.xl }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <SectionHeader label="Profile" />
+            <SettingsRow
+              label={profile?.display_name ?? 'Add your name'}
+              value={profile?.phone ? `+${profile.phone}` : undefined}
+              onPress={() => setEditProfileVisible(true)}
+            />
+            {profile?.status_text ? (
+              <SettingsRow
+                label={profile.status_text}
+                onPress={() => setEditProfileVisible(true)}
               />
-            }
-          />
-          <SettingsRow
-            label="Last seen"
-            right={
-              <Switch
-                value={profile?.last_seen_enabled ?? true}
-                onValueChange={(v) => {
-                  if (userId) setLastSeenEnabled.mutate({ userId, enabled: v });
-                }}
-              />
-            }
-          />
-          <SettingsRow label="Blocked contacts" onPress={() => setBlockedListVisible(true)} />
-          <SettingsRow label="Report a user" onPress={() => setReportVisible(true)} />
+            ) : null}
 
-          <SectionHeader label="Notifications" />
-          <SettingsRow
-            label="Push notifications"
-            right={
-              <Switch
-                value={!!pushEnabled}
-                disabled={pushLoading || setPushEnabled.isPending}
-                onValueChange={handleTogglePush}
-              />
-            }
-          />
+            <SectionHeader label="Appearance" />
+            <AppearanceSection />
 
-          <SectionHeader label="Help" />
-          <SettingsRow label="Invite a friend" onPress={handleInviteFriend} />
-          <SettingsRow label="Terms of Service" onPress={() => router.push('/legal/terms')} />
-          <SettingsRow label="Privacy Policy" onPress={() => router.push('/legal/privacy')} />
-          <SettingsRow label="App version" value={Constants.expoConfig?.version ?? '—'} />
-        </View>
+            <SectionHeader label="Account" />
+            <KycSection />
+            <SettingsRow
+              label={
+                deletionRequest?.status === 'pending'
+                  ? 'Deletion request pending'
+                  : 'Delete my account'
+              }
+              onPress={deletionRequest?.status === 'pending' ? undefined : handleDeleteAccount}
+              destructive={deletionRequest?.status !== 'pending'}
+            />
 
-        <Button
-          label="Sign out"
-          variant="secondary"
-          onPress={handleSignOut}
-          style={{ marginTop: spacing.xl, marginBottom: spacing.xl }}
-        />
+            <SectionHeader label="Privacy" />
+            <SettingsRow
+              label="Read receipts"
+              right={
+                <Switch
+                  value={profile?.read_receipts_enabled ?? true}
+                  onValueChange={(v) => {
+                    if (userId) setReadReceipts.mutate({ userId, enabled: v });
+                  }}
+                />
+              }
+            />
+            <SettingsRow
+              label="Last seen"
+              right={
+                <Switch
+                  value={profile?.last_seen_enabled ?? true}
+                  onValueChange={(v) => {
+                    if (userId) setLastSeenEnabled.mutate({ userId, enabled: v });
+                  }}
+                />
+              }
+            />
+            <SettingsRow label="Blocked contacts" onPress={() => setBlockedListVisible(true)} />
+            <SettingsRow label="Report a user" onPress={() => setReportVisible(true)} />
+
+            <SectionHeader label="Notifications" />
+            <SettingsRow
+              label="Push notifications"
+              right={
+                <Switch
+                  value={!!pushEnabled}
+                  disabled={pushLoading || setPushEnabled.isPending}
+                  onValueChange={handleTogglePush}
+                />
+              }
+            />
+
+            <SectionHeader label="Help" />
+            <SettingsRow label="Invite a friend" onPress={handleInviteFriend} />
+            <SettingsRow label="Terms of Service" onPress={() => router.push('/legal/terms')} />
+            <SettingsRow label="Privacy Policy" onPress={() => router.push('/legal/privacy')} />
+            <SettingsRow label="App version" value={Constants.expoConfig?.version ?? '—'} />
+
+            <Button
+              label="Sign out"
+              variant="secondary"
+              onPress={handleSignOut}
+              style={{ marginTop: spacing.xl, marginBottom: spacing.xl }}
+            />
+          </ScrollView>
+        </KeyboardAvoidingScreen>
       </Screen>
 
       {userId ? (

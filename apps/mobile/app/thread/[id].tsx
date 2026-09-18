@@ -1,22 +1,13 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { BuyCreditModal } from '@/components/ui/BuyCreditModal';
 import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
+import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
@@ -619,70 +610,70 @@ export default function ThreadScreen() {
             asset. */}
         <ChatWallpaper />
 
-        {headerInfo && !headerInfo.isPayer ? (
-          <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
-            <Text variant="caption" color="secondary">
-              They pay for this conversation — your replies earn, they do not cost you.
-            </Text>
-          </View>
-        ) : null}
+        <KeyboardAvoidingScreen>
+          {headerInfo && !headerInfo.isPayer ? (
+            <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
+              <Text variant="caption" color="secondary">
+                They pay for this conversation — your replies earn, they do not cost you.
+              </Text>
+            </View>
+          ) : null}
 
-        {headerInfo?.blockedByMe ? (
-          <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
-            <Text variant="caption" color="danger">
-              You blocked this contact. Unblock them from the ⋮ menu to send messages again.
-            </Text>
-          </View>
-        ) : null}
+          {headerInfo?.blockedByMe ? (
+            <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
+              <Text variant="caption" color="danger">
+                You blocked this contact. Unblock them from the ⋮ menu to send messages again.
+              </Text>
+            </View>
+          ) : null}
 
-        {isLoading ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Text variant="body" color="secondary">
-              Loading…
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            data={messages}
-            keyExtractor={(m) => m.id}
-            contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingVertical: spacing.md }}
-            renderItem={({ item }) => {
-              const isOwn = item.sender_id === currentUserId;
-              const isRead =
-                isOwn && headerInfo?.partnerLastReadAt
-                  ? new Date(item.created_at) <= new Date(headerInfo.partnerLastReadAt)
-                  : isOwn && headerInfo?.partnerLastReadAt === null
-                    ? undefined // read receipts off for the partner — no indicator at all
-                    : isOwn
-                      ? false
-                      : undefined;
-              return <MessageBubble message={item} isOwn={isOwn} isRead={isRead} />;
-            }}
-            ListFooterComponent={
-              pendingSend ? <PendingMessageBubble body={pendingSend.body} /> : null
-            }
-          />
-        )}
+          {isLoading ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <Text variant="body" color="secondary">
+                Loading…
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={messages}
+              keyExtractor={(m) => m.id}
+              contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingVertical: spacing.md }}
+              renderItem={({ item }) => {
+                const isOwn = item.sender_id === currentUserId;
+                const isRead =
+                  isOwn && headerInfo?.partnerLastReadAt
+                    ? new Date(item.created_at) <= new Date(headerInfo.partnerLastReadAt)
+                    : isOwn && headerInfo?.partnerLastReadAt === null
+                      ? undefined // read receipts off for the partner — no indicator at all
+                      : isOwn
+                        ? false
+                        : undefined;
+                return <MessageBubble message={item} isOwn={isOwn} isRead={isRead} />;
+              }}
+              ListFooterComponent={
+                pendingSend ? <PendingMessageBubble body={pendingSend.body} /> : null
+              }
+            />
+          )}
 
-        {pendingSend ? (
-          <View
-            style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.sm }}
-          >
-            <Text variant="caption" color="secondary">
-              Buy chat credit to start your conversation — your message will send automatically once
-              it lands.
-            </Text>
-            <Button label="Buy credit" onPress={() => setBuyCreditVisible(true)} />
-          </View>
-        ) : sendMessage.isError ? (
-          <View style={{ paddingHorizontal: spacing.lg }}>
-            <Text variant="caption" color="danger">
-              {sendMessage.error.message}
-            </Text>
-          </View>
-        ) : null}
+          {pendingSend ? (
+            <View
+              style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.sm }}
+            >
+              <Text variant="caption" color="secondary">
+                Buy chat credit to start your conversation — your message will send automatically
+                once it lands.
+              </Text>
+              <Button label="Buy credit" onPress={() => setBuyCreditVisible(true)} />
+            </View>
+          ) : sendMessage.isError ? (
+            <View style={{ paddingHorizontal: spacing.lg }}>
+              <Text variant="caption" color="danger">
+                {sendMessage.error.message}
+              </Text>
+            </View>
+          ) : null}
 
-        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })}>
           <View
             style={[
               styles.composer,
@@ -721,7 +712,7 @@ export default function ThreadScreen() {
               <Ionicons name="send" size={20} color={colors.textInverse} />
             </Pressable>
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardAvoidingScreen>
       </Screen>
 
       {headerInfo && currentUserId ? (
