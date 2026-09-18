@@ -14,6 +14,7 @@ import { useLastSeenHeartbeat } from '@/lib/lastSeen';
 import { useOnboardingStatusStore } from '@/lib/onboardingStore';
 import { checkForOtaUpdateOnLaunch } from '@/lib/otaUpdates';
 import { resyncPushTokenIfPermitted } from '@/lib/push';
+import { useTwoStepGateStore } from '@/lib/twoStepGateStore';
 import { ThemeProvider } from '@/theme';
 
 SplashScreen.preventAutoHideAsync();
@@ -26,14 +27,23 @@ const queryClient = new QueryClient();
  * kept simple on purpose for Phase 0 — revisit if expo-router's protected-route
  * API covers this more cleanly by the time Phase 2 chat screens land.
  *
- * `needsOnboarding` (docs/10-UX-REFINEMENT-BACKLOG.md Batch E, E2) is
- * `null` while unchecked — same "don't redirect on unknown state" posture
- * as `isLoading` — so a fresh session doesn't flash into /chats before
- * onboarding status resolves. `null` is treated as "not onboarding" for
- * the purposes of leaving /(auth)/onboarding, not entering it — see the
- * two branches below.
+ * `needsOnboarding` (docs/10-UX-REFINEMENT-BACKLOG.md Batch E, E2) and
+ * `twoStepPinVerified` (punch-list item 2) are both `null` while
+ * unchecked — same "don't redirect on unknown state" posture as
+ * `isLoading` — so a fresh session doesn't flash into /chats before
+ * either resolves. `null` is treated as "nothing to gate on" for the
+ * purposes of *leaving* /(auth)/onboarding or /(auth)/two-step, never for
+ * *entering* either — see the branches below. Two-step is checked only
+ * once onboarding is confirmed done: it's a post-onboarding Settings
+ * feature, so a brand-new account can never have it on yet, and checking
+ * it in onboarding's own still-`null` window would be meaningless anyway.
  */
-function useAuthGate(isLoading: boolean, hasSession: boolean, needsOnboarding: boolean | null) {
+function useAuthGate(
+  isLoading: boolean,
+  hasSession: boolean,
+  needsOnboarding: boolean | null,
+  twoStepPinVerified: boolean | null,
+) {
   const segments = useSegments();
   const router = useRouter();
 
@@ -47,6 +57,7 @@ function useAuthGate(isLoading: boolean, hasSession: boolean, needsOnboarding: b
     const segmentList = segments as string[];
     const inAuthGroup = segmentList[0] === '(auth)';
     const inOnboarding = inAuthGroup && segmentList[1] === 'onboarding';
+    const inTwoStep = inAuthGroup && segmentList[1] === 'two-step';
 
     if (!hasSession) {
       if (!inAuthGroup) router.replace('/(auth)');
@@ -54,18 +65,28 @@ function useAuthGate(isLoading: boolean, hasSession: boolean, needsOnboarding: b
     }
 
     // hasSession is true below this point. Wait for the onboarding check
-    // to resolve before deciding between /onboarding and /chats — `null`
-    // is deliberately not treated as "false" here (unlike a plain `!`
-    // check), or a fresh session would flash straight into /chats for the
-    // one tick before the real answer comes back.
+    // to resolve before deciding between /onboarding and everything else
+    // — `null` is deliberately not treated as "false" here (unlike a
+    // plain `!` check), or a fresh session would flash straight into
+    // /chats for the one tick before the real answer comes back.
     if (needsOnboarding === null) return;
 
     if (needsOnboarding && !inOnboarding) {
       router.replace('/(auth)/onboarding');
-    } else if (!needsOnboarding && inAuthGroup) {
+      return;
+    }
+    if (needsOnboarding) return; // in onboarding, correctly — nothing else to do yet
+
+    // Onboarding is done. Same "wait for null to resolve" treatment for
+    // the two-step gate.
+    if (twoStepPinVerified === null) return;
+
+    if (!twoStepPinVerified && !inTwoStep) {
+      router.replace('/(auth)/two-step');
+    } else if (twoStepPinVerified && inAuthGroup) {
       router.replace('/(tabs)/chats');
     }
-  }, [isLoading, hasSession, needsOnboarding, segments, router]);
+  }, [isLoading, hasSession, needsOnboarding, twoStepPinVerified, segments, router]);
 }
 
 export default function RootLayout() {
@@ -73,7 +94,10 @@ export default function RootLayout() {
   const needsOnboarding = useOnboardingStatusStore((s) => s.needsOnboarding);
   const checkOnboardingStatus = useOnboardingStatusStore((s) => s.checkOnboardingStatus);
   const resetOnboardingStatus = useOnboardingStatusStore((s) => s.reset);
-  useAuthGate(isLoading, !!session, needsOnboarding);
+  const twoStepPinVerified = useTwoStepGateStore((s) => s.pinVerified);
+  const checkTwoStepPinStatus = useTwoStepGateStore((s) => s.checkPinStatus);
+  const resetTwoStepGate = useTwoStepGateStore((s) => s.reset);
+  useAuthGate(isLoading, !!session, needsOnboarding, twoStepPinVerified);
   useLastSeenHeartbeat(session?.user.id);
   const { locked, retry } = useAppLock(!!session);
 
@@ -105,6 +129,18 @@ export default function RootLayout() {
       resetOnboardingStatus();
     }
   }, [session?.user.id, checkOnboardingStatus, resetOnboardingStatus]);
+
+  // Resolves whether this session still needs to clear the two-step-
+  // verification PIN gate (punch-list item 2) — reset on sign-out for the
+  // same "don't reuse a different user's cached answer" reason
+  // checkOnboardingStatus's own effect already documents.
+  useEffect(() => {
+    if (session?.user.id) {
+      void checkTwoStepPinStatus(session.user.id);
+    } else {
+      resetTwoStepGate();
+    }
+  }, [session?.user.id, checkTwoStepPinStatus, resetTwoStepGate]);
 
   // Silent re-sync only (never prompts) — see lib/push.ts's header
   // comment. The only place that ever requests notification permission

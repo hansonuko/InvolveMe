@@ -176,6 +176,52 @@ async function main() {
     );
   }
 
+  // create-profile-upload-url / two-step verification — added punch-list
+  // item 2. A real signed upload URL proves the profile-media bucket is
+  // actually live; the two-step round trip proves TWO_STEP_PIN_PEPPER is
+  // genuinely configured on the deployed project (not just locally in
+  // .env) — without it, set-two-step-pin returns a 500, not a 200.
+  {
+    const r = await call('create-profile-upload-url', tokenA, { kind: 'avatar' });
+    log(
+      'deployed create-profile-upload-url mints a real signed upload slot',
+      r.status === 200 &&
+        typeof r.json?.signed_url === 'string' &&
+        r.json?.path === `${userAId}/avatar.jpg`,
+      `status=${r.status} body=${JSON.stringify(r.json)}`,
+    );
+  }
+  {
+    const set = await call('set-two-step-pin', tokenA, { pin: '482913' });
+    log(
+      'deployed set-two-step-pin succeeds (confirms TWO_STEP_PIN_PEPPER is configured in production)',
+      set.status === 200,
+      `status=${set.status} body=${JSON.stringify(set.json)}`,
+    );
+
+    const wrong = await call('verify-two-step-pin', tokenA, { pin: '000000' });
+    log(
+      'deployed verify-two-step-pin correctly rejects a wrong PIN',
+      wrong.status === 200 && wrong.json?.verified === false,
+      `status=${wrong.status} body=${JSON.stringify(wrong.json)}`,
+    );
+
+    const right = await call('verify-two-step-pin', tokenA, { pin: '482913' });
+    log(
+      'deployed verify-two-step-pin accepts the real PIN',
+      right.status === 200 && right.json?.verified === true,
+      `status=${right.status} body=${JSON.stringify(right.json)}`,
+    );
+
+    // Leave no residual state on the shared smoke-test user.
+    const disable = await call('disable-two-step', tokenA, { current_pin: '482913' });
+    log(
+      'deployed disable-two-step cleans up after itself',
+      disable.status === 200,
+      `status=${disable.status} body=${JSON.stringify(disable.json)}`,
+    );
+  }
+
   // create-group-thread / send-group-message — added 2026-09-18 (punch-list
   // item 11, free group messaging). A real end-to-end pair: create a real
   // group with userB as a member, then send a real free message into it and
