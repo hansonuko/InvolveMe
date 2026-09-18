@@ -237,7 +237,23 @@ export function useStatusFeed(userId: string | undefined) {
           });
         }
       }
-      return [...grouped.values()];
+      // Two-tier sort (punch-list item 1, 2026-09-19): every poster with
+      // at least one unseen status first, most-recent-first within that
+      // group; posters whose statuses are all already seen move to the
+      // end, also most-recent-first within that group. `statuses` within
+      // each group is already newest-first (the query itself orders
+      // `created_at desc`), so `statuses[0]` is always that poster's most
+      // recent status. A poster's position updates live the moment their
+      // last unseen status gets marked viewed and this query refetches
+      // (useMarkStatusViewed invalidates `['statusFeed']`) — exactly the
+      // "moves out of the unviewed row once viewed" behavior asked for.
+      return [...grouped.values()].sort((a, b) => {
+        if (a.hasUnseen !== b.hasUnseen) return a.hasUnseen ? -1 : 1;
+        return (
+          new Date(b.statuses[0].created_at).getTime() -
+          new Date(a.statuses[0].created_at).getTime()
+        );
+      });
     },
   });
 }
