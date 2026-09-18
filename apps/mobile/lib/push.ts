@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
+import { withAppLockSuppressed } from '@/lib/appLock';
 import { supabase } from '@/lib/supabase';
 
 // Android requires a notification channel to be registered before any
@@ -46,7 +47,10 @@ export async function registerPushToken(
   const existing = await Notifications.getPermissionsAsync();
   let status = existing.status;
   if (status !== 'granted') {
-    const requested = await Notifications.requestPermissionsAsync();
+    // Same bracket as the contacts/camera/share-sheet call sites — this OS
+    // permission dialog can background this app too (see lib/appLock.ts's
+    // header comment).
+    const requested = await withAppLockSuppressed(() => Notifications.requestPermissionsAsync());
     status = requested.status;
   }
   if (status !== 'granted') {

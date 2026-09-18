@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AppLockScreen } from '@/components/AppLockScreen';
@@ -128,27 +129,46 @@ export default function RootLayout() {
             leave a half-torn-down query cache behind. */}
         <ErrorBoundary>
           <QueryClientProvider client={queryClient}>
-            {locked ? (
-              // Covers the whole app rather than gating per-screen — see
-              // lib/appLock.ts's header comment for why this is purely a
-              // client-side check on top of the already-valid session,
-              // never a new server-side auth step (docs/10-UX-REFINEMENT-BACKLOG.md
-              // Batch E1). Never reached while `!session`, since
-              // useAppLock reports `unlocked` with nothing to protect yet.
-              <AppLockScreen onRetry={retry} />
-            ) : (
-              /* Only the two route groups are registered here — thread/[id] and
-                 settings/index set their own header options inline via
-                 <Stack.Screen options={...} /> from within the screen itself,
-                 which avoids relying on exact nested-route name matching. */
+            {/* The navigator stays mounted at all times — it used to be
+                swapped out for <AppLockScreen> entirely whenever `locked`
+                was true, which meant every re-lock (including the
+                false-positive ones a system camera/permission/share-sheet
+                dialog used to cause — see lib/appLock.ts's header comment)
+                unmounted the whole route tree. expo-router then had to
+                re-resolve an initial route from scratch on remount, which
+                is what produced the phone-entry-screen flash and the
+                "app is reloading itself" reports (docs/00-SESSION-HANDOFF.md's
+                2026-09-17 punch list items 2/8/9). Locking now overlays
+                <AppLockScreen> on top instead, the same way a lock screen
+                covers, rather than kills, whatever's running underneath it
+                on other platforms. */}
+            <View style={styles.flex}>
+              {/* Only the two route groups are registered here — thread/[id] and
+                  settings/index set their own header options inline via
+                  <Stack.Screen options={...} /> from within the screen itself,
+                  which avoids relying on exact nested-route name matching. */}
               <Stack screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="(auth)" />
                 <Stack.Screen name="(tabs)" />
               </Stack>
-            )}
+              {locked ? (
+                // Never reached while `!session`, since useAppLock reports
+                // `unlocked` with nothing to protect yet. Opaque and
+                // full-screen, so it both visually covers and (being on
+                // top of the view stack) intercepts touches to the
+                // navigator underneath.
+                <View style={StyleSheet.absoluteFill}>
+                  <AppLockScreen onRetry={retry} />
+                </View>
+              ) : null}
+            </View>
           </QueryClientProvider>
         </ErrorBoundary>
       </ThemeProvider>
     </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+});

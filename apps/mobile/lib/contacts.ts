@@ -1,6 +1,8 @@
 import { Contact, ContactField, requestPermissionsAsync } from 'expo-contacts';
 import { useCallback, useState } from 'react';
 
+import { withAppLockSuppressed } from '@/lib/appLock';
+
 export interface DeviceContact {
   id: string;
   name: string | null;
@@ -38,7 +40,12 @@ export function useDeviceContacts() {
     setStatus('requesting');
     setError(null);
 
-    const permission = await requestPermissionsAsync();
+    // The OS permission dialog itself can fully background this app on
+    // Android (a separate system UI, not an in-process overlay) — without
+    // this bracket, its own dismissal was tripping useAppLock's re-lock
+    // check, which then unmounted the navigator and bounced the user back
+    // to the chat list (see lib/appLock.ts's header comment).
+    const permission = await withAppLockSuppressed(() => requestPermissionsAsync());
     if (!permission.granted) {
       setStatus('denied');
       return [];
