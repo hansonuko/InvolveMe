@@ -34,18 +34,32 @@ export const useOnboardingStatusStore = create<OnboardingStatusState>((set, get)
   checkOnboardingStatus: async (userId) => {
     if (get().checkedForUserId === userId && get().needsOnboarding !== null) return;
 
-    const { data, error } = await supabase
-      .from('users')
-      .select('display_name')
-      .eq('id', userId)
-      .single();
+    // Runs automatically and silently on every session change (see
+    // app/_layout.tsx) — same category of call this app's own blank-screen
+    // crash investigation already flags (components/ErrorBoundary.tsx's
+    // header comment): an unguarded network call on exactly this kind of
+    // path is a confirmed crash vector here, not a theoretical one. The
+    // inner `error` field below only covers a normal PostgREST error
+    // response; a thrown exception (no connectivity, a timed-out request,
+    // a token-refresh failure) needed this try/catch too, and didn't have
+    // one.
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('display_name')
+        .eq('id', userId)
+        .single();
 
-    // Fail open to the chats list rather than trap a real, already-verified
-    // user behind onboarding on a transient read error.
-    set({
-      needsOnboarding: error ? false : data?.display_name == null,
-      checkedForUserId: userId,
-    });
+      // Fail open to the chats list rather than trap a real,
+      // already-verified user behind onboarding on a transient read error.
+      set({
+        needsOnboarding: error ? false : data?.display_name == null,
+        checkedForUserId: userId,
+      });
+    } catch (e) {
+      console.error('checkOnboardingStatus failed:', e);
+      set({ needsOnboarding: false, checkedForUserId: userId });
+    }
   },
 
   reset: () => set({ needsOnboarding: null, checkedForUserId: null }),
