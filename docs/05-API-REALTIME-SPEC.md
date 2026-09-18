@@ -284,6 +284,42 @@ Added 2026-09-17 (`20260917110000_thread_mute.sql`), Batch G part 2. Sets the ca
 
 Added Phase 6 (`20260916090000_status_visibility_and_view_tracking.sql`) — records that the caller has seen a status update, driving the unseen(gold)/seen(grey) ring distinction on the mobile status feed. Re-checks the same visibility condition the `status_updates_select_visible_to_thread_partner` RLS policy enforces (a `SECURITY DEFINER` function bypasses RLS, so this has to be explicit rather than relied on implicitly) — a status is visible to, and viewable by, anyone with a non-blocked `threads` row with the poster. The poster marking their own status is a no-op 200, not an error. Idempotent (`on conflict do nothing` on `status_views`'s `(status_id, viewer_id)` primary key).
 
+### `POST /functions/v1/create-group-thread`
+
+```jsonc
+// Request
+{ "name": "string", "member_ids": ["uuid", "..."] }
+// Response 200
+{ "group_thread_id": "uuid" }
+// Response 400
+{ "error": "group_name_required" }
+{ "error": "group_name_too_long" }   // > 60 characters
+{ "error": "group_needs_members" }   // member_ids empty after dropping the caller/nulls
+{ "error": "too_many_members" }      // > 100 total including the creator
+{ "error": "member_not_found" }
+```
+
+Added 2026-09-18 (punch-list item 11) — wraps `fn_create_group_thread` (`20260918100000_free_group_messaging.sql`). The caller becomes the group's fixed owner/admin; `member_ids` are added as `role = 'member'`. The caller's own id is silently deduped out of `member_ids` if echoed back in, not rejected. No financial logic, no pricing — nothing about group creation costs credits.
+
+### `POST /functions/v1/send-group-message`
+
+```jsonc
+// Request
+{ "group_thread_id": "uuid", "body": "string" }
+// Response 200
+{ "message_id": "uuid", "word_count": 5, "created_at": "2026-09-18T..." }
+// Response 400
+{ "error": "empty_message" }
+{ "error": "message_too_long" }
+{ "error": "content_blocked" }
+// Response 403
+{ "error": "not_a_member" }
+// Response 404
+{ "error": "group_not_found" }
+```
+
+Added 2026-09-18 (punch-list item 11) — wraps `fn_send_group_message_free`, **not** `fn_send_group_message` (docs/03-ECONOMY-LEDGER.md §10's paid, still-kill-switched model). Every group message sent through this endpoint is free: `credits_charged`/`owner_earning_credits`/`platform_take_credits` are always `0`, no `wallets`/`ledger_entries` row is ever touched. §10's documented collusion exploit is entirely a property of the paid path, so it does not apply here. When Phase 5's fraud infra lands and group billing is turned on, this endpoint (or a new one) switches to calling the paid function instead — the DB schema and message history are shared either way. Same content-moderation gate `send-message`/`post-status` already use.
+
 ### `GET /functions/v1/estimate-message-cost?words=N` (or computed client-side from public `pricing_config` for instant UI feedback — server remains authoritative at actual send time regardless)
 
 ### `POST /functions/v1/submit-kyc`

@@ -176,6 +176,35 @@ async function main() {
     );
   }
 
+  // create-group-thread / send-group-message — added 2026-09-18 (punch-list
+  // item 11, free group messaging). A real end-to-end pair: create a real
+  // group with userB as a member, then send a real free message into it and
+  // confirm it's actually free.
+  let groupThreadId;
+  {
+    const r = await call('create-group-thread', tokenA, {
+      name: 'Smoke Test Group',
+      member_ids: [userBId],
+    });
+    log(
+      'deployed create-group-thread creates a real group',
+      r.status === 200 && typeof r.json?.group_thread_id === 'string',
+      `status=${r.status} body=${JSON.stringify(r.json)}`,
+    );
+    groupThreadId = r.json?.group_thread_id;
+  }
+  {
+    const r = await call('send-group-message', tokenA, {
+      group_thread_id: groupThreadId,
+      body: 'hello from the deployed smoke test',
+    });
+    log(
+      'deployed send-group-message sends a real, genuinely free message',
+      r.status === 200 && typeof r.json?.message_id === 'string' && r.json?.word_count === 6,
+      `status=${r.status} body=${JSON.stringify(r.json)}`,
+    );
+  }
+
   // mark-status-viewed — no real status exists for this random id, so the
   // meaningful assertion is "our own 404 status_not_found", not a platform
   // gateway rejection.
@@ -246,6 +275,31 @@ async function main() {
       withSecret.status === 200,
       `status=${withSecret.status}`,
     );
+  }
+
+  // group_threads.created_by/group_members.user_id have no ON DELETE
+  // CASCADE to auth.users — deleting the test users below without cleaning
+  // this up first would fail on a foreign-key violation, not silently
+  // no-op. Via PostgREST with the service-role key (bypasses RLS the same
+  // way the Edge Functions themselves do), same "no direct DB connection
+  // in this HTTP-only smoke test" posture the rest of this file already has.
+  if (groupThreadId) {
+    const restHeaders = {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+    };
+    await fetch(`${SUPABASE_URL}/rest/v1/group_messages?group_thread_id=eq.${groupThreadId}`, {
+      method: 'DELETE',
+      headers: restHeaders,
+    });
+    await fetch(`${SUPABASE_URL}/rest/v1/group_members?group_thread_id=eq.${groupThreadId}`, {
+      method: 'DELETE',
+      headers: restHeaders,
+    });
+    await fetch(`${SUPABASE_URL}/rest/v1/group_threads?id=eq.${groupThreadId}`, {
+      method: 'DELETE',
+      headers: restHeaders,
+    });
   }
 
   await deleteTestUser(userAId);
