@@ -6,6 +6,7 @@ import { Image, Modal, Pressable, StyleSheet, TextInput, View } from 'react-nati
 
 import { Button } from '@/components/ui/Button';
 import { Text } from '@/components/ui/Text';
+import { withAppLockSuppressed } from '@/lib/appLock';
 import { useCreateStatusUploadUrl, uploadStatusMedia, usePostStatus } from '@/lib/queries/status';
 import { DEFAULT_STATUS_TEXT_TEMPLATE, STATUS_TEXT_TEMPLATES } from '@/lib/statusTextTemplates';
 import { useTheme } from '@/theme';
@@ -63,7 +64,14 @@ export function StatusComposer({ visible, onClose }: { visible: boolean; onClose
     setError(null);
     const launch =
       source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
-    const result = await launch({ mediaTypes: 'images', quality: 0.8 });
+    // The native camera/gallery UI is a separate Activity on Android (and
+    // can transiently background this app on iOS too) — without this
+    // bracket, returning from it used to trip useAppLock's re-lock check,
+    // which unmounted the navigator and dropped the user straight back to
+    // the chat list mid-post (see lib/appLock.ts's header comment).
+    const result = await withAppLockSuppressed(() =>
+      launch({ mediaTypes: 'images', quality: 0.8 }),
+    );
     if (result.canceled || !result.assets?.[0]) return;
 
     // Resize to a max 1080px longest edge + re-encode as compressed JPEG —

@@ -4,15 +4,56 @@ import { AppState } from 'react-native';
 
 export type AppLockState = 'unlocked' | 'locked';
 
-// The biometric/passcode system sheet itself briefly backgrounds this app
-// (it's a system overlay on both platforms), which fires the same
-// AppState 'active' transition a real "user switched back to InvolveMe"
-// does. Without this guard, a *successful* unlock could be immediately
-// re-locked by that same transition's own foreground event arriving a
-// moment after `authenticateAsync` resolves — this app has no real
-// device/simulator available to reproduce and tune the exact timing, so
-// a short, deliberately generous cooldown is used instead of a tight one.
-const REFOREGROUND_GRACE_MS = 1500;
+// How long a suppression (see withAppLockSuppressed) stays in effect after
+// the wrapped action resolves — the OS-level UI it triggered (camera,
+// permission dialog, share sheet, biometric prompt) can send its own
+// trailing AppState 'active' event slightly *after* the awaited promise
+// settles, not synchronously with it.
+const SUPPRESSION_TRAIL_MS = 1500;
+
+let suppressionDepth = 0;
+let suppressionTrailTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function isLockSuppressed() {
+  return suppressionDepth > 0 || suppressionTrailTimeout !== null;
+}
+
+/**
+ * Brackets any action that legitimately backgrounds/foregrounds this app
+ * without the user actually having left it: opening the camera or photo
+ * library (`StatusComposer`), an OS contacts/notifications permission
+ * dialog (`lib/contacts.ts`, `lib/push.ts`), a share sheet (`lib/invite.ts`),
+ * or the biometric prompt itself (`attemptUnlock` below).
+ *
+ * Every one of these fires the exact same `AppState` 'active' transition a
+ * real "switched back to InvolveMe" does — on Android in particular, a
+ * system camera/contacts picker is a genuinely separate activity, so the
+ * host app really does reach `'background'`, not just a transient
+ * `'inactive'` blip a same-process/previous-state heuristic could filter
+ * out. Before this existed, `useAppLock`'s re-lock check couldn't tell
+ * these apart from a real app-switch, which is what was surfacing as three
+ * separate bug reports (phone-entry screen flashing back in, the app
+ * appearing to reload itself, the Contacts tab bouncing back to the chat
+ * list) before the shared root cause was found — see
+ * `docs/00-SESSION-HANDOFF.md`'s 2026-09-17 punch list items 2/8/9/10.
+ */
+export async function withAppLockSuppressed<T>(action: () => Promise<T>): Promise<T> {
+  suppressionDepth += 1;
+  if (suppressionTrailTimeout) {
+    clearTimeout(suppressionTrailTimeout);
+    suppressionTrailTimeout = null;
+  }
+  try {
+    return await action();
+  } finally {
+    suppressionDepth -= 1;
+    if (suppressionDepth === 0) {
+      suppressionTrailTimeout = setTimeout(() => {
+        suppressionTrailTimeout = null;
+      }, SUPPRESSION_TRAIL_MS);
+    }
+  }
+}
 
 /**
  * Gates access to an already-valid Supabase session behind the device's
@@ -20,10 +61,11 @@ const REFOREGROUND_GRACE_MS = 1500;
  * E1) — never a custom in-app PIN, which would be weaker and more code to
  * secure than delegating to whatever lock the device already has. Purely
  * client-side, per that spec: no new server-side auth concept, no OTP
- * call from here. Re-locks once per app-foreground transition (not once
- * per screen, per the batch's own scoping note), using the same
- * AppState-driven pattern `lib/lastSeen.ts` already established for a
- * different purpose.
+ * call from here. Re-locks once per genuine app-foreground transition
+ * (not once per screen, per the batch's own scoping note, and not for a
+ * transition this hook was told to ignore — see withAppLockSuppressed
+ * above), using the same AppState-driven pattern `lib/lastSeen.ts`
+ * already established for a different purpose.
  *
  * A device with no lock method configured at all
  * (`SecurityLevel.NONE` — no biometric enrolled and no passcode set)
@@ -39,7 +81,6 @@ const REFOREGROUND_GRACE_MS = 1500;
 export function useAppLock(hasSession: boolean) {
   const [state, setState] = useState<AppLockState>('unlocked');
   const checkingRef = useRef(false);
-  const lastUnlockAtRef = useRef(0);
 
   const attemptUnlock = useCallback(async () => {
     if (checkingRef.current) return;
@@ -51,16 +92,15 @@ export function useAppLock(hasSession: boolean) {
         return;
       }
 
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Unlock InvolveMe',
-      });
+      // Suppressed for the duration of the OS prompt (and its trailing
+      // dismissal transition) so the prompt's own background/foreground
+      // cycle can't re-enter this same function and re-lock a successful
+      // — or even a just-cancelled — attempt.
+      const result = await withAppLockSuppressed(() =>
+        LocalAuthentication.authenticateAsync({ promptMessage: 'Unlock InvolveMe' }),
+      );
 
-      if (result.success) {
-        lastUnlockAtRef.current = Date.now();
-        setState('unlocked');
-      } else {
-        setState('locked');
-      }
+      setState(result.success ? 'unlocked' : 'locked');
     } catch (e) {
       // Fail open rather than permanently locking someone out of their
       // own already-valid session over a transient native-module error —
@@ -91,7 +131,7 @@ export function useAppLock(hasSession: boolean) {
     const subscription = AppState.addEventListener('change', (next) => {
       if (next !== 'active') return;
       if (checkingRef.current) return;
-      if (Date.now() - lastUnlockAtRef.current < REFOREGROUND_GRACE_MS) return;
+      if (isLockSuppressed()) return;
 
       setState('locked');
       void attemptUnlock();
