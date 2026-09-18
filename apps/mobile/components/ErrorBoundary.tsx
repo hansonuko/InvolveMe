@@ -48,9 +48,10 @@ interface StoredCrash {
   timestamp: string;
 }
 
-/** Read on demand (e.g. a future "send crash report" support flow) —
- * nothing in this app reads it automatically yet, this just makes sure
- * one exists to read. */
+/** Read on demand — `settings/help.tsx`'s "Report a problem" row reads
+ * this to decide whether to show itself, and shares the record out via
+ * the OS share sheet when tapped (no support inbox exists to send it to
+ * directly). */
 export async function getLastCrash(): Promise<StoredCrash | null> {
   const raw = await AsyncStorage.getItem(LAST_CRASH_STORAGE_KEY);
   return raw ? (JSON.parse(raw) as StoredCrash) : null;
