@@ -151,6 +151,10 @@ interface SendMessageRequest {
   threadId?: string;
   recipientId?: string;
   body: string;
+  /** Offline outbox replay key (docs/13-OFFLINE-MODE-SCOPING.md) — omit for
+   * a normal online send; the outbox drain (lib/outboxDrain.ts) passes the
+   * same uuid the message was queued under on every retry. */
+  clientMessageId?: string;
 }
 
 interface SendMessageResponse {
@@ -187,6 +191,7 @@ export function useSendMessage() {
         thread_id: request.threadId,
         recipient_id: request.recipientId,
         body: request.body,
+        client_message_id: request.clientMessageId,
       }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['messages', data.thread_id] });

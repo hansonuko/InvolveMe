@@ -18,7 +18,12 @@ import { createOpenAiModerationProvider } from '../../../packages/moderation/ope
 interface SendGroupMessageRequestBody {
   group_thread_id?: string;
   body?: string;
+  // Offline outbox replay key (docs/13-OFFLINE-MODE-SCOPING.md) — see
+  // send-message/index.ts's identical field for the full rationale.
+  client_message_id?: string;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface FnSendGroupMessageFreeRow {
   message_id: string;
@@ -85,6 +90,13 @@ Deno.serve(async (req) => {
     return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
   }
 
+  if (
+    payload.client_message_id !== undefined &&
+    (typeof payload.client_message_id !== 'string' || !UUID_RE.test(payload.client_message_id))
+  ) {
+    return errorResponse(400, 'invalid_request', 'client_message_id must be a UUID.');
+  }
+
   const db = serviceRoleClient();
 
   // Content moderation (docs/06-SECURITY-FRAUD-LOOPHOLES.md §6) — same
@@ -124,6 +136,7 @@ Deno.serve(async (req) => {
       p_group_thread_id: payload.group_thread_id,
       p_sender_id: user.id,
       p_body: payload.body,
+      p_client_message_id: payload.client_message_id ?? null,
     })
     .single();
 

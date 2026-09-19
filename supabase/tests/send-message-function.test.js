@@ -454,6 +454,131 @@ async function testErrorMapping(admin) {
   await deleteTestUser(admin, B);
 }
 
+// =============================================================================
+// Test 3: client_message_id idempotency (docs/13-OFFLINE-MODE-SCOPING.md) —
+// the offline outbox retries a queued send if it never saw a response, and
+// that retry must never double-debit or insert a duplicate message. Covers
+// both a sequential retry and CLAUDE.md's required concurrency case (two
+// simultaneous calls carrying the same key can't double-spend either).
+// =============================================================================
+
+async function testClientMessageIdempotency(admin) {
+  const A = await createTestUser();
+  const B = await createTestUser();
+  const tokenA = mintAccessToken(A);
+
+  const aWallet = await walletRow(admin, A, 'topup_credit');
+  await admin.query(
+    `insert into public.ledger_entries (wallet_id, amount, reason) values ($1, 20, 'manual_adjustment')`,
+    [aWallet.id],
+  );
+
+  const clientMessageId1 = crypto.randomUUID();
+  const first = await callSendMessage(tokenA, {
+    recipient_id: B,
+    body: wordMessage(10),
+    client_message_id: clientMessageId1,
+  });
+  log(
+    'first send with a client_message_id succeeds normally',
+    first.status === 200 && first.json?.credits_charged === 2,
+    JSON.stringify(first.json),
+  );
+  const threadId = first.json.thread_id;
+
+  // Sequential retry: same key, same thread — simulates the outbox re-firing
+  // after a dropped connection once it never received the first response.
+  const retry = await callSendMessage(tokenA, {
+    thread_id: threadId,
+    client_message_id: clientMessageId1,
+    body: wordMessage(10),
+  });
+  log(
+    'sequential retry with the same client_message_id returns the original message_id',
+    retry.status === 200 && retry.json?.message_id === first.json.message_id,
+    JSON.stringify(retry.json),
+  );
+  log(
+    'sequential retry does not re-charge credits',
+    Number(retry.json?.payer_balance_after) === Number(first.json.payer_balance_after),
+    `first=${first.json.payer_balance_after} retry=${retry.json?.payer_balance_after}`,
+  );
+
+  const aWalletAfterRetry = await walletRow(admin, A, 'topup_credit');
+  log(
+    "A's wallet only reflects one debit after the sequential retry (20 - 2 = 18)",
+    Number(aWalletAfterRetry.balance) === 18,
+    `balance=${aWalletAfterRetry.balance}`,
+  );
+
+  const dupCount = await admin.query(
+    'select count(*)::int as n from public.messages where client_message_id = $1',
+    [clientMessageId1],
+  );
+  log(
+    'exactly one message row exists for the retried client_message_id',
+    dupCount.rows[0].n === 1,
+    `n=${dupCount.rows[0].n}`,
+  );
+
+  // Concurrency case: two genuinely simultaneous requests with a *new*,
+  // shared client_message_id against the same thread. fn_send_message's own
+  // `select ... for update` on the thread row serializes these — the second
+  // call only proceeds once the first commits, at which point its own
+  // replay check finds the row already inserted.
+  const clientMessageId2 = crypto.randomUUID();
+  const [concurrentA, concurrentB] = await Promise.all([
+    callSendMessage(tokenA, {
+      thread_id: threadId,
+      client_message_id: clientMessageId2,
+      body: wordMessage(5),
+    }),
+    callSendMessage(tokenA, {
+      thread_id: threadId,
+      client_message_id: clientMessageId2,
+      body: wordMessage(5),
+    }),
+  ]);
+  log(
+    'both concurrent calls with the same client_message_id succeed (HTTP 200)',
+    concurrentA.status === 200 && concurrentB.status === 200,
+    `a=${JSON.stringify(concurrentA.json)} b=${JSON.stringify(concurrentB.json)}`,
+  );
+  log(
+    'both concurrent calls resolve to the exact same message_id',
+    concurrentA.json?.message_id === concurrentB.json?.message_id,
+    `a=${concurrentA.json?.message_id} b=${concurrentB.json?.message_id}`,
+  );
+
+  const aWalletAfterConcurrent = await walletRow(admin, A, 'topup_credit');
+  log(
+    'concurrent duplicate calls only debit once (18 - 2 = 16, a 5-word message)',
+    Number(aWalletAfterConcurrent.balance) === 16,
+    `balance=${aWalletAfterConcurrent.balance}`,
+  );
+
+  const dupCount2 = await admin.query(
+    'select count(*)::int as n from public.messages where client_message_id = $1',
+    [clientMessageId2],
+  );
+  log(
+    'exactly one message row exists for the concurrently-retried client_message_id',
+    dupCount2.rows[0].n === 1,
+    `n=${dupCount2.rows[0].n}`,
+  );
+
+  const ledgerOk = (await ledgerSum(admin, aWallet.id)) === Number(aWalletAfterConcurrent.balance);
+  log(
+    "ledger conservation holds on A's wallet after both retries",
+    ledgerOk,
+    `sum=${await ledgerSum(admin, aWallet.id)} balance=${aWalletAfterConcurrent.balance}`,
+  );
+
+  await deleteTestThread(admin, threadId);
+  await deleteTestUser(admin, A);
+  await deleteTestUser(admin, B);
+}
+
 async function main() {
   const admin = new Client({ connectionString: DB_URL, ssl: { rejectUnauthorized: false } });
   admin.on('error', (e) => process.stderr.write(`[connection error, non-fatal] ${e.message}\n`));
@@ -479,6 +604,7 @@ async function main() {
 
     await testFullPaidExchange(admin);
     await testErrorMapping(admin);
+    await testClientMessageIdempotency(admin);
   } finally {
     deno.kill();
     await admin.end();

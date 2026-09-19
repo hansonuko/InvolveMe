@@ -1,3 +1,4 @@
+import { getIsOnline } from '@/lib/network';
 import { supabase } from '@/lib/supabase';
 
 /**
@@ -33,6 +34,20 @@ export async function callEdgeFunction<TResponse>(
   body?: Record<string, unknown>,
   method: 'GET' | 'POST' = 'POST',
 ): Promise<TResponse> {
+  // Offline gate (docs/13-OFFLINE-MODE-SCOPING.md) — every money-affecting
+  // or otherwise-authenticated action in this app goes through this one
+  // function (per this file's own header comment), so checking here covers
+  // every caller for free rather than needing a per-screen check. Fails
+  // fast with the same EdgeFunctionError shape every existing caller
+  // already handles, instead of letting `fetch` hang or throw a generic
+  // network error. The one caller that must NOT hit this gate is the
+  // outbox drain itself, which only ever calls this once `useIsOnline()`
+  // has already reported true, so there's no risk of the queued send being
+  // silently blocked by its own trigger condition.
+  if (!getIsOnline()) {
+    throw new EdgeFunctionError('offline', "You're offline — try again once you're connected.", 0);
+  }
+
   const {
     data: { session },
   } = await supabase.auth.getSession();

@@ -231,6 +231,75 @@ async function main() {
       ledgerCount === 0,
       `n=${ledgerCount}`,
     );
+
+    // client_message_id idempotency (docs/13-OFFLINE-MODE-SCOPING.md) — the
+    // offline outbox retries a queued group send too; a retry must never
+    // insert a duplicate message. Sequential retry first, then the
+    // concurrency case (no row lock backs this path, so the insert itself
+    // is wrapped in an exception handler — this proves that actually works).
+    const clientMessageId1 = crypto.randomUUID();
+    const first = await callSendGroupMessage(tokenMember, {
+      group_thread_id: groupId,
+      body: 'idempotency check one',
+      client_message_id: clientMessageId1,
+    });
+    const retry = await callSendGroupMessage(tokenMember, {
+      group_thread_id: groupId,
+      body: 'idempotency check one',
+      client_message_id: clientMessageId1,
+    });
+    log(
+      'sequential retry with the same client_message_id returns the original message_id',
+      first.status === 200 &&
+        retry.status === 200 &&
+        retry.json?.message_id === first.json?.message_id,
+      JSON.stringify({ first: first.json, retry: retry.json }),
+    );
+
+    const dupCount = (
+      await admin.query(
+        'select count(*)::int as n from group_messages where client_message_id = $1',
+        [clientMessageId1],
+      )
+    ).rows[0].n;
+    log(
+      'exactly one group_messages row exists for the retried client_message_id',
+      dupCount === 1,
+      `n=${dupCount}`,
+    );
+
+    const clientMessageId2 = crypto.randomUUID();
+    const [concurrentA, concurrentB] = await Promise.all([
+      callSendGroupMessage(tokenMember, {
+        group_thread_id: groupId,
+        body: 'idempotency check two',
+        client_message_id: clientMessageId2,
+      }),
+      callSendGroupMessage(tokenMember, {
+        group_thread_id: groupId,
+        body: 'idempotency check two',
+        client_message_id: clientMessageId2,
+      }),
+    ]);
+    log(
+      'both concurrent calls with the same client_message_id succeed and agree on message_id',
+      concurrentA.status === 200 &&
+        concurrentB.status === 200 &&
+        concurrentA.json?.message_id === concurrentB.json?.message_id,
+      `a=${JSON.stringify(concurrentA.json)} b=${JSON.stringify(concurrentB.json)}`,
+    );
+
+    const dupCount2 = (
+      await admin.query(
+        'select count(*)::int as n from group_messages where client_message_id = $1',
+        [clientMessageId2],
+      )
+    ).rows[0].n;
+    log(
+      'exactly one group_messages row exists for the concurrently-retried client_message_id',
+      dupCount2 === 1,
+      `n=${dupCount2}`,
+    );
   } finally {
     deno.kill();
     if (groupId) {

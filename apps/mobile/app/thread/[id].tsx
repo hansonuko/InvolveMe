@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Crypto from 'expo-crypto';
 
 import { ActionSheet, type ActionSheetAction } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
@@ -35,6 +36,8 @@ import {
 import { useReportUser } from '@/lib/queries/profile';
 import { useMarkThreadRead, useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
+import { useIsOnline } from '@/lib/network';
+import { useOutboxStore } from '@/lib/outboxStore';
 import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 import { useWallets, walletBalance } from '@/lib/queries/wallet';
@@ -524,6 +527,39 @@ function PendingMessageBubble({ body }: { body: string }) {
   );
 }
 
+/** A message composed while offline, queued in the outbox
+ * (docs/13-OFFLINE-MODE-SCOPING.md) — sends automatically the moment
+ * connectivity returns (lib/outboxDrain.ts), same "clock icon, no user
+ * action needed" pattern WhatsApp uses. */
+function OutboxPendingBubble({ body }: { body: string }) {
+  const { colors, spacing, radius } = useTheme();
+  return (
+    <View style={[styles.bubbleRow, { justifyContent: 'flex-end', marginBottom: spacing.sm }]}>
+      <View
+        style={[
+          styles.bubble,
+          {
+            backgroundColor: colors.bgSurfaceAlt,
+            borderRadius: radius.bubble,
+            padding: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.borderSubtle,
+            borderStyle: 'dashed',
+          },
+        ]}
+      >
+        <Text variant="body">{body}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: spacing.xs, gap: 4 }}>
+          <Ionicons name="time-outline" size={12} color={colors.textSecondary} />
+          <Text variant="caption" color="secondary">
+            Waiting for connection…
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -627,6 +663,11 @@ export default function ThreadScreen() {
   const { data: wallets } = useWallets(currentUserId);
   const topupBalance = walletBalance(wallets, 'topup_credit');
 
+  const isOnline = useIsOnline();
+  const outboxItems = useOutboxStore((s) =>
+    s.items.filter((i) => i.target.kind === '1:1' && i.target.threadId === id),
+  );
+
   useEffect(() => {
     if (!pendingSend || !id) return;
     if (topupBalance < pendingSend.requiredCredits) return;
@@ -691,6 +732,23 @@ export default function ThreadScreen() {
           },
         },
       );
+      return;
+    }
+
+    // Offline outbox (docs/13-OFFLINE-MODE-SCOPING.md): queue rather than
+    // attempt the send — WhatsApp's own behavior is to accept the compose
+    // immediately and show a pending bubble, not block or error. Editing
+    // an existing message (handled above) still requires a live connection
+    // regardless, since it has no queued-offline equivalent in this scope.
+    if (!isOnline && currentUserId) {
+      useOutboxStore.getState().enqueue({
+        clientMessageId: Crypto.randomUUID(),
+        body: text,
+        createdAt: new Date().toISOString(),
+        senderId: currentUserId,
+        target: { kind: '1:1', threadId: id },
+      });
+      setBody('');
       return;
     }
 
@@ -1001,7 +1059,12 @@ export default function ThreadScreen() {
                 );
               }}
               ListFooterComponent={
-                pendingSend ? <PendingMessageBubble body={pendingSend.body} /> : null
+                <>
+                  {outboxItems.map((item) => (
+                    <OutboxPendingBubble key={item.clientMessageId} body={item.body} />
+                  ))}
+                  {pendingSend ? <PendingMessageBubble body={pendingSend.body} /> : null}
+                </>
               }
             />
           )}

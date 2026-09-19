@@ -1,4 +1,7 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import { QueryClient } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
@@ -7,11 +10,13 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AppLockScreen } from '@/components/AppLockScreen';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { OfflineBanner } from '@/components/OfflineBanner';
 import { useAppLock } from '@/lib/appLock';
 import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
 import { useSession } from '@/lib/hooks/useSession';
 import { useLastSeenHeartbeat } from '@/lib/lastSeen';
 import { useOnboardingStatusStore } from '@/lib/onboardingStore';
+import { useOutboxDrain } from '@/lib/outboxDrain';
 import { checkForOtaUpdateOnLaunch } from '@/lib/otaUpdates';
 import { resyncPushTokenIfPermitted } from '@/lib/push';
 import { useTwoStepGateStore } from '@/lib/twoStepGateStore';
@@ -20,6 +25,32 @@ import { ThemeProvider } from '@/theme';
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+
+// Offline mode (docs/13-OFFLINE-MODE-SCOPING.md) — persists the query cache
+// to the AsyncStorage already used elsewhere in this app, so every
+// already-fetched screen (chats, threads, groups, statuses, wallet
+// balance) renders its last-known data immediately on a cold start with no
+// connectivity, instead of an empty/loading screen. `buster` must be bumped
+// whenever a cached query's shape changes in a way an old persisted payload
+// couldn't satisfy, so a stale shape is discarded rather than fed to a
+// component expecting the new one.
+const asyncStoragePersister = createAsyncStoragePersister({
+  storage: AsyncStorage,
+  key: 'involveme-query-cache-v1',
+});
+const persistOptions = {
+  persister: asyncStoragePersister,
+  maxAge: 24 * 60 * 60 * 1000,
+  buster: 'v1',
+};
+
+/** Mounted once, inside the query client's own provider tree, so
+ * `useQueryClient()` resolves — see lib/outboxDrain.ts's header comment for
+ * why this lives globally rather than per-thread-screen. */
+function OutboxDrainEffect({ userId }: { userId: string | undefined }) {
+  useOutboxDrain(userId);
+  return null;
+}
 
 /**
  * Auth gate: redirects between the (auth) and (tabs) route groups based on
@@ -176,7 +207,9 @@ export default function RootLayout() {
             primitives; wraps QueryClientProvider too so a crash doesn't
             leave a half-torn-down query cache behind. */}
         <ErrorBoundary>
-          <QueryClientProvider client={queryClient}>
+          <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+            <OutboxDrainEffect userId={session?.user.id} />
+            <OfflineBanner />
             {/* The navigator stays mounted at all times — it used to be
                 swapped out for <AppLockScreen> entirely whenever `locked`
                 was true, which meant every re-lock (including the
@@ -210,7 +243,7 @@ export default function RootLayout() {
                 </View>
               ) : null}
             </View>
-          </QueryClientProvider>
+          </PersistQueryClientProvider>
         </ErrorBoundary>
       </ThemeProvider>
     </GestureHandlerRootView>

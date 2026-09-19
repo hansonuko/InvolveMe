@@ -23,6 +23,11 @@ interface SendMessageRequestBody {
   thread_id?: string;
   recipient_id?: string;
   body?: string;
+  // Offline outbox replay key (docs/13-OFFLINE-MODE-SCOPING.md) — a client-
+  // generated uuid, unique per composed message, that makes a retried send
+  // safe after a dropped connection. Optional: every pre-offline-mode
+  // caller omits it and behaves exactly as before.
+  client_message_id?: string;
 }
 
 interface FnSendMessageRow {
@@ -108,6 +113,13 @@ Deno.serve(async (req) => {
 
   if (typeof payload.body !== 'string' || payload.body.trim().length === 0) {
     return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
+  }
+
+  if (
+    payload.client_message_id !== undefined &&
+    (typeof payload.client_message_id !== 'string' || !UUID_RE.test(payload.client_message_id))
+  ) {
+    return errorResponse(400, 'invalid_request', 'client_message_id must be a UUID.');
   }
 
   let threadId = payload.thread_id;
@@ -199,6 +211,7 @@ Deno.serve(async (req) => {
       p_thread_id: threadId,
       p_sender_id: user.id,
       p_body: payload.body,
+      p_client_message_id: payload.client_message_id ?? null,
     })
     .single();
 
