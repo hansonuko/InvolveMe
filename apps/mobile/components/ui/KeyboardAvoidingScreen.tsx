@@ -1,79 +1,83 @@
-import { useContext, type PropsWithChildren } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, type ViewProps } from 'react-native';
-
-// expo-router vendors its own copy of @react-navigation/elements (there is
-// no top-level @react-navigation/elements dependency anywhere in this
-// repo) — importing HeaderHeightContext from THIS path, not a freshly
-// installed @react-navigation/elements package, is deliberate: expo-router's
-// own Stack/native-stack screens populate this exact Context instance from
-// their own vendored copy. Installing a separate top-level package would
-// create a second, disconnected Context object with the same name —
-// `useContext` against it would then never see expo-router's real header
-// height, silently always returning the default instead of erroring, which
-// would be a much harder bug to catch than an import that just doesn't
-// resolve.
-import { HeaderHeightContext } from 'expo-router/build/react-navigation/elements';
+import { useEffect, useState, type PropsWithChildren } from 'react';
+import { Keyboard, Platform, StyleSheet, View, type ViewProps } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
- * Single shared keyboard-avoidance wrapper — every screen/modal in this app
- * that has a `TextInput` near the bottom of its content should use this
- * instead of a bespoke `KeyboardAvoidingView`, per the 2026-09-18 punch-list
- * fix (item 4: the message composer and every input modal left the typed
- * text hidden behind the keyboard).
+ * Real device confirmed (2026-09-19, punch-list follow-up): the previous
+ * `KeyboardAvoidingView`-based implementation still left the composer
+ * hidden behind the keyboard, completely fixed in place — not just
+ * padded by the wrong amount, which is what the immediately-prior fix
+ * (a `keyboardVerticalOffset` correction for a native header) targeted.
+ * The tell: this app's own emoji picker panel (`components/chat/
+ * EmojiPicker.tsx`), which is not a keyboard at all — it's a plain View
+ * added to the bottom of the same flex column — correctly pushes the
+ * composer up, because that's just ordinary React Native layout: adding
+ * height at the bottom of a flex column shrinks/shifts everything above
+ * it. The real keyboard doing nothing at all, while a same-shaped plain
+ * View does exactly the right thing, means `KeyboardAvoidingView` itself
+ * was never successfully reacting to the keyboard opening on this
+ * device — most likely Android's edge-to-edge display mode (on by
+ * default in recent Expo/React Native versions), under which
+ * `windowSoftInputMode="adjustResize"` no longer actually resizes the
+ * window the way `KeyboardAvoidingView`'s "padding"/"height" behaviors
+ * assume, so nothing here was ever reading the real keyboard height in
+ * the first place — a wrong offset was never going to fix a mechanism
+ * that wasn't firing at all.
  *
- * `behavior="padding"` on iOS is the standard, well-documented choice.
- * Android is deliberately split in two, rather than using `"height"`
- * everywhere, because this app's Android build uses Expo's default
- * `windowSoftInputMode="adjustResize"` (nothing in app.json overrides it) —
- * the OS itself already resizes the window when the keyboard opens for a
- * normal full-screen route. Layering RN's own `"height"` behavior on top of
- * that double-compensates. A `Modal` (react-native's, used by every form in
- * this app) presents in its own native window that does **not** reliably
- * inherit that Activity-level resize, so those still need `"height"`
- * explicitly — `isModal` picks which of the two this instance is.
+ * The fix: don't ask the OS to resize anything, and don't ask
+ * `KeyboardAvoidingView` to infer the keyboard's height from window
+ * geometry. Measure it directly from `Keyboard`'s own show/hide events
+ * (`endCoordinates.height` — a real, reported keyboard frame height,
+ * independent of window-resize behavior on either platform) and render a
+ * plain spacer `View` of that height at the bottom of this component's
+ * own children — the exact same mechanism the emoji picker already uses
+ * successfully, applied to the real keyboard instead of a fixed-height
+ * panel. `Screen`'s own `SafeAreaView` already reserves `insets.bottom`
+ * unconditionally; the spacer only needs to add whatever the keyboard
+ * requires *beyond* that already-reserved space, or a real keyboard would
+ * leave an extra gap under it once the safe-area padding and the full
+ * keyboard height were both applied.
  *
- * **A real device confirmed a second, separate bug here (2026-09-19,
- * punch-list item 1) that two earlier code-review-only passes missed**: on
- * iOS, `KeyboardAvoidingView`'s own "padding" behavior computes the gap to
- * the keyboard by comparing its own `onLayout`-relative frame against the
- * keyboard's *absolute* screen position — when a native stack header
- * renders **above** this view (any `headerShown: true` screen, not a
- * `Modal`), those two coordinate spaces disagree by roughly the header's
- * own height unless `keyboardVerticalOffset` explicitly accounts for it.
- * The `KeyboardAvoidingView` wrapper itself was correctly in place around
- * the composer the whole time — it was just padding by the wrong amount,
- * which is exactly the kind of thing that reads as "already fixed" from
- * the code alone and only shows up once someone actually types on a real
- * phone. Fixed by defaulting `keyboardVerticalOffset` to the real header
- * height read from `HeaderHeightContext` — via plain `useContext`, not the
- * throwing `useHeaderHeight()` helper, so a `Modal` usage (which has no
- * header and no Provider at all) safely falls back to 0 instead of
- * crashing. Still not confirmed on a real Android device (none available
- * in this environment — see docs/00-SESSION-HANDOFF.md's recurring note on
- * this); the iOS half of this specific fix follows real-device confirmation
- * that the composer *was* hidden, the Android half follows the documented
- * `windowSoftInputMode` behavior as before.
+ * `isModal`/`keyboardVerticalOffset`, this component's old
+ * `KeyboardAvoidingView`-specific props, are gone — neither concept
+ * applies to this mechanism (there's no window-resize behavior to
+ * distinguish "modal" from "screen" for, and no header-offset frame math
+ * to correct), so every call site had those props removed too rather
+ * than keeping them as unused dead weight.
  */
-export function KeyboardAvoidingScreen({
-  children,
-  style,
-  isModal = false,
-  keyboardVerticalOffset,
-  ...rest
-}: PropsWithChildren<ViewProps & { isModal?: boolean; keyboardVerticalOffset?: number }>) {
-  const headerHeight = useContext(HeaderHeightContext) ?? 0;
-  const resolvedOffset =
-    keyboardVerticalOffset ?? (Platform.OS === 'ios' && !isModal ? headerHeight : 0);
+function useKeyboardHeight(): number {
+  const [height, setHeight] = useState(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  return height;
+}
+
+export function KeyboardAvoidingScreen({ children, style, ...rest }: PropsWithChildren<ViewProps>) {
+  const keyboardHeight = useKeyboardHeight();
+  const insets = useSafeAreaInsets();
+  const spacerHeight = Math.max(keyboardHeight - insets.bottom, 0);
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.flex, style]}
-      behavior={Platform.OS === 'ios' ? 'padding' : isModal ? 'height' : undefined}
-      keyboardVerticalOffset={resolvedOffset}
-      {...rest}
-    >
-      {children}
-    </KeyboardAvoidingView>
+    <View style={[styles.flex, style]} {...rest}>
+      <View style={styles.flex}>{children}</View>
+      <View style={{ height: spacerHeight }} />
+    </View>
   );
 }
 

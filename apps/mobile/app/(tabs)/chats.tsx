@@ -238,7 +238,7 @@ function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => v
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <Screen>
-        <KeyboardAvoidingScreen isModal>
+        <KeyboardAvoidingScreen>
           <View
             style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
           >
@@ -435,7 +435,7 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <Screen>
-        <KeyboardAvoidingScreen isModal>
+        <KeyboardAvoidingScreen>
           <View
             style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
           >

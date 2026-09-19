@@ -121,7 +121,6 @@ export function StatusComposer({ visible, onClose }: { visible: boolean; onClose
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <KeyboardAvoidingScreen
-        isModal
         style={[styles.flex, { backgroundColor: step === 'text' ? template.background : '#000' }]}
       >
         <View style={[styles.closeRow, { paddingHorizontal: spacing.lg }]}>
