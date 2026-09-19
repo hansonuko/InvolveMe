@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Image,
   Modal,
@@ -15,14 +16,17 @@ import {
 } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
+import { ActionSheet } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
 import { useKeyboardHeight } from '@/components/ui/KeyboardAvoidingScreen';
+import { StatusLikersModal } from '@/components/status/StatusLikersModal';
 import { Text } from '@/components/ui/Text';
 import { useSendMessage } from '@/lib/queries/messages';
 import {
   useDeleteStatus,
   useMarkStatusViewed,
   useStatusLiked,
+  useStatusLikers,
   useStatusMediaUrl,
   useStatusViewCount,
   useToggleStatusLike,
@@ -183,7 +187,16 @@ function PosterPage({
   const router = useRouter();
   const status = group.statuses[itemIndex];
   const viewCount = useStatusViewCount(isOwn && isActive ? status?.id : undefined);
+  const likers = useStatusLikers(isOwn && isActive ? status?.id : undefined);
   const [showViewCount, setShowViewCount] = useState(false);
+  const [likersModalOpen, setLikersModalOpen] = useState(false);
+  // Overflow menu for delete (punch-list item 7, 2026-09-19) — physically
+  // separated from the view/likes controls at the bottom of the screen
+  // (lives in the header instead, next to Close) specifically so a tap
+  // meant for "show who's viewed/liked this" can never land on "delete"
+  // by mistake; a confirm dialog on top of that means even a genuine tap
+  // on Delete still isn't instantly destructive.
+  const [ownMenuOpen, setOwnMenuOpen] = useState(false);
   const [openingChat, setOpeningChat] = useState(false);
   const deleteStatus = useDeleteStatus();
   const liked = useStatusLiked(status?.id, currentUserId);
@@ -206,6 +219,21 @@ function PosterPage({
   const handleToggleLike = () => {
     if (!currentUserId) return;
     toggleLike.mutate({ statusId: status.id, userId: currentUserId, liked: !!liked.data });
+  };
+
+  // Confirm before deleting (there was no confirmation at all before this
+  // punch-list item) — matches every other destructive action in this app
+  // (block, remove group member, leave group, ...), all of which confirm
+  // first.
+  const handleDeleteStatus = () => {
+    Alert.alert('Delete this status?', 'This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => deleteStatus.mutate({ id: status.id, media_path: status.media_path }),
+      },
+    ]);
   };
 
   // Reply opens (or continues) a real DM thread with the poster and sends
@@ -299,6 +327,11 @@ function PosterPage({
             </Text>
           </View>
         </Pressable>
+        {isOwn ? (
+          <Pressable onPress={() => setOwnMenuOpen(true)} hitSlop={12} style={{ marginRight: 20 }}>
+            <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
+          </Pressable>
+        ) : null}
         <Pressable onPress={onClose} hitSlop={12}>
           <Ionicons name="close" size={28} color="#fff" />
         </Pressable>
@@ -319,11 +352,14 @@ function PosterPage({
             ) : null}
           </Pressable>
           <Pressable
-            onPress={() => deleteStatus.mutate({ id: status.id, media_path: status.media_path })}
+            onPress={() => setLikersModalOpen(true)}
             style={styles.ownControlButton}
             hitSlop={8}
           >
-            <Ionicons name="trash" size={20} color="#fff" />
+            <Ionicons name="heart" size={20} color="#fff" />
+            <Text variant="caption" color="inverse" style={{ marginLeft: 6 }}>
+              {likers.data?.length ?? 0} likes
+            </Text>
           </Pressable>
         </View>
       ) : (
@@ -365,6 +401,22 @@ function PosterPage({
           )}
         </View>
       )}
+
+      {isOwn ? (
+        <>
+          <ActionSheet
+            visible={ownMenuOpen}
+            onClose={() => setOwnMenuOpen(false)}
+            actions={[{ label: 'Delete status', destructive: true, onPress: handleDeleteStatus }]}
+          />
+          <StatusLikersModal
+            visible={likersModalOpen}
+            onClose={() => setLikersModalOpen(false)}
+            likers={likers.data ?? []}
+            isLoading={likers.isLoading}
+          />
+        </>
+      ) : null}
     </View>
   );
 }
