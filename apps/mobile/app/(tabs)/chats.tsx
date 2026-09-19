@@ -22,6 +22,7 @@ import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { StoryViewer } from '@/components/status/StoryViewer';
 import { type DeviceContact, useDeviceContacts } from '@/lib/contacts';
+import { useContactsChangedStore } from '@/lib/contactsChangedStore';
 import { shareInvite } from '@/lib/invite';
 import { type MatchedContactUser, useFindUsersByPhones } from '@/lib/queries/contacts';
 import { useFindUserByPhone, type FoundUser } from '@/lib/queries/findUserByPhone';
@@ -60,6 +61,7 @@ function ThreadRow({
   onPress,
   statusGroup,
   onViewStatus,
+  contactName,
 }: {
   thread: ThreadWithPartner;
   onPress: () => void;
@@ -69,6 +71,11 @@ function ThreadRow({
    * every status in it has been viewed) and the avatar tap behavior. */
   statusGroup?: StatusFeedGroup;
   onViewStatus?: (group: StatusFeedGroup) => void;
+  /** Device-contact name if saved, else the raw phone number, else
+   * "Unnamed" — resolved by the parent (punch-list item 1, 2026-09-19).
+   * Never the partner's own `display_name` as an unsaved-contact
+   * fallback; see `resolveContactName` in ChatsScreen for why. */
+  contactName: string;
 }) {
   const { colors, spacing, radius } = useTheme();
   const router = useRouter();
@@ -103,7 +110,7 @@ function ThreadRow({
       <Pressable onPress={handleAvatarPress} hitSlop={4}>
         <Avatar
           uri={thread.partner.avatar_url}
-          displayName={thread.partner.display_name}
+          displayName={contactName}
           size={AVATAR_SIZE}
           ringVariant={statusGroup ? (statusGroup.hasUnseen ? 'unseen' : 'seen') : 'none'}
         />
@@ -111,7 +118,7 @@ function ThreadRow({
       <ActionSheet
         visible={sheetVisible}
         onClose={() => setSheetVisible(false)}
-        title={thread.partner.display_name ?? 'Unnamed'}
+        title={contactName}
         actions={[
           { label: 'Message', onPress },
           {
@@ -125,7 +132,7 @@ function ThreadRow({
         ]}
       />
       <View style={{ flex: 1, marginLeft: spacing.md }}>
-        <Text variant="bodyMedium">{thread.partner.display_name ?? 'Unnamed'}</Text>
+        <Text variant="bodyMedium">{contactName}</Text>
         {thread.blocked_by ? (
           <Text variant="caption" color="danger">
             Blocked
@@ -412,12 +419,34 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
       const deviceContacts = await sync();
       if (cancelled || deviceContacts.length === 0) return;
 
+      // Real bug fixed here (punch-list item 1, 2026-09-19): this device-
+      // contacts fetch was only ever used to build the phone list below,
+      // then discarded — the group member picker showed each match's own
+      // self-chosen `display_name` instead of the name actually saved for
+      // them on this device, unlike ContactsList's own ContactRow a few
+      // hundred lines down, which already gets this right
+      // (`contact.name ?? user?.display_name`). Same phone-key
+      // normalization as that component.
+      const phoneToContactName = new Map<string, string>();
+      for (const c of deviceContacts) {
+        if (!c.name) continue;
+        for (const p of c.phones) {
+          phoneToContactName.set(toE164NigerianPhone(p).replace(/^\+/, ''), c.name);
+        }
+      }
+
       const allPhones = [
         ...new Set(deviceContacts.flatMap((c) => c.phones.map(toE164NigerianPhone))),
       ];
       findUsers.mutate(allPhones, {
         onSuccess: (data) => {
-          if (!cancelled) setCandidates(data.matches);
+          if (cancelled) return;
+          setCandidates(
+            data.matches.map((m) => ({
+              ...m,
+              display_name: phoneToContactName.get(m.phone) ?? m.display_name,
+            })),
+          );
         },
       });
     })();
@@ -885,8 +914,63 @@ export default function ChatsScreen() {
   const [subTab, setSubTab] = useState<ChatsSubTab>('chats');
   const [search, setSearch] = useState('');
 
+  // Device-contact name resolution (punch-list item 1, 2026-09-19) —
+  // WhatsApp-standard "your own saved name for this person always wins
+  // over their self-chosen profile name" behavior. Synced once, here,
+  // rather than the Contacts-tab's own on-visit sync (`ContactsList`
+  // below) — the chat list is the very first thing a user sees, and it's
+  // the one place this data is needed immediately rather than only once
+  // a sub-tab is visited, so this is genuinely "asking in context," not a
+  // cold-open prompt for its own sake. Only the raw device contacts are
+  // needed here (not `find-users-by-phones`'s reverse lookup) — matching
+  // is purely against phone numbers this app's *own* threads already
+  // resolved, not against a fresh phonebook-wide server lookup.
+  const { sync: syncDeviceContacts } = useDeviceContacts();
+  const [phoneToContactName, setPhoneToContactName] = useState<Map<string, string>>(new Map());
+  const contactsVersion = useContactsChangedStore((s) => s.version);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const deviceContacts = await syncDeviceContacts();
+      if (cancelled) return;
+      const map = new Map<string, string>();
+      for (const c of deviceContacts) {
+        if (!c.name) continue;
+        for (const p of c.phones) {
+          map.set(toE164NigerianPhone(p).replace(/^\+/, ''), c.name);
+        }
+      }
+      setPhoneToContactName(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Re-runs when `contactsVersion` bumps (a contact was just saved from
+    // profile/[id].tsx) — otherwise once per mount, since the Chats tab
+    // stays mounted for the app session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactsVersion]);
+
+  // The actual name-priority rule, in one place: device-saved contact
+  // name first, then the raw phone number — deliberately never this
+  // person's own self-chosen `display_name` as a fallback for an unsaved
+  // contact, per the explicit spec (a self-chosen name is exactly what a
+  // bad-faith contact could use to impersonate someone trusted).
+  const resolveContactName = (partner: {
+    display_name: string | null;
+    phone: string | null;
+  }): string => {
+    if (partner.phone) {
+      const contactName = phoneToContactName.get(partner.phone);
+      if (contactName) return contactName;
+      return `+${partner.phone}`;
+    }
+    return partner.display_name ?? 'Unnamed';
+  };
+
   const filteredThreads = (threads ?? []).filter((t) =>
-    (t.partner.display_name ?? '').toLowerCase().includes(search.trim().toLowerCase()),
+    resolveContactName(t.partner).toLowerCase().includes(search.trim().toLowerCase()),
   );
 
   // Search lives as the FlatList's own ListHeaderComponent, not the sticky
@@ -972,6 +1056,7 @@ export default function ChatsScreen() {
               onPress={() => router.push(`/thread/${item.id}`)}
               statusGroup={statusGroupByPosterId.get(item.partner.id)}
               onViewStatus={setStatusViewerGroup}
+              contactName={resolveContactName(item.partner)}
             />
           )}
           ListEmptyComponent={

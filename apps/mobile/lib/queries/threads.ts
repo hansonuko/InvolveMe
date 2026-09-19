@@ -20,6 +20,15 @@ export interface ThreadWithPartner {
     id: string;
     display_name: string | null;
     avatar_url: string | null;
+    /** No leading `+` (storage convention, docs/02-DATA-MODEL.md). Added
+     * punch-list item 1 (2026-09-19) — the chat list's own device-contact
+     * name resolution needs a phone number to match against, and the
+     * fallback for an unsaved contact is this phone number, never the
+     * partner's own self-chosen `display_name` (see ThreadRow). Same RLS
+     * (`users_select_own_or_thread_partner`) already lets a thread
+     * partner's phone be read — `thread/[id].tsx`'s own header info query
+     * already does exactly this. */
+    phone: string | null;
   };
   /** Real last-message text, resolved client-side below — `null` until a
    * thread has at least one message. */
@@ -78,7 +87,7 @@ export function useThreads(currentUserId: string | undefined) {
 
       const { data: partners, error: partnersError } = await supabase
         .from('users')
-        .select('id, display_name, avatar_url')
+        .select('id, display_name, avatar_url, phone')
         .in('id', partnerIds);
 
       if (partnersError) throw partnersError;
@@ -126,7 +135,7 @@ export function useThreads(currentUserId: string | undefined) {
         const partner = partnersById.get(partnerId);
         return {
           ...t,
-          partner: partner ?? { id: partnerId, display_name: null, avatar_url: null },
+          partner: partner ?? { id: partnerId, display_name: null, avatar_url: null, phone: null },
           last_message_body: lastBodyByThreadId.get(t.id) ?? null,
           unread_count: unreadByThreadId.get(t.id) ?? 0,
         };
