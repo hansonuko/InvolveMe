@@ -375,9 +375,6 @@ function GroupRow({ group, onPress }: { group: GroupThread; onPress: () => void 
         },
       ]}
     >
-      {/* No group avatar upload yet (docs/02-DATA-MODEL.md's group-threads
-          note, still-unresolved v2 list) — initials fallback via Avatar's
-          own displayName-only mode, same as any user with no avatar_url. */}
       <Avatar uri={group.avatar_url} displayName={group.name} size={AVATAR_SIZE} />
       <View style={{ flex: 1, marginLeft: spacing.md }}>
         <Text variant="bodyMedium">{group.name}</Text>
@@ -545,24 +542,93 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
   );
 }
 
+const GROUP_QUICK_ROW_AVATAR_SIZE = 56;
+const GROUP_QUICK_ROW_ITEM_WIDTH = 68;
+
+/** Horizontal "your groups" strip (punch-list item 3, 2026-09-19) — quick
+ * access to every group the user created or belongs to, one tap to open,
+ * without scrolling the full vertical list below it. A `FlatList`
+ * (`horizontal`) as the vertical group list's own `ListHeaderComponent`,
+ * not a separate `ScrollView` wrapping it — the standard RN-safe way to
+ * combine a horizontal strip with a vertical list below it; nesting a
+ * VirtualizedList inside a plain ScrollView is what actually triggers RN's
+ * nested-list warning, and this isn't that. */
+function GroupsQuickRow({
+  groups,
+  onPress,
+}: {
+  groups: GroupThread[];
+  onPress: (id: string) => void;
+}) {
+  const { spacing } = useTheme();
+  return (
+    <FlatList
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      data={groups}
+      keyExtractor={(g) => g.id}
+      contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.lg }}
+      renderItem={({ item }) => (
+        <Pressable
+          onPress={() => onPress(item.id)}
+          style={{ alignItems: 'center', width: GROUP_QUICK_ROW_ITEM_WIDTH }}
+        >
+          <Avatar
+            uri={item.avatar_url}
+            displayName={item.name}
+            size={GROUP_QUICK_ROW_AVATAR_SIZE}
+          />
+          <Text
+            variant="caption"
+            numberOfLines={1}
+            style={{ marginTop: spacing.xs, textAlign: 'center' }}
+          >
+            {item.name}
+          </Text>
+        </Pressable>
+      )}
+    />
+  );
+}
+
 /** Groups the current user belongs to — same list-row shape ThreadRow uses,
  * a dedicated component (not a shared FlatList with threads) because the
  * data source and empty/loading states are different, same reasoning
- * ContactsList already documents for itself. */
+ * ContactsList already documents for itself. Leads with the horizontal
+ * GroupsQuickRow (punch-list item 3) as its own header, only once there's
+ * at least one group to show in it. */
 function GroupsList() {
   const router = useRouter();
   const { session } = useSession();
   const { spacing } = useTheme();
   const { data: groups, isLoading, refetch, isRefetching } = useGroups(session?.user.id);
 
+  const openGroup = (groupId: string) => router.push(`/group-thread/${groupId}`);
+
   return (
     <FlatList
       data={groups ?? []}
       keyExtractor={(g) => g.id}
       contentContainerStyle={{ paddingTop: spacing.sm }}
-      renderItem={({ item }) => (
-        <GroupRow group={item} onPress={() => router.push(`/group-thread/${item.id}`)} />
-      )}
+      renderItem={({ item }) => <GroupRow group={item} onPress={() => openGroup(item.id)} />}
+      ListHeaderComponent={
+        groups && groups.length > 0 ? (
+          <View style={{ marginBottom: spacing.md }}>
+            <Text
+              variant="caption"
+              color="tertiary"
+              style={{
+                paddingHorizontal: spacing.lg,
+                marginBottom: spacing.sm,
+                textTransform: 'uppercase',
+              }}
+            >
+              Your groups
+            </Text>
+            <GroupsQuickRow groups={groups} onPress={openGroup} />
+          </View>
+        ) : null
+      }
       ListEmptyComponent={
         <View style={styles.empty}>
           <Text variant="body" color="tertiary">
