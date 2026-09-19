@@ -1,0 +1,21 @@
+-- Punch-list item 4 (2026-09-19): "chats don't deliver immediately until
+-- the user manually refreshes." Confirmed live, not assumed: `messages`
+-- and `wallets` are already members of the `supabase_realtime` publication
+-- (20260913061202_enable_realtime_messages_wallets.sql), and `messages`'
+-- own postgres_changes subscription (lib/queries/messages.ts) already
+-- keeps an *open thread* live. `threads` itself was never added, though —
+-- confirmed by querying pg_publication_tables directly and finding it
+-- absent. The mobile chat-list screen (lib/queries/threads.ts's
+-- useThreads) has no Realtime subscription today, so this migration alone
+-- doesn't fix the chat list; it's the prerequisite the mobile-side fix
+-- needs, per the exact same "missing publication membership fails
+-- silently, not loudly" lesson session 13's own migration already
+-- documented for messages/wallets.
+--
+-- Safe from an access-control standpoint, same reasoning as that earlier
+-- migration: Realtime enforces `threads`' existing RLS
+-- (threads_select_participant, 20260912072749_rls_policies.sql) for
+-- postgres_changes — enabling this only starts pushing updates for access
+-- that already existed, it doesn't loosen anything.
+
+alter publication supabase_realtime add table public.threads;
