@@ -14,6 +14,7 @@ import {
 
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { FullScreenAvatar } from '@/components/ui/FullScreenAvatar';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
@@ -171,6 +172,7 @@ export default function ProfileScreen() {
   const setMuted = useSetThreadMuted();
   const reportUser = useReportUser();
   const [reportOpen, setReportOpen] = useState(false);
+  const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
 
   const handleToggleMute = () => {
     if (!threadId || !relation) return;
@@ -241,7 +243,8 @@ export default function ProfileScreen() {
             </View>
 
             <View style={{ alignItems: 'center', marginTop: -AVATAR_SIZE / 2 }}>
-              <View
+              <Pressable
+                onPress={profile.avatar_url ? () => setAvatarViewerOpen(true) : undefined}
                 style={[
                   styles.avatarWrap,
                   { borderColor: colors.bgCanvas, backgroundColor: colors.bgCanvas },
@@ -252,7 +255,7 @@ export default function ProfileScreen() {
                   displayName={profile.display_name}
                   size={AVATAR_SIZE}
                 />
-              </View>
+              </Pressable>
               <Text variant="title" style={{ marginTop: spacing.md }}>
                 {profile.display_name ?? 'Unnamed'}
               </Text>
@@ -444,6 +447,12 @@ export default function ProfileScreen() {
         onClose={() => setReportOpen(false)}
         onSubmit={handleSubmitReport}
         submitting={reportUser.isPending}
+      />
+
+      <FullScreenAvatar
+        visible={avatarViewerOpen}
+        uri={profile?.avatar_url}
+        onClose={() => setAvatarViewerOpen(false)}
       />
     </>
   );

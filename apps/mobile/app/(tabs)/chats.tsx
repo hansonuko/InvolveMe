@@ -20,11 +20,13 @@ import { Button } from '@/components/ui/Button';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { StoryViewer } from '@/components/status/StoryViewer';
 import { type DeviceContact, useDeviceContacts } from '@/lib/contacts';
 import { shareInvite } from '@/lib/invite';
 import { type MatchedContactUser, useFindUsersByPhones } from '@/lib/queries/contacts';
 import { useFindUserByPhone, type FoundUser } from '@/lib/queries/findUserByPhone';
 import { type GroupThread, useCreateGroup, useGroups } from '@/lib/queries/groups';
+import { type StatusFeedGroup, useStatusFeed } from '@/lib/queries/status';
 import { type ThreadWithPartner, useStartThread, useThreads } from '@/lib/queries/threads';
 import { useSession } from '@/lib/hooks/useSession';
 import { toE164NigerianPhone } from '@/lib/phone';
@@ -53,10 +55,38 @@ function formatThreadTimestamp(iso: string) {
     : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function ThreadRow({ thread, onPress }: { thread: ThreadWithPartner; onPress: () => void }) {
+function ThreadRow({
+  thread,
+  onPress,
+  statusGroup,
+  onViewStatus,
+}: {
+  thread: ThreadWithPartner;
+  onPress: () => void;
+  /** This partner's active status, if any — undefined means no active
+   * status at all (ring hidden). Drives both the ring color (punch-list
+   * item 2, 2026-09-19: deep-wine/gold while `hasUnseen`, gray once
+   * every status in it has been viewed) and the avatar tap behavior. */
+  statusGroup?: StatusFeedGroup;
+  onViewStatus?: (group: StatusFeedGroup) => void;
+}) {
   const { colors, spacing, radius } = useTheme();
   const router = useRouter();
   const [sheetVisible, setSheetVisible] = useState(false);
+
+  // Tapping the avatar goes straight to viewing an unseen status (the
+  // whole point of the ring is "something new to see") — once every
+  // status in the group has already been viewed, the ring turns gray and
+  // the avatar tap reverts to the pre-existing default (the
+  // Message/Profile action sheet), per the user's own explicit spec
+  // rather than always opening the viewer the way some reference apps do.
+  const handleAvatarPress = () => {
+    if (statusGroup?.hasUnseen && onViewStatus) {
+      onViewStatus(statusGroup);
+    } else {
+      setSheetVisible(true);
+    }
+  };
 
   return (
     <Pressable
@@ -70,11 +100,12 @@ function ThreadRow({ thread, onPress }: { thread: ThreadWithPartner; onPress: ()
         },
       ]}
     >
-      <Pressable onPress={() => setSheetVisible(true)} hitSlop={4}>
+      <Pressable onPress={handleAvatarPress} hitSlop={4}>
         <Avatar
           uri={thread.partner.avatar_url}
           displayName={thread.partner.display_name}
           size={AVATAR_SIZE}
+          ringVariant={statusGroup ? (statusGroup.hasUnseen ? 'unseen' : 'seen') : 'none'}
         />
       </Pressable>
       <ActionSheet
@@ -598,10 +629,18 @@ function ContactRow({
   contact,
   user,
   onPress,
+  statusGroup,
 }: {
   contact: DeviceContact;
   user: MatchedContactUser | null;
   onPress: () => void;
+  /** Visual only here (punch-list item 2's "app wide where found") — this
+   * row's own tap already does one thing (open the chat, or share an
+   * invite) depending on `user`, unlike ThreadRow's separate avatar-tap
+   * target, so viewing a status from here isn't wired in to avoid
+   * splitting that existing single-tap behavior into two zones for a
+   * screen the user didn't explicitly ask to change. */
+  statusGroup?: StatusFeedGroup;
 }) {
   const { colors, spacing } = useTheme();
   return (
@@ -619,6 +658,7 @@ function ContactRow({
         uri={user?.avatar_url ?? null}
         displayName={contact.name ?? user?.display_name ?? null}
         size={52}
+        ringVariant={statusGroup ? (statusGroup.hasUnseen ? 'unseen' : 'seen') : 'none'}
       />
       <View style={{ flex: 1, marginLeft: spacing.md }}>
         <Text variant="bodyMedium">{contact.name ?? user?.display_name ?? 'Unnamed'}</Text>
@@ -652,9 +692,14 @@ function ContactRow({
 function ContactsList() {
   const router = useRouter();
   const { colors, spacing, radius } = useTheme();
+  const { session } = useSession();
   const { status, error, sync } = useDeviceContacts();
   const findUsers = useFindUsersByPhones();
   const startThread = useStartThread();
+  // Same queryKey as ChatsScreen's own useStatusFeed call — TanStack Query
+  // dedupes this to the shared cache, not a second network round-trip.
+  const { data: statusFeed } = useStatusFeed(session?.user.id);
+  const statusGroupByPosterId = new Map((statusFeed ?? []).map((g) => [g.poster.id, g]));
   const [contacts, setContacts] = useState<DeviceContact[]>([]);
   const [search, setSearch] = useState('');
 
@@ -815,6 +860,7 @@ function ContactsList() {
           contact={item.contact}
           user={item.user}
           onPress={() => (item.user ? handleOpenChat(item.user) : void shareInvite())}
+          statusGroup={item.user ? statusGroupByPosterId.get(item.user.id) : undefined}
         />
       )}
     />
@@ -831,6 +877,9 @@ export default function ChatsScreen() {
     refetch: refetchThreads,
     isRefetching,
   } = useThreads(session?.user.id);
+  const { data: statusFeed } = useStatusFeed(session?.user.id);
+  const statusGroupByPosterId = new Map((statusFeed ?? []).map((g) => [g.poster.id, g]));
+  const [statusViewerGroup, setStatusViewerGroup] = useState<StatusFeedGroup | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [groupModalVisible, setGroupModalVisible] = useState(false);
   const [subTab, setSubTab] = useState<ChatsSubTab>('chats');
@@ -918,7 +967,12 @@ export default function ChatsScreen() {
           keyExtractor={(t) => t.id}
           ListHeaderComponent={searchBar}
           renderItem={({ item }) => (
-            <ThreadRow thread={item} onPress={() => router.push(`/thread/${item.id}`)} />
+            <ThreadRow
+              thread={item}
+              onPress={() => router.push(`/thread/${item.id}`)}
+              statusGroup={statusGroupByPosterId.get(item.partner.id)}
+              onViewStatus={setStatusViewerGroup}
+            />
           )}
           ListEmptyComponent={
             <View style={styles.empty}>
@@ -943,6 +997,15 @@ export default function ChatsScreen() {
 
       <NewChatModal visible={modalVisible} onClose={() => setModalVisible(false)} />
       <NewGroupModal visible={groupModalVisible} onClose={() => setGroupModalVisible(false)} />
+
+      {statusViewerGroup ? (
+        <StoryViewer
+          feed={[statusViewerGroup]}
+          initialPosterIndex={0}
+          currentUserId={session?.user.id}
+          onClose={() => setStatusViewerGroup(null)}
+        />
+      ) : null}
     </Screen>
   );
 }
