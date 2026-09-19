@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { ActionSheet } from '@/components/ui/ActionSheet';
+import { ActionSheet, type ActionSheetAction } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { BuyCreditModal } from '@/components/ui/BuyCreditModal';
@@ -26,6 +26,8 @@ import { useSession } from '@/lib/hooks/useSession';
 import {
   type InsufficientCreditDetails,
   type Message,
+  useDeleteMessageForEveryone,
+  useDeleteMessageForMe,
   useEditMessage,
   useSendMessage,
   useThreadMessages,
@@ -368,7 +370,10 @@ function MessageBubble({
   isOwn,
   isRead,
   readAt,
-  onRequestEdit,
+  selectionMode,
+  isSelected,
+  onOpenActions,
+  onToggleSelect,
 }: {
   message: Message;
   isOwn: boolean;
@@ -389,25 +394,46 @@ function MessageBubble({
    * and for older ones is the same real timestamp, just not necessarily
    * the instant that specific message scrolled into view. */
   readAt?: string | null;
-  /** Only ever called for a message that's actually editable (own,
-   * still `status: 'escrowed'`) — see the long-press wiring below, which
-   * only attaches this handler at all when that's true. The real edit
-   * window is still enforced server-side regardless (fn_edit_message);
-   * this is a UX affordance, not the safety net. */
-  onRequestEdit?: (message: Message) => void;
+  /** Multi-select (punch-list item 5, 2026-09-19) — while active, a tap
+   * toggles this bubble's selection instead of doing nothing; long-press
+   * still opens the same action sheet every message gets regardless. */
+  selectionMode: boolean;
+  isSelected: boolean;
+  /** Long-press always opens the action sheet now (Edit/Delete for me/
+   * Delete for everyone/Select), not just for editable messages — before
+   * punch-list item 5 this was gated to `isEditable` only, which meant a
+   * non-editable message had no long-press affordance at all. */
+  onOpenActions: (message: Message) => void;
+  onToggleSelect: (messageId: string) => void;
 }) {
   const { colors, spacing, radius } = useTheme();
-  const isEditable = isOwn && message.status === 'escrowed';
+  const isDeleted = message.deleted_for_everyone;
+  const dimInverseText = isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined;
 
   return (
     <View
       style={[
         styles.bubbleRow,
-        { justifyContent: isOwn ? 'flex-end' : 'flex-start', marginBottom: spacing.sm },
+        {
+          justifyContent: isOwn ? 'flex-end' : 'flex-start',
+          marginBottom: spacing.sm,
+          backgroundColor: isSelected ? withAlpha(colors.brandPrimary, 0.12) : 'transparent',
+          borderRadius: radius.card,
+        },
       ]}
     >
+      {selectionMode ? (
+        <View style={{ justifyContent: 'center', paddingHorizontal: spacing.sm }}>
+          <Ionicons
+            name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+            size={22}
+            color={isSelected ? colors.brandPrimary : colors.textTertiary}
+          />
+        </View>
+      ) : null}
       <Pressable
-        onLongPress={isEditable ? () => onRequestEdit?.(message) : undefined}
+        onPress={selectionMode ? () => onToggleSelect(message.id) : undefined}
+        onLongPress={() => onOpenActions(message)}
         style={[
           styles.bubble,
           {
@@ -417,48 +443,40 @@ function MessageBubble({
           },
         ]}
       >
-        <Text variant="body" color={isOwn ? 'inverse' : undefined}>
-          {message.body}
-        </Text>
-        <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
+        {isDeleted ? (
           <Text
-            variant="caption"
-            color={isOwn ? undefined : 'secondary'}
-            style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
+            variant="body"
+            color={isOwn ? 'inverse' : 'secondary'}
+            style={[{ fontStyle: 'italic' }, dimInverseText]}
           >
-            {message.credits_charged} cr
+            This message was deleted
           </Text>
-          {message.edited_at ? (
-            <Text
-              variant="caption"
-              color={isOwn ? undefined : 'secondary'}
-              style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
-            >
+        ) : (
+          <Text variant="body" color={isOwn ? 'inverse' : undefined}>
+            {message.body}
+          </Text>
+        )}
+        <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
+          {!isDeleted ? (
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
+              {message.credits_charged} cr
+            </Text>
+          ) : null}
+          {!isDeleted && message.edited_at ? (
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
               · Edited
             </Text>
           ) : null}
-          {message.status === 'escrowed' ? (
-            <Text
-              variant="caption"
-              color={isOwn ? undefined : 'secondary'}
-              style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
-            >
+          {!isDeleted && message.status === 'escrowed' ? (
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
               · awaiting reply
             </Text>
-          ) : message.status === 'refunded' ? (
-            <Text
-              variant="caption"
-              color={isOwn ? undefined : 'secondary'}
-              style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
-            >
+          ) : !isDeleted && message.status === 'refunded' ? (
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
               · refunded
             </Text>
           ) : null}
-          <Text
-            variant="caption"
-            color={isOwn ? undefined : 'secondary'}
-            style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
-          >
+          <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
             {formatMessageTime(message.created_at)}
             {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
           </Text>
@@ -513,12 +531,21 @@ export default function ThreadScreen() {
   const { session } = useSession();
   const currentUserId = session?.user.id;
 
-  const { data: messages, isLoading } = useThreadMessages(id);
+  const { data: messages, isLoading } = useThreadMessages(id, currentUserId);
   const sendMessage = useSendMessage();
   const editMessage = useEditMessage();
+  const deleteForMe = useDeleteMessageForMe();
+  const deleteForEveryone = useDeleteMessageForEveryone();
   const markThreadRead = useMarkThreadRead();
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
-  const [editSheetMessage, setEditSheetMessage] = useState<Message | null>(null);
+  const [actionSheetMessage, setActionSheetMessage] = useState<Message | null>(null);
+  // Multi-select (punch-list item 5, 2026-09-19) — "Select" in a message's
+  // own long-press menu turns this on, pre-selecting that message; further
+  // taps toggle other messages while it stays on. Exited via the header's
+  // close button or once the last selection is toggled off.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const [headerRefetchKey, setHeaderRefetchKey] = useState(0);
   const headerInfo = useThreadHeaderInfo(id, currentUserId, headerRefetchKey);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -695,15 +722,163 @@ export default function ThreadScreen() {
     composerInputRef.current?.focus();
   };
 
+  const enterSelection = (messageId: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([messageId]));
+  };
+
+  const exitSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
+  // Toggling the last-selected message off exits selection mode entirely
+  // — an empty "0 selected" toolbar would just be confusing dead UI.
+  const toggleSelected = (messageId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+        if (next.size === 0) setSelectionMode(false);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  };
+
+  const handleDeleteForMe = (message: Message) => {
+    if (!id) return;
+    Alert.alert('Delete this message?', 'This will delete it for you only.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          deleteForMe.mutate(
+            { threadId: id, messageId: message.id },
+            { onError: (error) => Alert.alert('Could not delete', error.message) },
+          ),
+      },
+    ]);
+  };
+
+  const handleDeleteForEveryone = (message: Message) => {
+    if (!id) return;
+    Alert.alert('Delete for everyone?', 'This message will be deleted for everyone in this chat.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          deleteForEveryone.mutate(
+            { threadId: id, messageId: message.id },
+            { onError: (error) => Alert.alert('Could not delete', error.message) },
+          ),
+      },
+    ]);
+  };
+
+  const selectedMessages = (messages ?? []).filter((m) => selectedIds.has(m.id));
+  // "Delete for everyone" only offered on a multi-select batch when every
+  // selected message is the caller's own and not already a tombstone —
+  // same all-or-nothing rule WhatsApp's own multi-select applies (mixing
+  // in someone else's message hides the option entirely rather than
+  // silently skipping it).
+  const canBatchDeleteForEveryone =
+    selectedMessages.length > 0 &&
+    selectedMessages.every((m) => m.sender_id === currentUserId && !m.deleted_for_everyone);
+
+  const runBatchDelete = async (mode: 'me' | 'everyone') => {
+    if (!id) return;
+    setBatchDeleting(true);
+    const ids = [...selectedIds];
+    const results = await Promise.allSettled(
+      ids.map((messageId) =>
+        mode === 'me'
+          ? deleteForMe.mutateAsync({ threadId: id, messageId })
+          : deleteForEveryone.mutateAsync({ threadId: id, messageId }),
+      ),
+    );
+    setBatchDeleting(false);
+    exitSelection();
+    const failures = results.filter((r) => r.status === 'rejected').length;
+    if (failures > 0) {
+      Alert.alert(
+        'Some messages could not be deleted',
+        `${failures} of ${ids.length} failed — they may be outside the delete window or already removed.`,
+      );
+    }
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedIds.size === 0) return;
+    Alert.alert(
+      `Delete ${selectedIds.size} message${selectedIds.size > 1 ? 's' : ''}?`,
+      undefined,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete for me', style: 'destructive', onPress: () => void runBatchDelete('me') },
+        ...(canBatchDeleteForEveryone
+          ? [
+              {
+                text: 'Delete for everyone',
+                style: 'destructive' as const,
+                onPress: () => void runBatchDelete('everyone'),
+              },
+            ]
+          : []),
+      ],
+    );
+  };
+
+  const actionSheetActions: ActionSheetAction[] = actionSheetMessage
+    ? [
+        ...(actionSheetMessage.sender_id === currentUserId &&
+        actionSheetMessage.status === 'escrowed' &&
+        !actionSheetMessage.deleted_for_everyone
+          ? [{ label: 'Edit', onPress: () => handleRequestEdit(actionSheetMessage) }]
+          : []),
+        {
+          label: 'Delete for me',
+          destructive: true,
+          onPress: () => handleDeleteForMe(actionSheetMessage),
+        },
+        ...(actionSheetMessage.sender_id === currentUserId &&
+        !actionSheetMessage.deleted_for_everyone
+          ? [
+              {
+                label: 'Delete for everyone',
+                destructive: true,
+                onPress: () => handleDeleteForEveryone(actionSheetMessage),
+              },
+            ]
+          : []),
+        { label: 'Select', onPress: () => enterSelection(actionSheetMessage.id) },
+      ]
+    : [];
+
   return (
     <>
       <Stack.Screen
         options={{
           headerShown: true,
-          title: partnerDisplayName ?? 'Chat',
+          title: selectionMode ? `${selectedIds.size} selected` : (partnerDisplayName ?? 'Chat'),
           headerStyle: { backgroundColor: colors.bgCanvas },
           headerTintColor: colors.textSecondary,
           headerTitleStyle: { color: colors.textPrimary },
+          // Selection-mode toolbar (punch-list item 5, 2026-09-19) swaps
+          // the whole header: a close button on the left instead of the
+          // native back arrow, a plain "N selected" title (falls back to
+          // the `title` string above once `headerTitle` is undefined), and
+          // a delete icon on the right instead of the ⋮ menu.
+          headerLeft: selectionMode
+            ? () => (
+                <Pressable onPress={exitSelection} hitSlop={12} style={{ marginLeft: 8 }}>
+                  <Ionicons name="close" size={22} color={colors.textSecondary} />
+                </Pressable>
+              )
+            : undefined,
           // Custom headerTitle (not just the `title` string above, which
           // still drives the OS-level back-swipe label) so the avatar can
           // render alongside the name/phone-fallback text.
@@ -711,48 +886,60 @@ export default function ThreadScreen() {
           // profile (name + InvolveMe About), the same screen the chat
           // list's own avatar tap already reaches, just from inside an
           // open conversation too (2026-09-18 punch-list item 12).
-          headerTitle: () =>
-            headerInfo ? (
-              <Pressable
-                onPress={() =>
-                  router.push({
-                    pathname: '/profile/[id]',
-                    params: { id: headerInfo.partnerId, threadId: id },
-                  })
-                }
-                hitSlop={8}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-              >
-                <Avatar
-                  uri={headerInfo.partnerAvatarUrl}
-                  displayName={partnerDisplayName}
-                  size={32}
-                />
-                <View>
-                  <Text variant="bodyMedium" numberOfLines={1} style={{ maxWidth: 160 }}>
-                    {partnerDisplayName ?? 'Chat'}
-                  </Text>
-                  {lastSeenText ? (
-                    <Text
-                      variant="caption"
-                      color="tertiary"
-                      numberOfLines={1}
-                      style={{ maxWidth: 160 }}
-                    >
-                      {lastSeenText}
-                    </Text>
-                  ) : null}
-                </View>
-              </Pressable>
-            ) : (
-              <Text variant="bodyMedium">Chat</Text>
-            ),
-          headerRight: () =>
-            headerInfo ? (
-              <Pressable onPress={() => setMenuVisible(true)} hitSlop={12}>
-                <Ionicons name="ellipsis-vertical" size={22} color={colors.textSecondary} />
-              </Pressable>
-            ) : null,
+          headerTitle: selectionMode
+            ? undefined
+            : () =>
+                headerInfo ? (
+                  <Pressable
+                    onPress={() =>
+                      router.push({
+                        pathname: '/profile/[id]',
+                        params: { id: headerInfo.partnerId, threadId: id },
+                      })
+                    }
+                    hitSlop={8}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                  >
+                    <Avatar
+                      uri={headerInfo.partnerAvatarUrl}
+                      displayName={partnerDisplayName}
+                      size={32}
+                    />
+                    <View>
+                      <Text variant="bodyMedium" numberOfLines={1} style={{ maxWidth: 160 }}>
+                        {partnerDisplayName ?? 'Chat'}
+                      </Text>
+                      {lastSeenText ? (
+                        <Text
+                          variant="caption"
+                          color="tertiary"
+                          numberOfLines={1}
+                          style={{ maxWidth: 160 }}
+                        >
+                          {lastSeenText}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                ) : (
+                  <Text variant="bodyMedium">Chat</Text>
+                ),
+          headerRight: selectionMode
+            ? () => (
+                <Pressable onPress={handleBatchDelete} hitSlop={12} disabled={batchDeleting}>
+                  <Ionicons
+                    name="trash-outline"
+                    size={22}
+                    color={batchDeleting ? colors.textTertiary : colors.textSecondary}
+                  />
+                </Pressable>
+              )
+            : () =>
+                headerInfo ? (
+                  <Pressable onPress={() => setMenuVisible(true)} hitSlop={12}>
+                    <Ionicons name="ellipsis-vertical" size={22} color={colors.textSecondary} />
+                  </Pressable>
+                ) : null,
         }}
       />
       <Screen style={{ paddingHorizontal: 0 }}>
@@ -806,7 +993,10 @@ export default function ThreadScreen() {
                     isOwn={isOwn}
                     isRead={isRead}
                     readAt={headerInfo?.partnerLastReadAt}
-                    onRequestEdit={setEditSheetMessage}
+                    selectionMode={selectionMode}
+                    isSelected={selectedIds.has(item.id)}
+                    onOpenActions={setActionSheetMessage}
+                    onToggleSelect={toggleSelected}
                   />
                 );
               }}
@@ -948,13 +1138,9 @@ export default function ThreadScreen() {
       <BuyCreditModal visible={buyCreditVisible} onClose={() => setBuyCreditVisible(false)} />
 
       <ActionSheet
-        visible={!!editSheetMessage}
-        onClose={() => setEditSheetMessage(null)}
-        actions={
-          editSheetMessage
-            ? [{ label: 'Edit', onPress: () => handleRequestEdit(editSheetMessage) }]
-            : []
-        }
+        visible={!!actionSheetMessage}
+        onClose={() => setActionSheetMessage(null)}
+        actions={actionSheetActions}
       />
     </>
   );
