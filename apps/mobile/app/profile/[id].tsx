@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Contact, requestPermissionsAsync } from 'expo-contacts';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -9,6 +10,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  TextInput,
   View,
 } from 'react-native';
 
@@ -17,10 +19,14 @@ import { Button } from '@/components/ui/Button';
 import { FullScreenAvatar } from '@/components/ui/FullScreenAvatar';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { withAppLockSuppressed } from '@/lib/appLock';
+import { useDeviceContacts } from '@/lib/contacts';
+import { useContactsChangedStore } from '@/lib/contactsChangedStore';
 import { useSession } from '@/lib/hooks/useSession';
 import { useThreadSharedLinks } from '@/lib/queries/messages';
 import { usePublicProfile, useReportUser } from '@/lib/queries/profile';
 import { useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
+import { toE164NigerianPhone } from '@/lib/phone';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/theme';
 
@@ -149,6 +155,122 @@ function ReportModal({
   );
 }
 
+/**
+ * "Save to device" (punch-list item 1, 2026-09-19) — only ever shown for
+ * a contact not already saved (see ProfileScreen's own `isPhoneSaved`
+ * check). The name field defaults to the profile's own self-chosen
+ * `display_name` (explicitly optional to keep, per the ask — "optional
+ * to use the already displayed profile name, or save with different
+ * name") but is always editable before saving. Writes via `Contact.create`
+ * (expo-contacts — the same module `useDeviceContacts` already reads
+ * with; both `READ_CONTACTS`/`WRITE_CONTACTS` are already declared by
+ * its own config plugin, confirmed by reading `withContacts.js` directly,
+ * so this needed no new native permission or build). Bumps
+ * `useContactsChangedStore` on success so the chat list's own
+ * device-contact name resolution (chats.tsx) picks up the new name
+ * immediately, per the explicit "synchronise contact with device" ask.
+ */
+function SaveContactModal({
+  visible,
+  onClose,
+  phone,
+  suggestedName,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  phone: string;
+  suggestedName: string | null;
+}) {
+  const { colors, spacing, radius } = useTheme();
+  const bumpContactsChanged = useContactsChangedStore((s) => s.bump);
+  // Initialized fresh on every open, not reset via an effect — the call
+  // site below remounts this component (a `key` that flips with
+  // `visible`) each time it opens, the React-docs-recommended way to
+  // "reset state when [something] changes" without a setState-in-effect
+  // cascade.
+  const [name, setName] = useState(suggestedName ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      // Same background-risk bracket useDeviceContacts.sync() already
+      // documents — the OS permission dialog can fully background this
+      // app on Android.
+      const permission = await withAppLockSuppressed(() => requestPermissionsAsync());
+      if (!permission.granted) {
+        setError('Allow contacts access to save this contact.');
+        return;
+      }
+      await Contact.create({
+        givenName: name.trim(),
+        phones: [{ number: `+${phone}`, label: 'mobile' }],
+      });
+      bumpContactsChanged();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save contact.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <Pressable
+          style={[
+            styles.reportCard,
+            { backgroundColor: colors.bgSurface, borderRadius: radius.card },
+          ]}
+        >
+          <Text variant="bodyMedium" style={{ padding: spacing.lg, paddingBottom: spacing.sm }}>
+            Save to contacts
+          </Text>
+          <View style={{ paddingHorizontal: spacing.lg, gap: spacing.sm }}>
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Contact name"
+              placeholderTextColor={colors.textTertiary}
+              maxLength={60}
+              style={{
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                backgroundColor: colors.bgSurfaceAlt,
+                color: colors.textPrimary,
+                borderRadius: radius.card,
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                fontSize: 17,
+              }}
+            />
+            <Text variant="caption" color="tertiary">
+              +{phone}
+            </Text>
+            {error ? (
+              <Text variant="caption" color="danger">
+                {error}
+              </Text>
+            ) : null}
+          </View>
+          <View style={{ padding: spacing.lg, gap: spacing.sm }}>
+            <Button
+              label={saving ? 'Saving…' : 'Save'}
+              onPress={handleSave}
+              disabled={!name.trim() || saving}
+            />
+            <Button label="Cancel" variant="secondary" onPress={onClose} disabled={saving} />
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 /** Another user's profile — reached from a chat-row avatar's "Profile"
  * action or the open-thread header (see chats.tsx's ThreadRow and
  * thread/[id].tsx's headerTitle). `threadId` is an optional param: entry
@@ -173,6 +295,31 @@ export default function ProfileScreen() {
   const reportUser = useReportUser();
   const [reportOpen, setReportOpen] = useState(false);
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
+
+  // "Save to device" (punch-list item 1) — only offered when this phone
+  // number isn't already saved on the device. `null` means "not checked
+  // yet," deliberately distinct from `false`, so the button doesn't
+  // flash on screen for a moment before the real answer comes back.
+  const { sync: syncDeviceContacts } = useDeviceContacts();
+  const [isPhoneSaved, setIsPhoneSaved] = useState<boolean | null>(null);
+  const [saveContactOpen, setSaveContactOpen] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.phone) return;
+    let cancelled = false;
+    (async () => {
+      const deviceContacts = await syncDeviceContacts();
+      if (cancelled) return;
+      const saved = deviceContacts.some((c) =>
+        c.phones.some((p) => toE164NigerianPhone(p).replace(/^\+/, '') === profile.phone),
+      );
+      setIsPhoneSaved(saved);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.phone]);
 
   const handleToggleMute = () => {
     if (!threadId || !relation) return;
@@ -299,6 +446,23 @@ export default function ProfileScreen() {
                   <Ionicons name="call-outline" size={20} color={colors.textSecondary} />
                   <Text variant="body">+{profile.phone}</Text>
                 </View>
+                {isPhoneSaved === false ? (
+                  <Pressable
+                    onPress={() => setSaveContactOpen(true)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: spacing.lg,
+                      paddingVertical: spacing.sm,
+                      gap: spacing.md,
+                    }}
+                  >
+                    <Ionicons name="person-add-outline" size={20} color={colors.brandPrimary} />
+                    <Text variant="body" color="brand">
+                      Save to contacts
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
             ) : null}
 
@@ -454,6 +618,16 @@ export default function ProfileScreen() {
         uri={profile?.avatar_url}
         onClose={() => setAvatarViewerOpen(false)}
       />
+
+      {profile?.phone ? (
+        <SaveContactModal
+          key={saveContactOpen ? 'open' : 'closed'}
+          visible={saveContactOpen}
+          onClose={() => setSaveContactOpen(false)}
+          phone={profile.phone}
+          suggestedName={profile.display_name}
+        />
+      ) : null}
     </>
   );
 }
