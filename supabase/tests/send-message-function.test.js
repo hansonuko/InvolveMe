@@ -579,6 +579,90 @@ async function testClientMessageIdempotency(admin) {
   await deleteTestUser(admin, B);
 }
 
+// =============================================================================
+// Test 4: reply/forward (docs, punch-list item 1 chat-actions pass) —
+// reply_to_message_id must be a real message in the *same* thread (never
+// trusted blindly from the client), and is_forwarded is purely a display
+// tag that never changes billing.
+// =============================================================================
+
+async function testReplyAndForward(admin) {
+  const A = await createTestUser();
+  const B = await createTestUser();
+  const C = await createTestUser();
+  const tokenA = mintAccessToken(A);
+
+  const aWallet = await walletRow(admin, A, 'topup_credit');
+  await admin.query(
+    `insert into public.ledger_entries (wallet_id, amount, reason) values ($1, 20, 'manual_adjustment')`,
+    [aWallet.id],
+  );
+
+  const first = await callSendMessage(tokenA, { recipient_id: B, body: wordMessage(10) });
+  const threadId = first.json.thread_id;
+  const firstMessageId = first.json.message_id;
+
+  const reply = await callSendMessage(tokenA, {
+    thread_id: threadId,
+    body: 'replying to my own first message',
+    reply_to_message_id: firstMessageId,
+  });
+  log(
+    'a reply to a real message in the same thread succeeds',
+    reply.status === 200,
+    JSON.stringify(reply.json),
+  );
+
+  const replyRow = (
+    await admin.query('select reply_to_message_id from public.messages where id = $1', [
+      reply.json.message_id,
+    ])
+  ).rows[0];
+  log(
+    'reply_to_message_id is actually stored on the new message',
+    replyRow.reply_to_message_id === firstMessageId,
+    `stored=${replyRow.reply_to_message_id}`,
+  );
+
+  // A second thread (A/C) that firstMessageId has nothing to do with — a
+  // reply_to_message_id from a completely different thread must be
+  // rejected, not silently accepted (it would otherwise let a client quote
+  // into a conversation it has no business referencing).
+  const otherThread = await callSendMessage(tokenA, { recipient_id: C, body: 'hi C' });
+  const crossThreadReply = await callSendMessage(tokenA, {
+    thread_id: otherThread.json.thread_id,
+    body: 'trying to quote a message from a different thread',
+    reply_to_message_id: firstMessageId,
+  });
+  log(
+    'a reply_to_message_id from a different thread is rejected',
+    crossThreadReply.status === 400 && crossThreadReply.json?.error === 'invalid_reply_target',
+    JSON.stringify(crossThreadReply.json),
+  );
+
+  const forwarded = await callSendMessage(tokenA, {
+    thread_id: threadId,
+    body: 'this is a forwarded message',
+    is_forwarded: true,
+  });
+  const forwardedRow = (
+    await admin.query('select is_forwarded, credits_charged from public.messages where id = $1', [
+      forwarded.json.message_id,
+    ])
+  ).rows[0];
+  log(
+    'is_forwarded is stored and billed exactly like a normal message (not free)',
+    forwardedRow.is_forwarded === true && Number(forwardedRow.credits_charged) > 0,
+    JSON.stringify(forwardedRow),
+  );
+
+  await deleteTestThread(admin, threadId);
+  await deleteTestThread(admin, otherThread.json.thread_id);
+  await deleteTestUser(admin, A);
+  await deleteTestUser(admin, B);
+  await deleteTestUser(admin, C);
+}
+
 async function main() {
   const admin = new Client({ connectionString: DB_URL, ssl: { rejectUnauthorized: false } });
   admin.on('error', (e) => process.stderr.write(`[connection error, non-fatal] ${e.message}\n`));
@@ -605,6 +689,7 @@ async function main() {
     await testFullPaidExchange(admin);
     await testErrorMapping(admin);
     await testClientMessageIdempotency(admin);
+    await testReplyAndForward(admin);
   } finally {
     deno.kill();
     await admin.end();

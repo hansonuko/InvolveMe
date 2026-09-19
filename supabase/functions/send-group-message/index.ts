@@ -21,6 +21,9 @@ interface SendGroupMessageRequestBody {
   // Offline outbox replay key (docs/13-OFFLINE-MODE-SCOPING.md) — see
   // send-message/index.ts's identical field for the full rationale.
   client_message_id?: string;
+  // Display-only "Forwarded" tag — see migration 20260920090000's header
+  // comment for why this never affects billing (this path is free anyway).
+  is_forwarded?: boolean;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -137,6 +140,7 @@ Deno.serve(async (req) => {
       p_sender_id: user.id,
       p_body: payload.body,
       p_client_message_id: payload.client_message_id ?? null,
+      p_is_forwarded: payload.is_forwarded ?? false,
     })
     .single();
 

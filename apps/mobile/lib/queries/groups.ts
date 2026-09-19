@@ -157,6 +157,9 @@ export interface GroupMessage {
   body: string;
   word_count: number;
   created_at: string;
+  /** Display-only "Forwarded" tag — see Message.is_forwarded's own comment
+   * in lib/queries/messages.ts. */
+  is_forwarded: boolean;
 }
 
 /** Messages in a group, oldest first, kept live via Realtime — same shape
@@ -171,7 +174,7 @@ export function useGroupMessages(groupThreadId: string | undefined) {
     queryFn: async (): Promise<GroupMessage[]> => {
       const { data, error } = await supabase
         .from('group_messages')
-        .select('id, group_thread_id, sender_id, body, word_count, created_at')
+        .select('id, group_thread_id, sender_id, body, word_count, created_at, is_forwarded')
         .eq('group_thread_id', groupThreadId as string)
         .order('created_at', { ascending: true });
 
@@ -227,6 +230,9 @@ interface SendGroupMessageRequest {
   /** Offline outbox replay key — see SendMessageRequest's identical field
    * in lib/queries/messages.ts for the full rationale. */
   clientMessageId?: string;
+  /** Display-only "Forwarded" tag — see Message.is_forwarded's own comment
+   * in lib/queries/messages.ts. */
+  isForwarded?: boolean;
 }
 
 interface SendGroupMessageResponse {
@@ -248,6 +254,7 @@ export function useSendGroupMessage() {
         group_thread_id: request.groupThreadId,
         body: request.body,
         client_message_id: request.clientMessageId,
+        is_forwarded: request.isForwarded,
       }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['groupMessages', variables.groupThreadId] });

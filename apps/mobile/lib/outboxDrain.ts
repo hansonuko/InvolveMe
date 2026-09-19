@@ -48,6 +48,8 @@ export function useOutboxDrain(currentUserId: string | undefined) {
                 recipient_id: next.target.recipientId,
                 body: next.body,
                 client_message_id: next.clientMessageId,
+                reply_to_message_id: next.replyToMessageId,
+                is_forwarded: next.isForwarded,
               });
               queryClient.invalidateQueries({ queryKey: ['messages', res.thread_id] });
               queryClient.invalidateQueries({ queryKey: ['threads'] });
@@ -57,6 +59,7 @@ export function useOutboxDrain(currentUserId: string | undefined) {
                 group_thread_id: next.target.groupThreadId,
                 body: next.body,
                 client_message_id: next.clientMessageId,
+                is_forwarded: next.isForwarded,
               });
               queryClient.invalidateQueries({
                 queryKey: ['groupMessages', next.target.groupThreadId],
