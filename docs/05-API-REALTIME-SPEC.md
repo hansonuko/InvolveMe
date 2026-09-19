@@ -35,6 +35,22 @@ Response now includes `thread_id` — required so the client can continue the co
 
 **Push notification side effect (added 2026-09-14):** after a successful send, the recipient gets a best-effort Expo push notification (`_shared/push.ts`'s `sendPushToUser`, fired via `EdgeRuntime.waitUntil` so it can never delay or fail this response) with the sender's `display_name` as title and a truncated message preview as body. Silently a no-op if the recipient has no row in `push_tokens` (no dedicated notification-preference flag exists — see that table's note in `docs/02-DATA-MODEL.md`).
 
+### `POST /functions/v1/edit-message`
+
+```jsonc
+// Request
+{ "message_id": "uuid", "body": "text (must not require more credits than were already charged)" }
+
+// Response 200
+{ "message_id": "uuid", "word_count": 45, "credits_charged": 2, "edited_at": "2026-09-19T03:09:25.437Z" }
+```
+
+Added punch-list item 2 (2026-09-19). Never re-bills: `credits_charged` in the response is always the _original_ charged amount, unchanged — editing only ever calls `fn_edit_message`, never `fn_send_message` again. Server steps: authenticate → content-moderation check (same gate `send-message` uses, same fail-open-on-provider-outage posture) → `fn_edit_message(message_id, sender_id, new_body)`, which — inside one row-locked transaction — verifies the caller is the original sender, the message is still `status = 'escrowed'` (the payee hasn't replied yet and it hasn't expired — once `released`/`refunded` the transaction it represents is settled and content can no longer change), the edit is within `message_edit_window_minutes` of `created_at` (config, default 15 — the same real-world window WhatsApp itself uses), and the new word count's required credits don't exceed what was already charged (compared directly against the stored `credits_charged`, not a recomputed "original tier," so a `pricing_config` change between send and edit can't create drift). A shrink or same-tier edit is always allowed; crossing into a more expensive tier is rejected outright (`edit_would_increase_cost`) rather than silently truncated.
+
+Error codes: `message_not_found` (404), `not_the_sender` (403), `message_not_editable` (409, wrong status), `edit_window_expired` (409), `empty_message` (400), `message_too_long` (400), `edit_would_increase_cost` (400), `content_blocked` (400, moderation).
+
+Mobile: long-press an own message while it's still editable to reveal an "Edit" action; editing pre-fills the composer, and a successful edit shows a small "Edited" label next to the message's timestamp (`messages.edited_at`, not a separate boolean — lets a future "edited Xm ago" detail be added with no schema change).
+
 ### `POST /functions/v1/start-thread`
 
 ```jsonc

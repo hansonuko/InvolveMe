@@ -13,6 +13,13 @@ export interface Message {
   credits_charged: number;
   status: 'escrowed' | 'released' | 'refunded';
   created_at: string;
+  /** Set once by `fn_edit_message` on a successful edit, never cleared —
+   * `null` means never edited. A timestamp rather than a plain boolean so
+   * a future "edited Xm ago" detail needs no schema change (docs/02-DATA-
+   * MODEL.md). Only ever set while the message was still `escrowed`; see
+   * `useEditMessage`'s own comment for why editing stops being possible
+   * once a message settles. */
+  edited_at: string | null;
 }
 
 /** Messages in a thread, oldest first, kept live via Realtime — per
@@ -30,7 +37,9 @@ export function useThreadMessages(threadId: string | undefined) {
     queryFn: async (): Promise<Message[]> => {
       const { data, error } = await supabase
         .from('messages')
-        .select('id, thread_id, sender_id, body, word_count, credits_charged, status, created_at')
+        .select(
+          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at',
+        )
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true });
 
@@ -158,6 +167,42 @@ export function useSendMessage() {
       queryClient.invalidateQueries({ queryKey: ['messages', data.thread_id] });
       queryClient.invalidateQueries({ queryKey: ['threads'] });
       queryClient.invalidateQueries({ queryKey: ['wallets'] });
+    },
+  });
+}
+
+interface EditMessageRequest {
+  threadId: string;
+  messageId: string;
+  body: string;
+}
+
+interface EditMessageResponse {
+  message_id: string;
+  word_count: number;
+  credits_charged: number;
+  edited_at: string;
+}
+
+/** Wraps POST /functions/v1/edit-message — never re-bills (CLAUDE.md rule
+ * #1 + docs/03-ECONOMY-LEDGER.md's own "editing never re-bills" design):
+ * `fn_edit_message` enforces sender-only, still-`escrowed`-only, within
+ * the edit window, and no-cost-increase entirely server-side. This
+ * mutation only forwards the request and invalidates the thread's
+ * messages on success — `threadId` is only needed for that invalidation
+ * (the request body itself never carries a thread id, since
+ * `fn_edit_message` derives everything it needs from `message_id`). */
+export function useEditMessage() {
+  const queryClient = useQueryClient();
+
+  return useMutation<EditMessageResponse, EdgeFunctionError, EditMessageRequest>({
+    mutationFn: (request: EditMessageRequest) =>
+      callEdgeFunction<EditMessageResponse>('edit-message', {
+        message_id: request.messageId,
+        body: request.body,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['messages', variables.threadId] });
     },
   });
 }
