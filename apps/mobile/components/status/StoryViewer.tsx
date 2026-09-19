@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
+import { Avatar } from '@/components/ui/Avatar';
 import { Text } from '@/components/ui/Text';
 import {
   useDeleteStatus,
@@ -22,6 +23,7 @@ import {
   type StatusFeedGroup,
   type StatusUpdate,
 } from '@/lib/queries/status';
+import { formatStatusAge } from '@/lib/statusAge';
 import { getStatusTextTemplate } from '@/lib/statusTextTemplates';
 import { useTheme } from '@/theme';
 
@@ -184,9 +186,17 @@ function PosterPage({
       </View>
 
       <View style={[styles.header, { paddingHorizontal: spacing.lg }]}>
-        <Text variant="bodyMedium" color="inverse">
-          {group.poster.display_name ?? 'Someone'}
-        </Text>
+        <View style={[styles.headerIdentity, { gap: spacing.sm }]}>
+          <Avatar uri={group.poster.avatar_url} displayName={group.poster.display_name} size={32} />
+          <View>
+            <Text variant="bodyMedium" color="inverse">
+              {group.poster.display_name ?? 'Someone'}
+            </Text>
+            <Text variant="caption" color="inverse" style={styles.headerTime}>
+              {formatStatusAge(status.created_at)}
+            </Text>
+          </View>
+        </View>
         <Pressable onPress={onClose} hitSlop={12}>
           <Ionicons name="close" size={28} color="#fff" />
         </Pressable>
@@ -309,6 +319,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 2,
   },
+  headerIdentity: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 12 },
+  headerTime: { opacity: 0.8 },
   ownControls: {
     position: 'absolute',
     bottom: 40,
