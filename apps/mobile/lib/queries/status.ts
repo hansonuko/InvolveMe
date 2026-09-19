@@ -113,6 +113,66 @@ export async function uploadStatusMedia(localUri: string, path: string, token: s
   if (error) throw error;
 }
 
+/** Whether the current user has liked a status (punch-list item 4a,
+ * 2026-09-19) — a lightweight, free reaction, not a message; see
+ * `20260919110000_status_likes.sql`'s own header comment for why this is
+ * a direct RLS-gated table (same "useDeleteStatus" precedent) rather than
+ * a SECURITY DEFINER function. */
+export function useStatusLiked(statusId: string | undefined, userId: string | undefined) {
+  return useQuery({
+    queryKey: ['statusLiked', statusId, userId],
+    enabled: !!statusId && !!userId,
+    queryFn: async (): Promise<boolean> => {
+      const { data, error } = await supabase
+        .from('status_likes')
+        .select('status_id')
+        .eq('status_id', statusId as string)
+        .eq('liker_id', userId as string)
+        .maybeSingle();
+      if (error) throw error;
+      return !!data;
+    },
+  });
+}
+
+/** Toggles a like on/off — a plain insert/delete against `status_likes`,
+ * RLS-enforced (see that migration for the exact "can only like a status
+ * you could actually see" WITH CHECK condition). */
+export function useToggleStatusLike() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      statusId,
+      userId,
+      liked,
+    }: {
+      statusId: string;
+      userId: string;
+      liked: boolean;
+    }) => {
+      if (liked) {
+        const { error } = await supabase
+          .from('status_likes')
+          .delete()
+          .eq('status_id', statusId)
+          .eq('liker_id', userId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('status_likes')
+          .insert({ status_id: statusId, liker_id: userId });
+        if (error) throw error;
+      }
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ['statusLiked', variables.statusId, variables.userId],
+      });
+    },
+  });
+}
+
 /** Signed read URL for a status-media object — the bucket is private, so
  * this is the only way to actually display one. Fails (throws) if the
  * caller isn't allowed to see it, per `status_media_select_visible` RLS

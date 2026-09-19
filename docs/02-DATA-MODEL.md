@@ -159,6 +159,12 @@ Visible to the poster (always, including expired) and, per `20260916090000_statu
 
 Records a status has been seen — drives the unseen(gold)/seen(grey) ring distinction on the mobile status feed (`docs/04-DESIGN-SYSTEM.md`). Written only by `fn_mark_status_viewed`; no client INSERT policy. A second permissive SELECT policy (`status_views_select_as_poster`, Batch F session 18) lets a poster read every view row on their own statuses — the mechanism behind the poster-only view count, and forward-compatible with a future full viewer-list without a further RLS change. See §7, §10.
 
+### `status_likes` (added `20260919110000_status_likes.sql`, punch-list item 4a)
+
+| status_id, liker_id, created_at | PK `(status_id, liker_id)` |
+
+A lightweight, free reaction — deliberately not routed through billing at all (unlike a message, docs/03-ECONOMY-LEDGER.md §4), matching WhatsApp's own status-like behavior. Direct client INSERT/DELETE (no `SECURITY DEFINER` function needed): the `WITH CHECK` on insert mirrors `status_updates_select_visible_to_thread_partner` exactly (non-blocked thread partner, status not expired) — the same "RLS can fully express this, no cross-table logic needs a function" reasoning `status_updates_delete_own` already used. A second permissive SELECT policy (`status_likes_select_as_poster`) lets a poster read every like on their own statuses, same "poster can see everything on their own content" posture `status_views_select_as_poster` already established — forward-compatible with a future "who liked this" list with no further RLS change needed.
+
 ### `push_tokens` (added `20260914090000_settings_privacy_reports_push.sql`)
 
 | token (PK), user_id, platform (`ios`/`android`), created_at |

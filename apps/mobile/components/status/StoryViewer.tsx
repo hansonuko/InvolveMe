@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   FlatList,
@@ -8,6 +9,7 @@ import {
   NativeSyntheticEvent,
   Pressable,
   StyleSheet,
+  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
@@ -15,14 +17,18 @@ import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-na
 
 import { Avatar } from '@/components/ui/Avatar';
 import { Text } from '@/components/ui/Text';
+import { useSendMessage } from '@/lib/queries/messages';
 import {
   useDeleteStatus,
   useMarkStatusViewed,
+  useStatusLiked,
   useStatusMediaUrl,
   useStatusViewCount,
+  useToggleStatusLike,
   type StatusFeedGroup,
   type StatusUpdate,
 } from '@/lib/queries/status';
+import { useStartThread } from '@/lib/queries/threads';
 import { formatStatusAge } from '@/lib/statusAge';
 import { getStatusTextTemplate } from '@/lib/statusTextTemplates';
 import { useTheme } from '@/theme';
@@ -57,6 +63,12 @@ export function StoryViewer({
   const listRef = useRef<FlatList<StatusFeedGroup>>(null);
   const [posterIndex, setPosterIndex] = useState(initialPosterIndex);
   const [itemIndex, setItemIndex] = useState(0);
+  // Paused while the reply input is focused (punch-list item 4a,
+  // 2026-09-19) — auto-advancing to the next status while someone is
+  // mid-reply would silently discard their attention, the same "don't
+  // interrupt active input" instinct KeyboardAvoidingScreen's own
+  // keyboard-tracking respects elsewhere in this app.
+  const [isReplyFocused, setIsReplyFocused] = useState(false);
   const markViewed = useMarkStatusViewed();
   const markedRef = useRef<Set<string>>(new Set());
 
@@ -96,13 +108,14 @@ export function StoryViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStatus?.id, isOwnStatus]);
 
-  // 6s auto-advance, reset on every item/poster change.
+  // 6s auto-advance, reset on every item/poster change — paused while
+  // replying (see isReplyFocused's own comment above).
   useEffect(() => {
-    if (!activeStatus) return;
+    if (!activeStatus || isReplyFocused) return;
     const timer = setTimeout(() => advance(1), ITEM_DURATION_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posterIndex, itemIndex]);
+  }, [posterIndex, itemIndex, isReplyFocused]);
 
   const handleMomentumScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const newIndex = Math.round(e.nativeEvent.contentOffset.x / width);
@@ -133,8 +146,10 @@ export function StoryViewer({
             itemIndex={index === posterIndex ? itemIndex : 0}
             isActive={index === posterIndex}
             isOwn={item.poster.id === currentUserId}
+            currentUserId={currentUserId}
             onAdvance={advance}
             onClose={onClose}
+            onReplyFocusChange={setIsReplyFocused}
           />
         )}
       />
@@ -148,30 +163,104 @@ function PosterPage({
   itemIndex,
   isActive,
   isOwn,
+  currentUserId,
   onAdvance,
   onClose,
+  onReplyFocusChange,
 }: {
   group: StatusFeedGroup;
   width: number;
   itemIndex: number;
   isActive: boolean;
   isOwn: boolean;
+  currentUserId: string | undefined;
   onAdvance: (direction: 1 | -1) => void;
   onClose: () => void;
+  onReplyFocusChange: (focused: boolean) => void;
 }) {
-  const { spacing } = useTheme();
+  const { colors, spacing } = useTheme();
+  const router = useRouter();
   const status = group.statuses[itemIndex];
   const viewCount = useStatusViewCount(isOwn && isActive ? status?.id : undefined);
   const [showViewCount, setShowViewCount] = useState(false);
+  const [openingChat, setOpeningChat] = useState(false);
   const deleteStatus = useDeleteStatus();
+  const liked = useStatusLiked(status?.id, currentUserId);
+  const toggleLike = useToggleStatusLike();
+  const startThread = useStartThread();
+  const sendMessage = useSendMessage();
+  const [replyText, setReplyText] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
 
   if (!status) return null;
+
+  const handleToggleLike = () => {
+    if (!currentUserId) return;
+    toggleLike.mutate({ statusId: status.id, userId: currentUserId, liked: !!liked.data });
+  };
+
+  // Reply opens (or continues) a real DM thread with the poster and sends
+  // the typed text as a normal message there — the same paid-message path
+  // every other conversation in this app goes through (docs/03-ECONOMY-
+  // LEDGER.md §4), not a new billing concept invented for status replies.
+  // Matches WhatsApp's own behavior of landing you in the chat after a
+  // status reply, rather than a separate "status comments" surface.
+  const handleSendReply = () => {
+    const text = replyText.trim();
+    if (!text || sendingReply) return;
+    setSendingReply(true);
+    startThread.mutate(group.poster.id, {
+      onSuccess: (thread) => {
+        sendMessage.mutate(
+          { threadId: thread.thread_id, body: text },
+          {
+            onSuccess: () => {
+              onClose();
+              router.push(`/thread/${thread.thread_id}`);
+            },
+            onSettled: () => setSendingReply(false),
+          },
+        );
+      },
+      onError: () => setSendingReply(false),
+    });
+  };
+
+  // Tapping the poster's name takes you straight to their chat (punch-list
+  // item 4b's explicit spec: "takes them to their chat", not their
+  // profile) — find-or-create via the same fn_start_thread every other
+  // "go straight into a chat" entry point in this app already uses.
+  const handleTapName = () => {
+    if (openingChat) return;
+    setOpeningChat(true);
+    startThread.mutate(group.poster.id, {
+      onSuccess: (thread) => {
+        onClose();
+        router.push(`/thread/${thread.thread_id}`);
+      },
+      onSettled: () => setOpeningChat(false),
+    });
+  };
 
   const template = status.text_style ? getStatusTextTemplate(status.text_style) : null;
 
   return (
     <View style={{ width, flex: 1, backgroundColor: template ? template.background : '#000' }}>
       <StoryBackground status={status} template={template} />
+
+      {/* Rendered right after the background, not last — a later sibling
+          sits on top for touch handling the same as it does visually, so
+          this has to be *underneath* the header/controls/reply-bar below
+          (real bug found and fixed while adding the reply bar, 2026-09-19:
+          rendering this last, as it was before, would have put it above
+          every one of those interactive elements, silently swallowing
+          taps on the view-count/delete buttons and the new reply input
+          alike). It still correctly handles every tap that isn't already
+          captured by something rendered above it. */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <Pressable style={styles.tapZoneLeft} onPress={() => onAdvance(-1)} />
+        <Pressable style={styles.tapZoneRight} onPress={() => onAdvance(1)} />
+      </View>
 
       <View style={[styles.progressRow, { top: 50, paddingHorizontal: spacing.sm }]}>
         {group.statuses.map((s, i) => (
@@ -186,7 +275,11 @@ function PosterPage({
       </View>
 
       <View style={[styles.header, { paddingHorizontal: spacing.lg }]}>
-        <View style={[styles.headerIdentity, { gap: spacing.sm }]}>
+        <Pressable
+          onPress={isOwn ? undefined : handleTapName}
+          disabled={isOwn}
+          style={[styles.headerIdentity, { gap: spacing.sm }]}
+        >
           <Avatar uri={group.poster.avatar_url} displayName={group.poster.display_name} size={32} />
           <View>
             <Text variant="bodyMedium" color="inverse">
@@ -196,7 +289,7 @@ function PosterPage({
               {formatStatusAge(status.created_at)}
             </Text>
           </View>
-        </View>
+        </Pressable>
         <Pressable onPress={onClose} hitSlop={12}>
           <Ionicons name="close" size={28} color="#fff" />
         </Pressable>
@@ -224,12 +317,40 @@ function PosterPage({
             <Ionicons name="trash" size={20} color="#fff" />
           </Pressable>
         </View>
-      ) : null}
-
-      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-        <Pressable style={styles.tapZoneLeft} onPress={() => onAdvance(-1)} />
-        <Pressable style={styles.tapZoneRight} onPress={() => onAdvance(1)} />
-      </View>
+      ) : (
+        // Reply + like bar (punch-list item 4a, 2026-09-19) — only for
+        // other people's statuses; liking/replying to your own doesn't
+        // make sense, matching WhatsApp's own status viewer.
+        <View
+          style={[
+            styles.replyBar,
+            { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, gap: spacing.sm },
+          ]}
+        >
+          <TextInput
+            value={replyText}
+            onChangeText={setReplyText}
+            onFocus={() => onReplyFocusChange(true)}
+            onBlur={() => onReplyFocusChange(false)}
+            placeholder="Reply..."
+            placeholderTextColor="rgba(255,255,255,0.7)"
+            style={styles.replyInput}
+          />
+          {replyText.trim() ? (
+            <Pressable onPress={handleSendReply} disabled={sendingReply} hitSlop={8}>
+              <Ionicons name="send" size={24} color="#fff" />
+            </Pressable>
+          ) : (
+            <Pressable onPress={handleToggleLike} hitSlop={8}>
+              <Ionicons
+                name={liked.data ? 'heart' : 'heart-outline'}
+                size={26}
+                color={liked.data ? colors.brandPrimary : '#fff'}
+              />
+            </Pressable>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -330,6 +451,25 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   ownControlButton: { flexDirection: 'row', alignItems: 'center' },
+  replyBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 2,
+  },
+  replyInput: {
+    flex: 1,
+    color: '#fff',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 17,
+  },
   tapZoneLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: '33%' },
   tapZoneRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: '67%' },
   mediaCaption: {
