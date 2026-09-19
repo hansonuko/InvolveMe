@@ -90,9 +90,11 @@ The two `*_last_read_at` columns (added `20260914080000_thread_read_cursor.sql`)
 
 ### `messages`
 
-| id, thread_id, sender_id, body, word_count, credits_charged, status (`escrowed`/`released`/`refunded`), created_at |
+| id, thread_id, sender_id, body, word_count, credits_charged, status (`escrowed`/`released`/`refunded`), created_at, edited_at |
 
 Client has **no INSERT/UPDATE grant** on this table; all writes go through `fn_send_message`.
+
+`edited_at` (added `20260919100000_message_editing.sql`, punch-list item 2) is `null` until the sender edits the message via `fn_edit_message` — a timestamp rather than a plain boolean, so a future "edited Xm ago" UI detail needs no schema change. Only ever set while `status = 'escrowed'`; the message body itself changes but `credits_charged`/`word_count`'s _tier_ never can — see `docs/03-ECONOMY-LEDGER.md` §4 for why an edit can shrink or stay within the same billed tier but can never cross into a more expensive one for free.
 
 ### `escrows`
 

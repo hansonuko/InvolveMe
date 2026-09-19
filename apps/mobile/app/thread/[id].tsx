@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { ActionSheet } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { BuyCreditModal } from '@/components/ui/BuyCreditModal';
@@ -24,6 +25,7 @@ import { useSession } from '@/lib/hooks/useSession';
 import {
   type InsufficientCreditDetails,
   type Message,
+  useEditMessage,
   useSendMessage,
   useThreadMessages,
 } from '@/lib/queries/messages';
@@ -355,6 +357,7 @@ function MessageBubble({
   message,
   isOwn,
   isRead,
+  onRequestEdit,
 }: {
   message: Message;
   isOwn: boolean;
@@ -363,8 +366,15 @@ function MessageBubble({
    * the caller's own messages, and only when the partner has read
    * receipts enabled (see useThreadHeaderInfo). */
   isRead?: boolean;
+  /** Only ever called for a message that's actually editable (own,
+   * still `status: 'escrowed'`) — see the long-press wiring below, which
+   * only attaches this handler at all when that's true. The real edit
+   * window is still enforced server-side regardless (fn_edit_message);
+   * this is a UX affordance, not the safety net. */
+  onRequestEdit?: (message: Message) => void;
 }) {
   const { colors, spacing, radius } = useTheme();
+  const isEditable = isOwn && message.status === 'escrowed';
 
   return (
     <View
@@ -373,7 +383,8 @@ function MessageBubble({
         { justifyContent: isOwn ? 'flex-end' : 'flex-start', marginBottom: spacing.sm },
       ]}
     >
-      <View
+      <Pressable
+        onLongPress={isEditable ? () => onRequestEdit?.(message) : undefined}
         style={[
           styles.bubble,
           {
@@ -394,6 +405,15 @@ function MessageBubble({
           >
             {message.credits_charged} cr
           </Text>
+          {message.edited_at ? (
+            <Text
+              variant="caption"
+              color={isOwn ? undefined : 'secondary'}
+              style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
+            >
+              · Edited
+            </Text>
+          ) : null}
           {message.status === 'escrowed' ? (
             <Text
               variant="caption"
@@ -419,7 +439,7 @@ function MessageBubble({
             />
           ) : null}
         </View>
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -464,7 +484,10 @@ export default function ThreadScreen() {
 
   const { data: messages, isLoading } = useThreadMessages(id);
   const sendMessage = useSendMessage();
+  const editMessage = useEditMessage();
   const markThreadRead = useMarkThreadRead();
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [editSheetMessage, setEditSheetMessage] = useState<Message | null>(null);
   const [headerRefetchKey, setHeaderRefetchKey] = useState(0);
   const headerInfo = useThreadHeaderInfo(id, currentUserId, headerRefetchKey);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -579,6 +602,28 @@ export default function ThreadScreen() {
   const handleSend = () => {
     if (!body.trim()) return;
     const text = body;
+
+    if (editingMessage) {
+      editMessage.mutate(
+        { threadId: id, messageId: editingMessage.id, body: text },
+        {
+          onSuccess: () => {
+            setBody('');
+            setEditingMessage(null);
+          },
+          onError: (error) => {
+            // Edits never re-charge, so there's no insufficient_credit case
+            // to special-case here the way a fresh send has — every real
+            // failure (edit_would_increase_cost, message_not_editable,
+            // edit_window_expired, content_blocked) is best surfaced
+            // directly rather than silently retried.
+            Alert.alert('Could not save edit', error.message);
+          },
+        },
+      );
+      return;
+    }
+
     sendMessage.mutate(
       { threadId: id, body: text },
       {
@@ -593,6 +638,18 @@ export default function ThreadScreen() {
         },
       },
     );
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessage(null);
+    setBody('');
+  };
+
+  const handleRequestEdit = (message: Message) => {
+    setEditingMessage(message);
+    setBody(message.body);
+    setSelection({ start: message.body.length, end: message.body.length });
+    composerInputRef.current?.focus();
   };
 
   return (
@@ -703,7 +760,14 @@ export default function ThreadScreen() {
                       : isOwn
                         ? false
                         : undefined;
-                return <MessageBubble message={item} isOwn={isOwn} isRead={isRead} />;
+                return (
+                  <MessageBubble
+                    message={item}
+                    isOwn={isOwn}
+                    isRead={isRead}
+                    onRequestEdit={setEditSheetMessage}
+                  />
+                );
               }}
               ListFooterComponent={
                 pendingSend ? <PendingMessageBubble body={pendingSend.body} /> : null
@@ -726,6 +790,32 @@ export default function ThreadScreen() {
               <Text variant="caption" color="danger">
                 {sendMessage.error.message}
               </Text>
+            </View>
+          ) : null}
+
+          {editingMessage ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: spacing.lg,
+                paddingVertical: spacing.sm,
+                gap: spacing.sm,
+                backgroundColor: colors.bgSurfaceAlt,
+              }}
+            >
+              <Ionicons name="pencil" size={16} color={colors.textSecondary} />
+              <View style={{ flex: 1 }}>
+                <Text variant="caption" color="secondary">
+                  Editing message
+                </Text>
+                <Text variant="body" numberOfLines={1}>
+                  {editingMessage.body}
+                </Text>
+              </View>
+              <Pressable onPress={handleCancelEdit} hitSlop={8}>
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
+              </Pressable>
             </View>
           ) : null}
 
@@ -768,18 +858,29 @@ export default function ThreadScreen() {
               ]}
             />
             <Pressable
-              onPress={sendMessage.isPending || !body.trim() || isBlocked ? undefined : handleSend}
-              disabled={sendMessage.isPending || !body.trim() || isBlocked}
+              onPress={
+                sendMessage.isPending || editMessage.isPending || !body.trim() || isBlocked
+                  ? undefined
+                  : handleSend
+              }
+              disabled={sendMessage.isPending || editMessage.isPending || !body.trim() || isBlocked}
               hitSlop={4}
               style={[
                 styles.sendButton,
                 {
                   backgroundColor: colors.brandPrimary,
-                  opacity: sendMessage.isPending || !body.trim() || isBlocked ? 0.4 : 1,
+                  opacity:
+                    sendMessage.isPending || editMessage.isPending || !body.trim() || isBlocked
+                      ? 0.4
+                      : 1,
                 },
               ]}
             >
-              <Ionicons name="send" size={20} color={colors.textInverse} />
+              <Ionicons
+                name={editingMessage ? 'checkmark' : 'send'}
+                size={20}
+                color={colors.textInverse}
+              />
             </Pressable>
           </View>
 
@@ -804,6 +905,16 @@ export default function ThreadScreen() {
       ) : null}
 
       <BuyCreditModal visible={buyCreditVisible} onClose={() => setBuyCreditVisible(false)} />
+
+      <ActionSheet
+        visible={!!editSheetMessage}
+        onClose={() => setEditSheetMessage(null)}
+        actions={
+          editSheetMessage
+            ? [{ label: 'Edit', onPress: () => handleRequestEdit(editSheetMessage) }]
+            : []
+        }
+      />
     </>
   );
 }
