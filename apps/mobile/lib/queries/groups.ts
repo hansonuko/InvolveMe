@@ -224,6 +224,9 @@ export function useCreateGroup() {
 interface SendGroupMessageRequest {
   groupThreadId: string;
   body: string;
+  /** Offline outbox replay key — see SendMessageRequest's identical field
+   * in lib/queries/messages.ts for the full rationale. */
+  clientMessageId?: string;
 }
 
 interface SendGroupMessageResponse {
@@ -244,6 +247,7 @@ export function useSendGroupMessage() {
       callEdgeFunction<SendGroupMessageResponse>('send-group-message', {
         group_thread_id: request.groupThreadId,
         body: request.body,
+        client_message_id: request.clientMessageId,
       }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['groupMessages', variables.groupThreadId] });

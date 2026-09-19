@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import * as Crypto from 'expo-crypto';
 import { useRef, useState } from 'react';
 import {
   Alert,
@@ -23,6 +24,8 @@ import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
 import { pickAndPrepareImage } from '@/lib/media';
+import { useIsOnline } from '@/lib/network';
+import { useOutboxStore } from '@/lib/outboxStore';
 import { type MatchedContactUser } from '@/lib/queries/contacts';
 import { uploadProfileMedia } from '@/lib/queries/profileMedia';
 import {
@@ -568,6 +571,38 @@ function GroupMessageBubble({
   );
 }
 
+/** A group message composed while offline, queued in the outbox
+ * (docs/13-OFFLINE-MODE-SCOPING.md) — same shape thread/[id].tsx's own
+ * OutboxPendingBubble establishes for 1:1 threads. */
+function GroupOutboxPendingBubble({ body }: { body: string }) {
+  const { colors, spacing, radius } = useTheme();
+  return (
+    <View style={[styles.bubbleRow, { justifyContent: 'flex-end', marginBottom: spacing.sm }]}>
+      <View
+        style={[
+          styles.bubble,
+          {
+            backgroundColor: colors.bgSurfaceAlt,
+            borderRadius: radius.bubble,
+            padding: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.borderSubtle,
+            borderStyle: 'dashed',
+          },
+        ]}
+      >
+        <Text variant="body">{body}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: spacing.xs, gap: 4 }}>
+          <Ionicons name="time-outline" size={12} color={colors.textSecondary} />
+          <Text variant="caption" color="secondary">
+            Waiting for connection…
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function GroupThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { colors, spacing, radius } = useTheme();
@@ -578,6 +613,11 @@ export default function GroupThreadScreen() {
   const { data: members } = useGroupMembers(id);
   const { data: messages, isLoading } = useGroupMessages(id);
   const sendMessage = useSendGroupMessage();
+
+  const isOnline = useIsOnline();
+  const outboxItems = useOutboxStore((s) =>
+    s.items.filter((i) => i.target.kind === 'group' && i.target.groupThreadId === id),
+  );
 
   const [body, setBody] = useState('');
   const [infoVisible, setInfoVisible] = useState(false);
@@ -590,6 +630,21 @@ export default function GroupThreadScreen() {
   const handleSend = () => {
     if (!body.trim() || !id) return;
     const text = body;
+
+    // Offline outbox (docs/13-OFFLINE-MODE-SCOPING.md) — same posture
+    // thread/[id].tsx's own 1:1 wiring establishes.
+    if (!isOnline && currentUserId) {
+      useOutboxStore.getState().enqueue({
+        clientMessageId: Crypto.randomUUID(),
+        body: text,
+        createdAt: new Date().toISOString(),
+        senderId: currentUserId,
+        target: { kind: 'group', groupThreadId: id },
+      });
+      setBody('');
+      return;
+    }
+
     sendMessage.mutate(
       { groupThreadId: id, body: text },
       {
@@ -681,6 +736,15 @@ export default function GroupThreadScreen() {
                   />
                 );
               }}
+              ListFooterComponent={
+                outboxItems.length ? (
+                  <>
+                    {outboxItems.map((item) => (
+                      <GroupOutboxPendingBubble key={item.clientMessageId} body={item.body} />
+                    ))}
+                  </>
+                ) : null
+              }
             />
           )}
 
