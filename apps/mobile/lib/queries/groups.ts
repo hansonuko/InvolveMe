@@ -78,15 +78,18 @@ export function useGroups(currentUserId: string | undefined) {
 export interface GroupInfo {
   id: string;
   name: string;
+  description: string | null;
   avatar_url: string | null;
   created_by: string;
+  created_at: string;
 }
 
-/** A single group's own name/avatar/owner — the group-thread screen's
- * header needs this in addition to the member list `useGroupMembers`
- * already provides; kept separate rather than folded into that hook since
- * a header can render (with a loading name) before the member list has
- * resolved. */
+/** A single group's own name/description/avatar/owner — the group-thread
+ * screen's header and the group-info screen (punch-list item 2,
+ * 2026-09-19) both need this in addition to the member list
+ * `useGroupMembers` already provides; kept separate rather than folded
+ * into that hook since a header can render (with a loading name) before
+ * the member list has resolved. */
 export function useGroupInfo(groupThreadId: string | undefined) {
   return useQuery({
     queryKey: ['groupInfo', groupThreadId],
@@ -94,7 +97,7 @@ export function useGroupInfo(groupThreadId: string | undefined) {
     queryFn: async (): Promise<GroupInfo> => {
       const { data, error } = await supabase
         .from('group_threads')
-        .select('id, name, avatar_url, created_by')
+        .select('id, name, description, avatar_url, created_by, created_at')
         .eq('id', groupThreadId as string)
         .single();
       if (error) throw error;
@@ -246,5 +249,149 @@ export function useSendGroupMessage() {
       queryClient.invalidateQueries({ queryKey: ['groupMessages', variables.groupThreadId] });
       queryClient.invalidateQueries({ queryKey: ['groups'] });
     },
+  });
+}
+
+// =============================================================================
+// Group admin actions (punch-list item 2, 2026-09-19) — add/remove members,
+// promote/demote admin, leave, and edit name/description/avatar. Each
+// wraps a SECURITY DEFINER Postgres function via its own Edge Function
+// (migration 20260919120000_group_admin_actions.sql), same "no financial
+// or membership logic in the client" posture every other mutation in this
+// file already follows — these functions just forward + invalidate.
+// =============================================================================
+
+interface AddGroupMembersRequest {
+  groupThreadId: string;
+  memberIds: string[];
+}
+
+/** Wraps POST /functions/v1/add-group-members — any current member can add
+ * more (see that Edge Function's own header comment on matching
+ * WhatsApp's default permission model), not just admins. */
+export function useAddGroupMembers() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ added_count: number }, EdgeFunctionError, AddGroupMembersRequest>({
+    mutationFn: (request) =>
+      callEdgeFunction('add-group-members', {
+        group_thread_id: request.groupThreadId,
+        member_ids: request.memberIds,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['groupMembers', variables.groupThreadId] });
+      queryClient.invalidateQueries({ queryKey: ['groupInfo', variables.groupThreadId] });
+    },
+  });
+}
+
+interface RemoveGroupMemberRequest {
+  groupThreadId: string;
+  targetUserId: string;
+}
+
+/** Wraps POST /functions/v1/remove-group-member — admin-only; the group
+ * owner can never be targeted (rejected server-side either way). */
+export function useRemoveGroupMember() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ ok: true }, EdgeFunctionError, RemoveGroupMemberRequest>({
+    mutationFn: (request) =>
+      callEdgeFunction('remove-group-member', {
+        group_thread_id: request.groupThreadId,
+        target_user_id: request.targetUserId,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['groupMembers', variables.groupThreadId] });
+    },
+  });
+}
+
+/** Wraps POST /functions/v1/leave-group — self-service; the group owner is
+ * blocked server-side (no ownership-transfer path yet). */
+export function useLeaveGroup() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ ok: true }, EdgeFunctionError, { groupThreadId: string }>({
+    mutationFn: (request) =>
+      callEdgeFunction('leave-group', { group_thread_id: request.groupThreadId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+}
+
+interface SetGroupMemberRoleRequest {
+  groupThreadId: string;
+  targetUserId: string;
+  role: 'admin' | 'member';
+}
+
+/** Wraps POST /functions/v1/set-group-member-role — promote/demote,
+ * admin-only; the owner's own role can never change. */
+export function useSetGroupMemberRole() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ ok: true }, EdgeFunctionError, SetGroupMemberRoleRequest>({
+    mutationFn: (request) =>
+      callEdgeFunction('set-group-member-role', {
+        group_thread_id: request.groupThreadId,
+        target_user_id: request.targetUserId,
+        role: request.role,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['groupMembers', variables.groupThreadId] });
+    },
+  });
+}
+
+interface UpdateGroupProfileRequest {
+  groupThreadId: string;
+  /** Each field is independently optional — omit to leave it unchanged.
+   * An empty string on `description` clears it (distinct from omitting
+   * it), same contract fn_update_group_profile documents. */
+  name?: string;
+  description?: string;
+  avatarUrl?: string;
+}
+
+/** Wraps POST /functions/v1/update-group-profile — admin-only rename/
+ * description/avatar update. */
+export function useUpdateGroupProfile() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ ok: true }, EdgeFunctionError, UpdateGroupProfileRequest>({
+    mutationFn: (request) =>
+      callEdgeFunction('update-group-profile', {
+        group_thread_id: request.groupThreadId,
+        name: request.name,
+        description: request.description,
+        avatar_url: request.avatarUrl,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['groupInfo', variables.groupThreadId] });
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+}
+
+interface CreateGroupAvatarUploadUrlResponse {
+  path: string;
+  token: string;
+  signed_url: string;
+  /** Already cache-busted (a `?t=` query param) — write this straight onto
+   * the group via useUpdateGroupProfile once the upload itself succeeds,
+   * same shape useCreateProfileUploadUrl's own response documents. */
+  public_url: string;
+}
+
+/** Wraps POST /functions/v1/create-group-avatar-upload-url — mints a
+ * signed upload slot in the public `profile-media` bucket for a group's
+ * photo, at `groups/${groupThreadId}.jpg`. Admin-only (checked server-side
+ * against the caller's own membership row, not trusted from the client). */
+export function useCreateGroupAvatarUploadUrl() {
+  return useMutation<CreateGroupAvatarUploadUrlResponse, EdgeFunctionError, string>({
+    mutationFn: (groupThreadId) =>
+      callEdgeFunction('create-group-avatar-upload-url', { group_thread_id: groupThreadId }),
   });
 }

@@ -1,6 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as ImageManipulator from 'expo-image-manipulator';
-import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Image, Pressable, StyleSheet, TextInput, View } from 'react-native';
@@ -10,8 +8,8 @@ import { Button } from '@/components/ui/Button';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
-import { withAppLockSuppressed } from '@/lib/appLock';
 import { useSession } from '@/lib/hooks/useSession';
+import { pickAndPrepareImage } from '@/lib/media';
 import { useCreateProfileUploadUrl, uploadProfileMedia } from '@/lib/queries/profileMedia';
 import { type ProfileLink, useProfile, useUpdateProfile } from '@/lib/queries/profile';
 import { useTheme } from '@/theme';
@@ -19,27 +17,6 @@ import { useTheme } from '@/theme';
 const COVER_HEIGHT = 140;
 const AVATAR_SIZE = 96;
 const MAX_LINKS = 5;
-
-/** Resize + JPEG-compress before upload, same budget/tooling
- * StatusComposer's pickPhoto already establishes (expo-image-manipulator,
- * max 1080px longest edge) — no reason a profile photo needs a different
- * pipeline than a status one. */
-async function pickAndPrepareImage(source: 'camera' | 'library'): Promise<string | null> {
-  const launch =
-    source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
-  // Bracketed for the same reason StatusComposer's own picker call is —
-  // the native camera/gallery UI can background this app, which would
-  // otherwise trip useAppLock's re-lock check (see lib/appLock.ts).
-  const result = await withAppLockSuppressed(() => launch({ mediaTypes: 'images', quality: 0.8 }));
-  if (result.canceled || !result.assets?.[0]) return null;
-
-  const manipulated = await ImageManipulator.manipulateAsync(
-    result.assets[0].uri,
-    [{ resize: { width: 1080 } }],
-    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG },
-  );
-  return manipulated.uri;
-}
 
 function LinkRow({
   link,
