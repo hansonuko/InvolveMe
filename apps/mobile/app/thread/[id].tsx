@@ -412,17 +412,14 @@ function MessageBubble({
    * the caller's own messages, and only when the partner has read
    * receipts enabled (see useThreadHeaderInfo). */
   isRead?: boolean;
-  /** The partner's read cursor (headerInfo.partnerLastReadAt) — only ever
-   * rendered when `isRead` is `true`, so this is the "read at" time shown
-   * next to the tick (punch-list item 4, 2026-09-19: sent time next to a
-   * new read-time twist on WhatsApp's own per-message time). Not an exact
-   * per-message read timestamp — this app tracks one read cursor per
-   * thread, not one per message, same as the tick icon above already only
-   * approximates "read" as "sent before the partner's last-read cursor" —
-   * so the time shown is genuinely when the partner's cursor last moved
-   * past this message, which for the most recently read message is exact
-   * and for older ones is the same real timestamp, just not necessarily
-   * the instant that specific message scrolled into view. */
+  /** This specific message's own `read_at` — stamped once by
+   * `fn_mark_thread_read` the first time the partner reads it and frozen
+   * from then on, so it's a real, exact per-message timestamp (not derived
+   * live from the thread's shared read cursor the way it used to be,
+   * which caused every older message's shown time to jump forward to
+   * match the cursor's latest value on each subsequent read — a real bug,
+   * fixed in migration 20260920100000). Only ever rendered when `isRead`
+   * is `true`. */
   readAt?: string | null;
   /** Set only when `message.reply_to_message_id` is non-null — see
    * QuotedPreview's own comment for how this is resolved. */
@@ -1336,20 +1333,26 @@ export default function ThreadScreen() {
               contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingVertical: spacing.md }}
               renderItem={({ item }) => {
                 const isOwn = item.sender_id === currentUserId;
-                const isRead =
-                  isOwn && headerInfo?.partnerLastReadAt
-                    ? new Date(item.created_at) <= new Date(headerInfo.partnerLastReadAt)
-                    : isOwn && headerInfo?.partnerLastReadAt === null
-                      ? undefined // read receipts off for the partner — no indicator at all
-                      : isOwn
-                        ? false
-                        : undefined;
+                // `headerInfo.partnerLastReadAt === null` still means "the
+                // partner has read receipts off" (see useThreadHeaderInfo)
+                // — that privacy gate is preserved exactly as before. What
+                // changed is the read TIME itself: previously derived live
+                // from that same shared thread-wide cursor (so an older
+                // message's shown time kept jumping forward to match
+                // whatever the cursor's latest value was), now read
+                // straight off this message's own `read_at`, stamped once
+                // and frozen at the moment it was actually first read.
+                const isRead = !isOwn
+                  ? undefined
+                  : headerInfo?.partnerLastReadAt === null
+                    ? undefined
+                    : !!item.read_at;
                 return (
                   <MessageBubble
                     message={item}
                     isOwn={isOwn}
                     isRead={isRead}
-                    readAt={headerInfo?.partnerLastReadAt}
+                    readAt={item.read_at}
                     quotedPreview={getQuotedPreview(item)}
                     selectionMode={selectionMode}
                     isSelected={selectedIds.has(item.id)}

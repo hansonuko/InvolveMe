@@ -266,6 +266,51 @@ async function main() {
       'a message sent after the read cursor counts as unread again, and only that one',
       (await unreadCountFor(tokenB, threadId)) === 1,
     );
+
+    // Per-message read_at (real bug fix, 2026-09-20): the first mark-read
+    // call above already stamped the first message's read_at. Capture it,
+    // then mark read a second time (picking up the newer message inserted
+    // just above) and confirm the FIRST message's read_at is untouched —
+    // the original bug was that a later read event overwrote every prior
+    // message's displayed read time with its own, newer timestamp.
+    const firstMessageRow = (
+      await admin.query(
+        `select id, read_at from public.messages where thread_id = $1 order by created_at asc limit 1`,
+        [threadId],
+      )
+    ).rows[0];
+    log(
+      'the first message already has a read_at after the first mark-read',
+      firstMessageRow.read_at !== null,
+    );
+
+    await new Promise((r) => setTimeout(r, 1100)); // ensure a real, measurable timestamp gap
+    const markedByBAgain = await callMarkThreadRead(tokenB, { thread_id: threadId });
+    log(
+      'B can mark the thread read a second time -> 200 ok',
+      markedByBAgain.status === 200 && markedByBAgain.json?.ok === true,
+    );
+
+    const messagesAfterSecondMark = (
+      await admin.query(
+        `select id, read_at from public.messages where thread_id = $1 order by created_at asc`,
+        [threadId],
+      )
+    ).rows;
+    const firstMessageAfter = messagesAfterSecondMark.find((m) => m.id === firstMessageRow.id);
+    const secondMessageAfter = messagesAfterSecondMark.find((m) => m.id !== firstMessageRow.id);
+
+    log(
+      "the first message's read_at is unchanged by the second mark-read call (the actual bug)",
+      firstMessageAfter.read_at.getTime() === firstMessageRow.read_at.getTime(),
+      `before=${firstMessageRow.read_at.toISOString()} after=${firstMessageAfter.read_at.toISOString()}`,
+    );
+    log(
+      'the second (newer) message gets its own, later read_at from this call',
+      secondMessageAfter.read_at !== null &&
+        secondMessageAfter.read_at.getTime() > firstMessageAfter.read_at.getTime(),
+      `first=${firstMessageAfter.read_at.toISOString()} second=${secondMessageAfter.read_at?.toISOString()}`,
+    );
   } finally {
     deno.kill();
     if (threadId) await deleteTestThread(admin, threadId);
