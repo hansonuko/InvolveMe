@@ -25,6 +25,14 @@ export interface Message {
    * server-side and the client should render a "This message was
    * deleted" tombstone instead, never the (already-gone) body text. */
   deleted_for_everyone: boolean;
+  /** The real moment the recipient first read this specific message —
+   * stamped once by `fn_mark_thread_read` (`read_at is null` guard, never
+   * overwritten after) and `null` until then. Fixes a real bug where the
+   * displayed read time was derived live from the thread-wide read
+   * cursor, so an older message's shown time kept jumping forward to
+   * match the cursor's latest value every time the partner reopened the
+   * thread — this is frozen per-message from the moment it's first read. */
+  read_at: string | null;
   /** The quoted message's id, for a WhatsApp-style reply preview —
    * resolved against this same thread's already-loaded `messages` array
    * client-side (no extra query), since every message in a thread is
@@ -59,7 +67,7 @@ export function useThreadMessages(threadId: string | undefined, currentUserId: s
       const { data, error } = await supabase
         .from('messages')
         .select(
-          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, reply_to_message_id, is_forwarded',
+          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, read_at, reply_to_message_id, is_forwarded',
         )
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true });
