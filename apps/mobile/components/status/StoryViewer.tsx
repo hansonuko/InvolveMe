@@ -14,7 +14,12 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { ActionSheet } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
@@ -74,6 +79,13 @@ export function StoryViewer({
   // interrupt active input" instinct KeyboardAvoidingScreen's own
   // keyboard-tracking respects elsewhere in this app.
   const [isReplyFocused, setIsReplyFocused] = useState(false);
+  // Hold-to-pause (press and hold anywhere on the media to freeze it, WhatsApp's
+  // own behavior for reading a longer text status or studying a photo) —
+  // pauses both the auto-advance timer below and the progress bar's fill
+  // animation; released back into normal ticking on release, same "don't
+  // interrupt what the user is doing" instinct isReplyFocused already
+  // applies for the reply input.
+  const [isHeld, setIsHeld] = useState(false);
   const markViewed = useMarkStatusViewed();
   const markedRef = useRef<Set<string>>(new Set());
 
@@ -115,12 +127,35 @@ export function StoryViewer({
 
   // 6s auto-advance, reset on every item/poster change — paused while
   // replying (see isReplyFocused's own comment above).
+  // Remaining time for the *current* item, in ms — reset to the full
+  // duration whenever the item itself changes, decremented by however long
+  // the previous scheduling effect actually ran whenever pausing
+  // (isReplyFocused/isHeld) preempts it. Read/written by the scheduling
+  // effect below, not by React state, since neither its value nor its
+  // start timestamp should ever trigger a re-render on their own.
+  const remainingMsRef = useRef(ITEM_DURATION_MS);
+  const startedAtRef = useRef(0);
   useEffect(() => {
-    if (!activeStatus || isReplyFocused) return;
-    const timer = setTimeout(() => advance(1), ITEM_DURATION_MS);
+    remainingMsRef.current = ITEM_DURATION_MS;
+    startedAtRef.current = Date.now();
+  }, [posterIndex, itemIndex]);
+
+  // Schedules (or, while paused, just accounts for elapsed time against)
+  // the current item's remaining duration — resuming from a hold or a
+  // closed reply input picks up with whatever time was actually left,
+  // rather than restarting the full 6s and drifting out of sync with the
+  // progress bar's own resume logic in AnimatedProgressBar below.
+  useEffect(() => {
+    if (!activeStatus) return;
+    if (isReplyFocused || isHeld) {
+      remainingMsRef.current -= Date.now() - startedAtRef.current;
+      return;
+    }
+    startedAtRef.current = Date.now();
+    const timer = setTimeout(() => advance(1), Math.max(remainingMsRef.current, 0));
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posterIndex, itemIndex, isReplyFocused]);
+  }, [posterIndex, itemIndex, isReplyFocused, isHeld]);
 
   const handleMomentumScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const newIndex = Math.round(e.nativeEvent.contentOffset.x / width);
@@ -155,12 +190,19 @@ export function StoryViewer({
             onAdvance={advance}
             onClose={onClose}
             onReplyFocusChange={setIsReplyFocused}
+            isHeld={index === posterIndex && isHeld}
+            onHoldChange={setIsHeld}
           />
         )}
       />
     </Modal>
   );
 }
+
+// A held-then-released touch shouldn't also advance the story once
+// released — only a touch shorter than this counts as a real tap. Matches
+// the feel of a deliberate "hold to pause" vs. a normal quick tap.
+const HOLD_THRESHOLD_MS = 250;
 
 function PosterPage({
   group,
@@ -172,6 +214,8 @@ function PosterPage({
   onAdvance,
   onClose,
   onReplyFocusChange,
+  isHeld,
+  onHoldChange,
 }: {
   group: StatusFeedGroup;
   width: number;
@@ -182,6 +226,8 @@ function PosterPage({
   onAdvance: (direction: 1 | -1) => void;
   onClose: () => void;
   onReplyFocusChange: (focused: boolean) => void;
+  isHeld: boolean;
+  onHoldChange: (held: boolean) => void;
 }) {
   const { colors, spacing } = useTheme();
   const router = useRouter();
@@ -213,8 +259,26 @@ function PosterPage({
   // different application (2026-09-19, contacts/status punch-list
   // follow-up: "add the keyboard fix to the reply status feature").
   const keyboardHeight = useKeyboardHeight();
+  const pressStartRef = useRef(0);
 
   if (!status) return null;
+
+  // Pause immediately on touch-down; on release, only actually advance if
+  // it was a genuine quick tap (per HOLD_THRESHOLD_MS) — a held-then-
+  // released touch just resumes the current item where it left off,
+  // matching WhatsApp: holding to read never skips you to the next status
+  // the moment you let go.
+  const handlePressIn = () => {
+    pressStartRef.current = Date.now();
+    onHoldChange(true);
+  };
+  const handlePressOut = (direction: 1 | -1) => {
+    const heldMs = Date.now() - pressStartRef.current;
+    onHoldChange(false);
+    if (heldMs < HOLD_THRESHOLD_MS) {
+      onAdvance(direction);
+    }
+  };
 
   const handleToggleLike = () => {
     if (!currentUserId) return;
@@ -242,10 +306,30 @@ function PosterPage({
   // LEDGER.md §4), not a new billing concept invented for status replies.
   // Matches WhatsApp's own behavior of landing you in the chat after a
   // status reply, rather than a separate "status comments" surface.
+  //
+  // Real bug fixed here: neither mutation's failure was ever surfaced —
+  // insufficient credit, a content-moderation block, a blocked thread, or
+  // any other rejection just silently reset `sendingReply` with no
+  // indication anything went wrong, which reads exactly like "I tap send
+  // and it gets stuck, nothing happens." Every failure now shows a real
+  // message, matching how every other send failure in this app is
+  // surfaced (compare thread/[id].tsx's own error handling).
   const handleSendReply = () => {
     const text = replyText.trim();
     if (!text || sendingReply) return;
     setSendingReply(true);
+    // Keep auto-advance paused for the whole round trip, not just while the
+    // input has native focus — tapping the send icon blurs the TextInput
+    // immediately, which would otherwise resume the auto-advance timer
+    // (and potentially close/advance past this status) while the request
+    // is still in flight.
+    onReplyFocusChange(true);
+
+    const finish = () => {
+      setSendingReply(false);
+      onReplyFocusChange(false);
+    };
+
     startThread.mutate(group.poster.id, {
       onSuccess: (thread) => {
         sendMessage.mutate(
@@ -255,11 +339,22 @@ function PosterPage({
               onClose();
               router.push(`/thread/${thread.thread_id}`);
             },
-            onSettled: () => setSendingReply(false),
+            onError: (error) => {
+              Alert.alert(
+                'Could not send reply',
+                error.code === 'insufficient_credit'
+                  ? 'You need more chat credit to reply to this status.'
+                  : error.message,
+              );
+            },
+            onSettled: finish,
           },
         );
       },
-      onError: () => setSendingReply(false),
+      onError: (error) => {
+        finish();
+        Alert.alert('Could not send reply', error.message);
+      },
     });
   };
 
@@ -295,8 +390,16 @@ function PosterPage({
           alike). It still correctly handles every tap that isn't already
           captured by something rendered above it. */}
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-        <Pressable style={styles.tapZoneLeft} onPress={() => onAdvance(-1)} />
-        <Pressable style={styles.tapZoneRight} onPress={() => onAdvance(1)} />
+        <Pressable
+          style={styles.tapZoneLeft}
+          onPressIn={handlePressIn}
+          onPressOut={() => handlePressOut(-1)}
+        />
+        <Pressable
+          style={styles.tapZoneRight}
+          onPressIn={handlePressIn}
+          onPressOut={() => handlePressOut(1)}
+        />
       </View>
 
       <View style={[styles.progressRow, { top: 50, paddingHorizontal: spacing.sm }]}>
@@ -305,7 +408,7 @@ function PosterPage({
             {i < itemIndex ? (
               <View style={[styles.progressFill, { width: '100%' }]} />
             ) : i === itemIndex && isActive ? (
-              <AnimatedProgressBar key={`${group.poster.id}-${itemIndex}`} />
+              <AnimatedProgressBar key={`${group.poster.id}-${itemIndex}`} isPaused={isHeld} />
             ) : null}
           </View>
         ))}
@@ -424,14 +527,50 @@ function PosterPage({
 /** Animates 0% -> 100% over ITEM_DURATION_MS, matching the JS `setTimeout`
  * that actually drives auto-advance in the parent — purely visual, this
  * component's `key` (poster+item) is what "resets" it on every item
- * change, rather than manually resetting a shared value. */
-function AnimatedProgressBar() {
+ * change, rather than manually resetting a shared value.
+ *
+ * `isPaused` freezes the fill exactly where it is (hold-to-pause) and
+ * resumes it from there rather than restarting — `progress.value` already
+ * holds the live interpolated value at the instant `cancelAnimation` stops
+ * it, so no separate elapsed-time bookkeeping is needed here the way the
+ * parent's JS-side `setTimeout` needs its own (they're two independent
+ * clocks aimed at the same wall-clock deadline, not synchronized to each
+ * other directly). */
+function AnimatedProgressBar({ isPaused }: { isPaused: boolean }) {
   const progress = useSharedValue(0);
+  // Wall-clock bookkeeping, same shape as the parent's own remaining-time
+  // tracking — deliberately not read back from `progress.value` (mixing a
+  // read and a later write of the same shared value across renders trips
+  // the React Compiler's immutability check, since it can't see into
+  // Reanimated's own mutation contract).
+  const startedAtRef = useRef(0);
+  const remainingMsRef = useRef(ITEM_DURATION_MS);
 
   useEffect(() => {
+    startedAtRef.current = Date.now();
     progress.value = withTiming(1, { duration: ITEM_DURATION_MS });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (isPaused) {
+      cancelAnimation(progress);
+      remainingMsRef.current -= Date.now() - startedAtRef.current;
+      return;
+    }
+    startedAtRef.current = Date.now();
+    if (remainingMsRef.current > 0) {
+      // react-hooks/immutability flags this as mutating `progress` across
+      // two different effects — a real rule for plain React refs/state,
+      // but a false positive for a Reanimated shared value, whose entire
+      // contract is that `.value` can be written from anywhere (worklets,
+      // multiple effects, event handlers) by design; the compiler doesn't
+      // model that exemption.
+      // eslint-disable-next-line react-hooks/immutability
+      progress.value = withTiming(1, { duration: remainingMsRef.current });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPaused]);
 
   const style = useAnimatedStyle(() => ({ width: `${progress.value * 100}%` }));
 
@@ -538,9 +677,13 @@ const styles = StyleSheet.create({
   },
   tapZoneLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: '33%' },
   tapZoneRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: '67%' },
+  // Lifted well clear of the bottom-edge controls (the reply bar for
+  // someone else's status, the view/likes row for your own) rather than
+  // sitting flush at `bottom: 0` — matches WhatsApp's own photo-status
+  // caption position, and stops the two from ever visually colliding.
   mediaCaption: {
     position: 'absolute',
-    bottom: 0,
+    bottom: 120,
     left: 0,
     right: 0,
     backgroundColor: 'rgba(0,0,0,0.4)',
