@@ -109,7 +109,7 @@ function KycSection() {
               borderRadius: radius.card,
               paddingHorizontal: 16,
               paddingVertical: 14,
-              fontSize: 16,
+              fontSize: 17, // matches typography.body — punch-list item 4, 2026-09-19
             }}
           />
           {submitKyc.isError ? (
@@ -339,7 +339,7 @@ function TwoStepSection({ enabled }: { enabled: boolean }) {
               borderRadius: radius.card,
               paddingHorizontal: 16,
               paddingVertical: 14,
-              fontSize: 16,
+              fontSize: 17, // matches typography.body — punch-list item 4, 2026-09-19
             }}
           />
           <Text variant="caption" color="tertiary">

@@ -263,7 +263,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    fontSize: 16,
+    fontSize: 17, // matches typography.body — punch-list item 4, 2026-09-19
   },
   textStatusInput: {
     fontSize: 28,
