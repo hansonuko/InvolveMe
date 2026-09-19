@@ -10,13 +10,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 
@@ -390,8 +383,20 @@ export interface QuotedPreview {
   isDeleted: boolean;
 }
 
-const SWIPE_REPLY_THRESHOLD = 56;
-const SWIPE_REPLY_MAX = 76;
+// Swipe-right-to-reply was attempted here (a Gesture.Pan()/GestureDetector
+// per bubble) and pulled back out the same day: it caused a real,
+// confirmed "Maximum update depth exceeded" crash on opening any thread
+// with existing messages (crash report captured via
+// components/ErrorBoundary.tsx's own local logging). A gesture object
+// recreated fresh on every render of every bubble inside a FlatList is a
+// documented react-native-gesture-handler correctness hazard (gesture
+// objects should be memoized), and this was the first place in the app
+// combining that library's Gesture API with a Reanimated shared value —
+// removed entirely rather than patched blind, since there was no way to
+// verify a fix live before shipping again. Reply is still fully reachable
+// via the selection header's icon below, which uses no gesture API at
+// all. Revisit swipe-to-reply later as its own isolated, properly-tested
+// follow-up if still wanted.
 
 function MessageBubble({
   message,
@@ -403,7 +408,6 @@ function MessageBubble({
   isSelected,
   onOpenActions,
   onToggleSelect,
-  onSwipeReply,
 }: {
   message: Message;
   isOwn: boolean;
@@ -433,206 +437,158 @@ function MessageBubble({
   isSelected: boolean;
   onOpenActions: (message: Message) => void;
   onToggleSelect: (messageId: string) => void;
-  /** Swipe-right-to-reply (WhatsApp/Telegram's own signature gesture) —
-   * the fast path that doesn't require entering selection mode at all.
-   * Disabled while already selecting or on a deleted-for-everyone
-   * tombstone (nothing real to quote). */
-  onSwipeReply: (message: Message) => void;
 }) {
   const { colors, spacing, radius } = useTheme();
   const isDeleted = message.deleted_for_everyone;
   const dimInverseText = isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined;
 
-  const translateX = useSharedValue(0);
-  const swipeEnabled = !selectionMode && !isDeleted;
-
-  // Rightward-only horizontal pan; `failOffsetY` releases the gesture back
-  // to the FlatList's own vertical scroll the moment vertical intent is
-  // clearer than horizontal, so this can't fight normal list scrolling.
-  const panGesture = Gesture.Pan()
-    .enabled(swipeEnabled)
-    .activeOffsetX(10)
-    .failOffsetY([-10, 10])
-    .onUpdate((event) => {
-      translateX.value = Math.max(0, Math.min(event.translationX, SWIPE_REPLY_MAX));
-    })
-    .onEnd(() => {
-      if (translateX.value > SWIPE_REPLY_THRESHOLD) {
-        runOnJS(onSwipeReply)(message);
-      }
-      translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
-    });
-
-  const bubbleTranslateStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-  }));
-  const replyIconStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(translateX.value / SWIPE_REPLY_THRESHOLD, 1),
-  }));
-
   return (
-    <GestureDetector gesture={panGesture}>
-      <View
-        style={[
-          styles.bubbleRow,
-          {
-            justifyContent: isOwn ? 'flex-end' : 'flex-start',
-            marginBottom: spacing.sm,
-            backgroundColor: isSelected ? withAlpha(colors.brandPrimary, 0.12) : 'transparent',
-            borderRadius: radius.card,
-          },
-        ]}
-      >
-        {swipeEnabled ? (
-          <Animated.View
-            style={[
-              { position: 'absolute', left: 6, top: 0, bottom: 0, justifyContent: 'center' },
-              replyIconStyle,
-            ]}
-          >
-            <Ionicons name="arrow-undo" size={20} color={colors.textSecondary} />
-          </Animated.View>
-        ) : null}
-        {selectionMode ? (
-          <View style={{ justifyContent: 'center', paddingHorizontal: spacing.sm }}>
-            <Ionicons
-              name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
-              size={22}
-              color={isSelected ? colors.brandPrimary : colors.textTertiary}
-            />
-          </View>
-        ) : null}
-        <Animated.View style={bubbleTranslateStyle}>
-          <Pressable
-            onPress={selectionMode ? () => onToggleSelect(message.id) : undefined}
-            onLongPress={() => onOpenActions(message)}
-            style={[
-              styles.bubble,
-              {
-                backgroundColor: isOwn ? colors.brandPrimary : colors.bgSurfaceAlt,
-                borderRadius: radius.bubble,
-                padding: spacing.md,
-              },
-            ]}
-          >
-            {!isDeleted && message.is_forwarded ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 4,
-                  marginBottom: spacing.xs,
-                }}
-              >
-                <Ionicons
-                  name="arrow-redo-outline"
-                  size={12}
-                  color={isOwn ? withAlpha(colors.textInverse, 0.75) : colors.textSecondary}
-                />
-                <Text
-                  variant="caption"
-                  color={isOwn ? undefined : 'secondary'}
-                  style={[{ fontStyle: 'italic' }, dimInverseText]}
-                >
-                  Forwarded
-                </Text>
-              </View>
-            ) : null}
-            {!isDeleted && quotedPreview ? (
-              <View
-                style={{
-                  borderLeftWidth: 3,
-                  borderLeftColor: isOwn ? withAlpha(colors.textInverse, 0.6) : colors.brandPrimary,
-                  paddingLeft: spacing.sm,
-                  marginBottom: spacing.xs,
-                }}
-              >
-                <Text
-                  variant="caption"
-                  color={isOwn ? undefined : 'secondary'}
-                  style={[{ fontWeight: '700' }, dimInverseText]}
-                >
-                  {quotedPreview.senderLabel}
-                </Text>
-                <Text
-                  variant="caption"
-                  numberOfLines={1}
-                  color={isOwn ? undefined : 'secondary'}
-                  style={[quotedPreview.isDeleted ? { fontStyle: 'italic' } : null, dimInverseText]}
-                >
-                  {quotedPreview.body}
-                </Text>
-              </View>
-            ) : null}
-            {isDeleted ? (
+    <View
+      style={[
+        styles.bubbleRow,
+        {
+          justifyContent: isOwn ? 'flex-end' : 'flex-start',
+          marginBottom: spacing.sm,
+          backgroundColor: isSelected ? withAlpha(colors.brandPrimary, 0.12) : 'transparent',
+          borderRadius: radius.card,
+        },
+      ]}
+    >
+      {selectionMode ? (
+        <View style={{ justifyContent: 'center', paddingHorizontal: spacing.sm }}>
+          <Ionicons
+            name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+            size={22}
+            color={isSelected ? colors.brandPrimary : colors.textTertiary}
+          />
+        </View>
+      ) : null}
+      <View>
+        <Pressable
+          onPress={selectionMode ? () => onToggleSelect(message.id) : undefined}
+          onLongPress={() => onOpenActions(message)}
+          style={[
+            styles.bubble,
+            {
+              backgroundColor: isOwn ? colors.brandPrimary : colors.bgSurfaceAlt,
+              borderRadius: radius.bubble,
+              padding: spacing.md,
+            },
+          ]}
+        >
+          {!isDeleted && message.is_forwarded ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                marginBottom: spacing.xs,
+              }}
+            >
+              <Ionicons
+                name="arrow-redo-outline"
+                size={12}
+                color={isOwn ? withAlpha(colors.textInverse, 0.75) : colors.textSecondary}
+              />
               <Text
-                variant="body"
-                color={isOwn ? 'inverse' : 'secondary'}
+                variant="caption"
+                color={isOwn ? undefined : 'secondary'}
                 style={[{ fontStyle: 'italic' }, dimInverseText]}
               >
-                This message was deleted
+                Forwarded
               </Text>
-            ) : (
-              <Text variant="body" color={isOwn ? 'inverse' : undefined}>
-                {message.body}
+            </View>
+          ) : null}
+          {!isDeleted && quotedPreview ? (
+            <View
+              style={{
+                borderLeftWidth: 3,
+                borderLeftColor: isOwn ? withAlpha(colors.textInverse, 0.6) : colors.brandPrimary,
+                paddingLeft: spacing.sm,
+                marginBottom: spacing.xs,
+              }}
+            >
+              <Text
+                variant="caption"
+                color={isOwn ? undefined : 'secondary'}
+                style={[{ fontWeight: '700' }, dimInverseText]}
+              >
+                {quotedPreview.senderLabel}
               </Text>
-            )}
-            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
-              {!isDeleted ? (
-                <Text
-                  variant="caption"
-                  color={isOwn ? undefined : 'secondary'}
-                  style={dimInverseText}
-                >
-                  {message.credits_charged} cr
-                </Text>
-              ) : null}
-              {!isDeleted && message.edited_at ? (
-                <Text
-                  variant="caption"
-                  color={isOwn ? undefined : 'secondary'}
-                  style={dimInverseText}
-                >
-                  · Edited
-                </Text>
-              ) : null}
-              {!isDeleted && message.status === 'escrowed' ? (
-                <Text
-                  variant="caption"
-                  color={isOwn ? undefined : 'secondary'}
-                  style={dimInverseText}
-                >
-                  · awaiting reply
-                </Text>
-              ) : !isDeleted && message.status === 'refunded' ? (
-                <Text
-                  variant="caption"
-                  color={isOwn ? undefined : 'secondary'}
-                  style={dimInverseText}
-                >
-                  · refunded
-                </Text>
-              ) : null}
+              <Text
+                variant="caption"
+                numberOfLines={1}
+                color={isOwn ? undefined : 'secondary'}
+                style={[quotedPreview.isDeleted ? { fontStyle: 'italic' } : null, dimInverseText]}
+              >
+                {quotedPreview.body}
+              </Text>
+            </View>
+          ) : null}
+          {isDeleted ? (
+            <Text
+              variant="body"
+              color={isOwn ? 'inverse' : 'secondary'}
+              style={[{ fontStyle: 'italic' }, dimInverseText]}
+            >
+              This message was deleted
+            </Text>
+          ) : (
+            <Text variant="body" color={isOwn ? 'inverse' : undefined}>
+              {message.body}
+            </Text>
+          )}
+          <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
+            {!isDeleted ? (
               <Text
                 variant="caption"
                 color={isOwn ? undefined : 'secondary'}
                 style={dimInverseText}
               >
-                {formatMessageTime(message.created_at)}
-                {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
+                {message.credits_charged} cr
               </Text>
-              {isOwn && isRead !== undefined ? (
-                <Ionicons
-                  name={isRead ? 'checkmark-done' : 'checkmark'}
-                  size={14}
-                  color={withAlpha(colors.textInverse, isRead ? 1 : 0.75)}
-                />
-              ) : null}
-            </View>
-          </Pressable>
-        </Animated.View>
+            ) : null}
+            {!isDeleted && message.edited_at ? (
+              <Text
+                variant="caption"
+                color={isOwn ? undefined : 'secondary'}
+                style={dimInverseText}
+              >
+                · Edited
+              </Text>
+            ) : null}
+            {!isDeleted && message.status === 'escrowed' ? (
+              <Text
+                variant="caption"
+                color={isOwn ? undefined : 'secondary'}
+                style={dimInverseText}
+              >
+                · awaiting reply
+              </Text>
+            ) : !isDeleted && message.status === 'refunded' ? (
+              <Text
+                variant="caption"
+                color={isOwn ? undefined : 'secondary'}
+                style={dimInverseText}
+              >
+                · refunded
+              </Text>
+            ) : null}
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
+              {formatMessageTime(message.created_at)}
+              {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
+            </Text>
+            {isOwn && isRead !== undefined ? (
+              <Ionicons
+                name={isRead ? 'checkmark-done' : 'checkmark'}
+                size={14}
+                color={withAlpha(colors.textInverse, isRead ? 1 : 0.75)}
+              />
+            ) : null}
+          </View>
+        </Pressable>
       </View>
-    </GestureDetector>
+    </View>
   );
 }
 
@@ -942,13 +898,14 @@ export default function ThreadScreen() {
     );
   };
 
-  /** Swipe-right-to-reply (any bubble) or the selection header's Reply icon
-   * (single-select only) both land here. Cancels an in-progress edit
-   * first — the two composer modes are mutually exclusive — but leaves
-   * whatever the user was already typing untouched otherwise, matching
-   * WhatsApp: swiping to reply adds the quote context above your draft, it
-   * doesn't discard it. */
-  const handleSwipeReply = (message: Message) => {
+  /** Starts replying to a message — reached via the selection header's
+   * Reply icon (single-select only; see MessageBubble's own header comment
+   * for why a swipe gesture isn't the entry point here). Cancels an
+   * in-progress edit first — the two composer modes are mutually
+   * exclusive — but leaves whatever the user was already typing untouched
+   * otherwise, matching WhatsApp: starting a reply adds the quote context
+   * above your draft, it doesn't discard it. */
+  const handleReply = (message: Message) => {
     if (editingMessage) {
       setEditingMessage(null);
       setBody('');
@@ -1265,7 +1222,7 @@ export default function ThreadScreen() {
             ? () => (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
                   {canReplySelected ? (
-                    <Pressable onPress={() => handleSwipeReply(selectedMessages[0])} hitSlop={10}>
+                    <Pressable onPress={() => handleReply(selectedMessages[0])} hitSlop={10}>
                       <Ionicons name="arrow-undo" size={21} color={colors.textSecondary} />
                     </Pressable>
                   ) : null}
@@ -1358,7 +1315,6 @@ export default function ThreadScreen() {
                     isSelected={selectedIds.has(item.id)}
                     onOpenActions={(m) => enterSelection(m.id)}
                     onToggleSelect={toggleSelected}
-                    onSwipeReply={handleSwipeReply}
                   />
                 );
               }}
