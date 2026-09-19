@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/Button';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { MemberSearchList } from '@/components/groups/MemberSearchList';
 import { StoryViewer } from '@/components/status/StoryViewer';
 import { type DeviceContact, useDeviceContacts, usePhoneContactNames } from '@/lib/contacts';
 import { shareInvite } from '@/lib/invite';
@@ -393,177 +394,34 @@ function GroupRow({ group, onPress }: { group: GroupThread; onPress: () => void 
   );
 }
 
-const GROUP_SEARCH_DEBOUNCE_MS = 350;
-// Defensive cap on how many locally-filtered device contacts get sent to
-// find-users-by-phones per search — a name/number query realistically
-// narrows a phonebook to a handful of people, this just bounds the
-// pathological case (e.g. searching a single common letter) well under
-// that function's own MAX_PHONES_PER_CALL (2000).
-const GROUP_SEARCH_MAX_LOCAL_MATCHES = 30;
-const GROUP_SEARCH_MIN_PHONE_DIGITS = 10;
-
 /** Group creation (2026-09-18, punch-list item 11; search-as-you-type
- * rebuild 2026-09-19): name + a search-driven member picker.
- *
- * Previously this screen bulk-read the *entire* device phonebook and
- * batch-verified all of it against InvolveMe on every modal open — for
- * anyone with a large phonebook (business contacts, a long-time phone
- * number, etc.) that could exceed find-users-by-phones's own
- * MAX_PHONES_PER_CALL cap (2000 entries) and surface as "Couldn't check
- * your contacts against InvolveMe," the exact bug reported. Rebuilt to the
- * WhatsApp-standard "search-as-you-type" shape instead: nothing loads
- * automatically on open. The device phonebook is read lazily, once, on the
- * first real keystroke (not re-read per keystroke), then every keystroke
- * after that just filters that cached list locally by name or number — no
- * network call at all until there's a small, already-narrowed candidate
- * set to verify. The old separate "Add by phone number" field is folded
- * into this same search box (this session's explicit ask): once the typed
- * text looks like a complete phone number, it's resolved directly via the
- * single-lookup find-user-by-phone path in parallel with the local-contact
- * match, so the same box searches the phonebook *and* looks up a number
- * that isn't saved as a contact at all. Debounced ~350ms so typing doesn't
- * fire a request per keystroke. */
+ * rebuild 2026-09-19): name + a search-driven member picker built on the
+ * shared MemberSearchList component (components/groups/MemberSearchList.tsx)
+ * — see that file's header comment for the full "why search-as-you-type"
+ * reasoning (short version: bulk-loading the whole phonebook on open could
+ * exceed find-users-by-phones's 2000-entry cap, exactly the "Couldn't
+ * check your contacts against InvolveMe" bug that was reported). */
 function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { colors, spacing, radius } = useTheme();
   const router = useRouter();
-  const { status, error, sync } = useDeviceContacts();
-  const findUsers = useFindUsersByPhones();
-  const findUserByPhone = useFindUserByPhone();
   const createGroup = useCreateGroup();
 
   const [name, setName] = useState('');
-  const [search, setSearch] = useState('');
   const [selectedMembers, setSelectedMembers] = useState<MatchedContactUser[]>([]);
-  const [searchResults, setSearchResults] = useState<MatchedContactUser[]>([]);
-  const [phoneMatch, setPhoneMatch] = useState<FoundUser | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  // Lazily populated on the first non-empty search — never on modal open.
-  // `null` means "not read yet," `[]` means "read, empty/denied."
-  const [deviceContacts, setDeviceContacts] = useState<DeviceContact[] | null>(null);
-  // Bumped by the "Retry" action so a failed search can be re-run without
-  // retyping — same "bumped key re-triggers an effect" shape this file's
-  // other modals already use.
-  const [retryKey, setRetryKey] = useState(0);
-
-  useEffect(() => {
-    if (!visible) return;
-    const query = search.trim();
-    if (!query) return;
-
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        setSearching(true);
-        setSearchError(null);
-        try {
-          let contacts = deviceContacts;
-          if (contacts === null) {
-            contacts = await sync();
-            if (cancelled) return;
-            setDeviceContacts(contacts);
-          }
-
-          const lowerQuery = query.toLowerCase();
-          const digitsQuery = query.replace(/\D/g, '');
-
-          const localMatches = contacts
-            .filter((c) => {
-              const nameHit = c.name?.toLowerCase().includes(lowerQuery) ?? false;
-              const phoneHit =
-                digitsQuery.length >= 3 &&
-                c.phones.some((p) => p.replace(/\D/g, '').includes(digitsQuery));
-              return nameHit || phoneHit;
-            })
-            .slice(0, GROUP_SEARCH_MAX_LOCAL_MATCHES);
-
-          if (localMatches.length > 0) {
-            const phoneToContactName = new Map<string, string>();
-            const candidatePhones: string[] = [];
-            for (const c of localMatches) {
-              for (const p of c.phones) {
-                const e164 = toE164NigerianPhone(p);
-                if (c.name) phoneToContactName.set(e164.replace(/^\+/, ''), c.name);
-                candidatePhones.push(e164);
-              }
-            }
-            const result = await findUsers.mutateAsync([...new Set(candidatePhones)]);
-            if (cancelled) return;
-            setSearchResults(
-              result.matches.map((m) => ({
-                ...m,
-                display_name: phoneToContactName.get(m.phone) ?? m.display_name,
-              })),
-            );
-          } else {
-            setSearchResults([]);
-          }
-
-          // The typed text itself looks like a full phone number — resolve
-          // it directly too, independent of whatever's saved on-device, so
-          // someone not in the phonebook at all can still be added.
-          if (digitsQuery.length >= GROUP_SEARCH_MIN_PHONE_DIGITS) {
-            try {
-              const found = await findUserByPhone.mutateAsync(toE164NigerianPhone(query));
-              if (!cancelled) setPhoneMatch(found);
-            } catch {
-              if (!cancelled) setPhoneMatch(null);
-            }
-          } else {
-            setPhoneMatch(null);
-          }
-        } catch (e) {
-          if (!cancelled) {
-            setSearchError(e instanceof Error ? e.message : 'Search failed.');
-          }
-        } finally {
-          if (!cancelled) setSearching(false);
-        }
-      })();
-    }, GROUP_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, visible, retryKey]);
+  // Bumped on close so MemberSearchList clears its own search box/cached
+  // device-contacts read for the next time this modal opens.
+  const [resetToken, setResetToken] = useState(0);
 
   const reset = () => {
     setName('');
-    setSearch('');
     setSelectedMembers([]);
-    setSearchResults([]);
-    setPhoneMatch(null);
-    setSearchError(null);
-    setDeviceContacts(null);
+    setResetToken((k) => k + 1);
     createGroup.reset();
-    findUsers.reset();
-    findUserByPhone.reset();
   };
 
   const handleClose = () => {
     reset();
     onClose();
-  };
-
-  // Adds a found match to the member list and clears the search box for
-  // the next one — the standard "search, tap to add, box clears" chip
-  // pattern, since there's no longer a persistent full list to tap
-  // checkmarks in.
-  const addMember = (
-    user: { id: string; display_name: string | null; avatar_url: string | null },
-    phone: string,
-  ) => {
-    setSelectedMembers((prev) =>
-      prev.some((m) => m.id === user.id)
-        ? prev
-        : [
-            ...prev,
-            { id: user.id, display_name: user.display_name, avatar_url: user.avatar_url, phone },
-          ],
-    );
-    setSearch('');
   };
 
   const removeMember = (userId: string) => {
@@ -581,12 +439,6 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
       },
     );
   };
-
-  const visibleResults = searchResults.filter((r) => !selectedMembers.some((m) => m.id === r.id));
-  const showPhoneMatch =
-    !!phoneMatch &&
-    !selectedMembers.some((m) => m.id === phoneMatch.id) &&
-    !visibleResults.some((r) => r.id === phoneMatch.id);
 
   const canCreate = name.trim().length > 0 && selectedMembers.length > 0 && !createGroup.isPending;
 
@@ -666,134 +518,16 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
               </View>
             ) : null}
 
-            <TextInput
-              value={search}
-              onChangeText={(text) => {
-                setSearch(text);
-                if (!text.trim()) {
-                  setSearchResults([]);
-                  setPhoneMatch(null);
-                  setSearchError(null);
-                }
-              }}
-              placeholder="Search name or phone number"
-              placeholderTextColor={colors.textSecondary}
-              keyboardType="default"
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.bgSurfaceAlt,
-                  color: colors.textPrimary,
-                  borderRadius: radius.card,
-                  borderColor: colors.borderSubtle,
-                },
-              ]}
+            <MemberSearchList
+              key={resetToken}
+              visible={visible}
+              excludeUserIds={new Set(selectedMembers.map((m) => m.id))}
+              onSelect={(user) =>
+                setSelectedMembers((prev) =>
+                  prev.some((m) => m.id === user.id) ? prev : [...prev, user],
+                )
+              }
             />
-
-            {!search.trim() ? (
-              <View style={styles.empty}>
-                <Text variant="body" color="tertiary" style={{ textAlign: 'center' }}>
-                  Type a name or phone number to add members.
-                </Text>
-                {status === 'denied' ? (
-                  <>
-                    <Text
-                      variant="caption"
-                      color="tertiary"
-                      style={{
-                        textAlign: 'center',
-                        marginTop: spacing.sm,
-                        marginBottom: spacing.md,
-                      }}
-                    >
-                      Contacts access is off — you can still add someone by their phone number.
-                    </Text>
-                    <Button label="Open settings" onPress={() => void Linking.openSettings()} />
-                  </>
-                ) : status === 'error' ? (
-                  <Text
-                    variant="caption"
-                    color="danger"
-                    style={{ textAlign: 'center', marginTop: spacing.sm }}
-                  >
-                    {error} You can still add someone by their phone number.
-                  </Text>
-                ) : null}
-              </View>
-            ) : searching ? (
-              <View style={styles.empty}>
-                <Text variant="body" color="tertiary">
-                  Searching…
-                </Text>
-              </View>
-            ) : searchError ? (
-              <View style={styles.empty}>
-                <Text
-                  variant="body"
-                  color="danger"
-                  style={{ textAlign: 'center', marginBottom: spacing.md }}
-                >
-                  Couldn&apos;t search. {searchError}
-                </Text>
-                <Button label="Retry" onPress={() => setRetryKey((k) => k + 1)} />
-              </View>
-            ) : visibleResults.length === 0 && !showPhoneMatch ? (
-              <View style={styles.empty}>
-                <Text variant="body" color="tertiary" style={{ textAlign: 'center' }}>
-                  No matches on InvolveMe yet.
-                </Text>
-              </View>
-            ) : (
-              <FlatList
-                data={visibleResults}
-                keyExtractor={(u) => u.id}
-                style={{ flex: 1 }}
-                renderItem={({ item }) => (
-                  <Pressable
-                    onPress={() => addMember(item, item.phone)}
-                    style={({ pressed }) => [
-                      styles.row,
-                      {
-                        paddingVertical: spacing.sm,
-                        backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
-                      },
-                    ]}
-                  >
-                    <Avatar uri={item.avatar_url} displayName={item.display_name} size={44} />
-                    <Text variant="bodyMedium" style={{ flex: 1, marginLeft: spacing.md }}>
-                      {item.display_name ?? 'Unnamed'}
-                    </Text>
-                    <Ionicons name="add-circle-outline" size={22} color={colors.brandPrimary} />
-                  </Pressable>
-                )}
-                ListFooterComponent={
-                  showPhoneMatch && phoneMatch ? (
-                    <Pressable
-                      onPress={() =>
-                        addMember(phoneMatch, toE164NigerianPhone(search).replace(/^\+/, ''))
-                      }
-                      style={({ pressed }) => [
-                        styles.row,
-                        {
-                          paddingVertical: spacing.sm,
-                          backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
-                        },
-                      ]}
-                    >
-                      <Avatar
-                        uri={phoneMatch.avatar_url}
-                        displayName={phoneMatch.display_name}
-                        size={44}
-                      />
-                      <Text variant="bodyMedium" style={{ flex: 1, marginLeft: spacing.md }}>
-                        {phoneMatch.display_name ?? 'Unnamed'}
-                      </Text>
-                      <Ionicons name="add-circle-outline" size={22} color={colors.brandPrimary} />
-                    </Pressable>
-                  ) : null
-                }
-              />
-            )}
 
             <Button
               label={
