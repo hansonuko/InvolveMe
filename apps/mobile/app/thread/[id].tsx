@@ -177,6 +177,15 @@ function formatLastSeen(lastSeenAt: string | null, now: number): string | null {
     : `last seen ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${time}`;
 }
 
+/** "3:45 PM" — bare time, no date, matching the format WhatsApp shows
+ * under/inside each bubble (as opposed to formatThreadTimestamp's chat-list
+ * version, which falls back to a date once it's not today). Used for both
+ * the "sent" and "read" times shown per message (punch-list item 4,
+ * 2026-09-19) — same clock format so the two read naturally side by side. */
+function formatMessageTime(iso: string) {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
 const REPORT_REASONS = [
   'Spam or scam',
   'Harassment or abuse',
@@ -358,6 +367,7 @@ function MessageBubble({
   message,
   isOwn,
   isRead,
+  readAt,
   onRequestEdit,
 }: {
   message: Message;
@@ -367,6 +377,18 @@ function MessageBubble({
    * the caller's own messages, and only when the partner has read
    * receipts enabled (see useThreadHeaderInfo). */
   isRead?: boolean;
+  /** The partner's read cursor (headerInfo.partnerLastReadAt) — only ever
+   * rendered when `isRead` is `true`, so this is the "read at" time shown
+   * next to the tick (punch-list item 4, 2026-09-19: sent time next to a
+   * new read-time twist on WhatsApp's own per-message time). Not an exact
+   * per-message read timestamp — this app tracks one read cursor per
+   * thread, not one per message, same as the tick icon above already only
+   * approximates "read" as "sent before the partner's last-read cursor" —
+   * so the time shown is genuinely when the partner's cursor last moved
+   * past this message, which for the most recently read message is exact
+   * and for older ones is the same real timestamp, just not necessarily
+   * the instant that specific message scrolled into view. */
+  readAt?: string | null;
   /** Only ever called for a message that's actually editable (own,
    * still `status: 'escrowed'`) — see the long-press wiring below, which
    * only attaches this handler at all when that's true. The real edit
@@ -432,6 +454,14 @@ function MessageBubble({
               · refunded
             </Text>
           ) : null}
+          <Text
+            variant="caption"
+            color={isOwn ? undefined : 'secondary'}
+            style={isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined}
+          >
+            {formatMessageTime(message.created_at)}
+            {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
+          </Text>
           {isOwn && isRead !== undefined ? (
             <Ionicons
               name={isRead ? 'checkmark-done' : 'checkmark'}
@@ -775,6 +805,7 @@ export default function ThreadScreen() {
                     message={item}
                     isOwn={isOwn}
                     isRead={isRead}
+                    readAt={headerInfo?.partnerLastReadAt}
                     onRequestEdit={setEditSheetMessage}
                   />
                 );
