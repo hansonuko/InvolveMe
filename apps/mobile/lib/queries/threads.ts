@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { callEdgeFunction } from '@/lib/edgeFunctions';
+import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 
 export interface ThreadWithPartner {
@@ -39,10 +40,27 @@ export interface ThreadWithPartner {
  * PostgREST's embedding syntax needs the exact constraint names — a plain
  * follow-up `.in('id', partnerIds)` is simpler to read and doesn't depend on
  * a migration's internal naming staying stable.
+ *
+ * Kept live via Realtime on `threads` itself (punch-list item 4,
+ * 2026-09-19) — `fn_send_message` updates a thread's own
+ * `last_message_at` in the same transaction as every INSERT into
+ * `messages` (confirmed by reading the function, not assumed), so
+ * subscribing to `threads` changes is sufficient to refresh the whole
+ * list — preview text, ordering, and unread counts all live inside this
+ * query's own `queryFn` and get recomputed together on any invalidation,
+ * without a second subscription on `messages` for the same event. No
+ * `filter` on the subscription: Realtime enforces `threads_select_participant`
+ * RLS on every `postgres_changes` delivery regardless, and that policy
+ * already expresses the exact "either participant column" condition a
+ * single Realtime `filter` string can't (it only supports one column
+ * comparison, not an OR across two).
  */
 export function useThreads(currentUserId: string | undefined) {
-  return useQuery({
-    queryKey: ['threads', currentUserId],
+  const queryClient = useQueryClient();
+  const queryKey = ['threads', currentUserId];
+
+  const query = useQuery({
+    queryKey,
     enabled: !!currentUserId,
     queryFn: async (): Promise<ThreadWithPartner[]> => {
       const { data: threads, error } = await supabase
@@ -115,6 +133,16 @@ export function useThreads(currentUserId: string | undefined) {
       });
     },
   });
+
+  useRealtimeTableChanges(
+    currentUserId ? `threads:${currentUserId}` : undefined,
+    { event: '*', schema: 'public', table: 'threads' },
+    () => {
+      queryClient.invalidateQueries({ queryKey });
+    },
+  );
+
+  return query;
 }
 
 /** Sum of unread_count across every one of the caller's threads — drives
@@ -124,21 +152,37 @@ export function useThreads(currentUserId: string | undefined) {
  * to also fetch partner profiles and message previews just to get one
  * number. */
 export function useTotalUnreadCount(userId: string | undefined) {
-  return useQuery({
-    queryKey: ['totalUnreadCount', userId],
+  const queryClient = useQueryClient();
+  const queryKey = ['totalUnreadCount', userId];
+
+  const query = useQuery({
+    queryKey,
     enabled: !!userId,
     queryFn: async (): Promise<number> => {
       const { data, error } = await supabase.from('thread_unread_counts').select('unread_count');
       if (error) throw error;
       return (data ?? []).reduce((sum, r) => sum + (r.unread_count as number), 0);
     },
-    // No realtime channel for this (see useLedgerEntries' comment on the
-    // same tradeoff — piggybacking on wallets' channel doesn't apply
-    // here, and threads/messages aren't on supabase_realtime either);
-    // a short poll is a reasonable safety net for something rendered on
-    // every screen, cheap to over-fetch since it's a single small query.
-    refetchInterval: 15000,
   });
+
+  // `thread_unread_counts` is a view, not a table — it can't be added to
+  // the publication directly. `threads` now is (punch-list item 4,
+  // 2026-09-19, this same session), and every new message updates a
+  // thread's own `last_message_at` in the same transaction, so
+  // piggybacking on that change is enough to know this count needs
+  // recomputing — same "reuse an already-published table's changes"
+  // idiom useLedgerEntries already established for wallets/ledger_entries.
+  // Own distinct topic (not literally `useThreads`' `threads:${userId}`
+  // topic string) for the same loose-coupling reason that pattern uses a
+  // separate topic from `useWallets`, even though both listen to the same
+  // table/filter.
+  useRealtimeTableChanges(
+    userId ? `unread-count-via-threads:${userId}` : undefined,
+    { event: '*', schema: 'public', table: 'threads' },
+    () => queryClient.invalidateQueries({ queryKey }),
+  );
+
+  return query;
 }
 
 interface StartThreadResponse {
