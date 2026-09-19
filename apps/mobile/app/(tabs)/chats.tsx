@@ -21,8 +21,7 @@ import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { StoryViewer } from '@/components/status/StoryViewer';
-import { type DeviceContact, useDeviceContacts } from '@/lib/contacts';
-import { useContactsChangedStore } from '@/lib/contactsChangedStore';
+import { type DeviceContact, useDeviceContacts, usePhoneContactNames } from '@/lib/contacts';
 import { shareInvite } from '@/lib/invite';
 import { type MatchedContactUser, useFindUsersByPhones } from '@/lib/queries/contacts';
 import { useFindUserByPhone, type FoundUser } from '@/lib/queries/findUserByPhone';
@@ -394,23 +393,49 @@ function GroupRow({ group, onPress }: { group: GroupThread; onPress: () => void 
   );
 }
 
-/** Group creation (2026-09-18, punch-list item 11): name + a multi-select
- * member picker built from the same device-contacts-matched-to-InvolveMe-
- * users data ContactsList already fetches — a group can only be started
- * with people already on InvolveMe (fn_create_group_thread's own
- * member_not_found check enforces this server-side too), so there's no
- * separate phone-lookup flow to build here. Free messaging only, per
- * useCreateGroup's own comment — nothing here is a pricing decision. */
+/** Group creation (2026-09-18, punch-list item 11; contact-detection +
+ * search follow-up 2026-09-19): name + a multi-select member picker built
+ * from the same device-contacts-matched-to-InvolveMe-users data
+ * ContactsList already fetches — a group can only be started with people
+ * already on InvolveMe (fn_create_group_thread's own member_not_found
+ * check enforces this server-side too). Free messaging only, per
+ * useCreateGroup's own comment — nothing here is a pricing decision.
+ *
+ * Two real gaps closed in the follow-up: (1) a mismatched-phone-format
+ * device contact (e.g. "+2340802..." — a real, common phonebook mistake
+ * where a local trunk "0" survives a dial-code prefix) silently never
+ * matched `find-users-by-phones` at all, showing "none of your contacts
+ * are on InvolveMe" even for someone the user was already mid-conversation
+ * with elsewhere in the app — fixed at the normalization layer, see
+ * `toE164NigerianPhone`'s own updated comment. (2) `findUsers`'s mutation
+ * had no error handling at all — a transient failure rendered
+ * indistinguishably from "genuinely no matches," the exact silent-failure
+ * shape the user's report matches — now surfaced with a real error message
+ * and a Retry action instead of a misleading empty state. Search-and-add
+ * by phone number (this session's explicit ask, "should also have the
+ * feature I can search for a contact already using InvolveMe and add them
+ * from there") reuses the same single-lookup path `NewChatModal` above
+ * already uses, so it works independently of device-contacts sync
+ * entirely — a denied permission or a phonebook with no matches no longer
+ * blocks group creation outright. */
 function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { colors, spacing, radius } = useTheme();
   const router = useRouter();
   const { status, error, sync } = useDeviceContacts();
   const findUsers = useFindUsersByPhones();
+  const findUserByPhone = useFindUserByPhone();
   const createGroup = useCreateGroup();
 
   const [name, setName] = useState('');
   const [candidates, setCandidates] = useState<MatchedContactUser[]>([]);
+  const [manualMatches, setManualMatches] = useState<MatchedContactUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [addPhone, setAddPhone] = useState('');
+  // Bumped by the "Retry" action below so a failed find-users-by-phones
+  // call can be re-run without closing and reopening the whole modal —
+  // same "bumped key re-triggers a refetch effect" shape thread/[id].tsx's
+  // headerRefetchKey and profile/[id].tsx's relationRefetchKey already use.
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     if (!visible) return;
@@ -453,15 +478,19 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
     return () => {
       cancelled = true;
     };
-    // Re-syncs each time the modal opens, not on every re-render.
+    // Re-syncs each time the modal opens, or when Retry is tapped — not on
+    // every re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+  }, [visible, retryKey]);
 
   const reset = () => {
     setName('');
     setCandidates([]);
+    setManualMatches([]);
     setSelectedIds(new Set());
+    setAddPhone('');
     createGroup.reset();
+    findUserByPhone.reset();
   };
 
   const handleClose = () => {
@@ -478,6 +507,36 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
     });
   };
 
+  // Search-and-add by phone number — finds one specific InvolveMe user
+  // (server-side rejects looking up your own number, same as NewChatModal)
+  // and adds + selects them immediately, rather than a separate "found"
+  // preview step: unlike NewChatModal this isn't a single "go start a
+  // chat" action, it's building up a member list, so there's nothing to
+  // preview-then-confirm — adding straight to the (already-editable) list
+  // is the more direct WhatsApp-standard flow for a multi-select add.
+  const handleAddByPhone = () => {
+    const normalized = toE164NigerianPhone(addPhone);
+    findUserByPhone.mutate(normalized, {
+      onSuccess: (found) => {
+        setManualMatches((prev) =>
+          prev.some((m) => m.id === found.id)
+            ? prev
+            : [
+                ...prev,
+                {
+                  id: found.id,
+                  display_name: found.display_name,
+                  avatar_url: found.avatar_url,
+                  phone: normalized.replace(/^\+/, ''),
+                },
+              ],
+        );
+        setSelectedIds((prev) => new Set(prev).add(found.id));
+        setAddPhone('');
+      },
+    });
+  };
+
   const handleCreate = () => {
     createGroup.mutate(
       { name: name.trim(), memberIds: [...selectedIds] },
@@ -489,6 +548,14 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
       },
     );
   };
+
+  // Manually found-and-added users merge into the same picker list as
+  // device-contact matches, deduped by id (a device contact who's also
+  // found by phone search shouldn't render twice).
+  const allCandidates = [
+    ...candidates,
+    ...manualMatches.filter((m) => !candidates.some((c) => c.id === m.id)),
+  ];
 
   const canCreate = name.trim().length > 0 && selectedIds.size > 0 && !createGroup.isPending;
 
@@ -538,6 +605,41 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
               </Text>
             ) : null}
 
+            {/* Search-and-add by phone number (2026-09-19 punch-list
+                follow-up) — always available, independent of device-
+                contacts sync state below, so a denied permission or a
+                phonebook that hasn't matched anyone yet never fully blocks
+                group creation. */}
+            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+              <TextInput
+                value={addPhone}
+                onChangeText={setAddPhone}
+                placeholder="Add by phone number"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="phone-pad"
+                style={[
+                  styles.input,
+                  {
+                    flex: 1,
+                    backgroundColor: colors.bgSurfaceAlt,
+                    color: colors.textPrimary,
+                    borderRadius: radius.card,
+                    borderColor: colors.borderSubtle,
+                  },
+                ]}
+              />
+              <Button
+                label={findUserByPhone.isPending ? 'Finding…' : 'Add'}
+                onPress={handleAddByPhone}
+                disabled={findUserByPhone.isPending || addPhone.trim().length < 8}
+              />
+            </View>
+            {findUserByPhone.isError ? (
+              <Text variant="caption" color="danger">
+                {findUserByPhone.error.message}
+              </Text>
+            ) : null}
+
             {status === 'denied' ? (
               <View style={styles.empty}>
                 <Text
@@ -545,13 +647,14 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
                   color="tertiary"
                   style={{ textAlign: 'center', marginBottom: spacing.md }}
                 >
-                  Allow contacts access to pick group members from your phonebook.
+                  Allow contacts access to pick group members from your phonebook, or add someone by
+                  phone number above.
                 </Text>
                 <Button label="Open settings" onPress={() => void Linking.openSettings()} />
               </View>
             ) : status === 'error' ? (
               <View style={styles.empty}>
-                <Text variant="body" color="danger">
+                <Text variant="body" color="danger" style={{ textAlign: 'center' }}>
                   {error}
                 </Text>
               </View>
@@ -564,15 +667,27 @@ function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => 
                   {status === 'requesting' ? 'Requesting contacts access…' : 'Loading contacts…'}
                 </Text>
               </View>
-            ) : candidates.length === 0 ? (
+            ) : findUsers.isError ? (
+              <View style={styles.empty}>
+                <Text
+                  variant="body"
+                  color="danger"
+                  style={{ textAlign: 'center', marginBottom: spacing.md }}
+                >
+                  Couldn&apos;t check your contacts against InvolveMe. {findUsers.error.message}
+                </Text>
+                <Button label="Retry" onPress={() => setRetryKey((k) => k + 1)} />
+              </View>
+            ) : allCandidates.length === 0 ? (
               <View style={styles.empty}>
                 <Text variant="body" color="tertiary" style={{ textAlign: 'center' }}>
-                  None of your contacts are on InvolveMe yet.
+                  None of your device contacts are on InvolveMe yet — add someone by phone number
+                  above.
                 </Text>
               </View>
             ) : (
               <FlatList
-                data={candidates}
+                data={allCandidates}
                 keyExtractor={(u) => u.id}
                 style={{ flex: 1 }}
                 renderItem={({ item }) => {
@@ -914,60 +1029,13 @@ export default function ChatsScreen() {
   const [subTab, setSubTab] = useState<ChatsSubTab>('chats');
   const [search, setSearch] = useState('');
 
-  // Device-contact name resolution (punch-list item 1, 2026-09-19) —
-  // WhatsApp-standard "your own saved name for this person always wins
-  // over their self-chosen profile name" behavior. Synced once, here,
-  // rather than the Contacts-tab's own on-visit sync (`ContactsList`
-  // below) — the chat list is the very first thing a user sees, and it's
-  // the one place this data is needed immediately rather than only once
-  // a sub-tab is visited, so this is genuinely "asking in context," not a
-  // cold-open prompt for its own sake. Only the raw device contacts are
-  // needed here (not `find-users-by-phones`'s reverse lookup) — matching
-  // is purely against phone numbers this app's *own* threads already
-  // resolved, not against a fresh phonebook-wide server lookup.
-  const { sync: syncDeviceContacts } = useDeviceContacts();
-  const [phoneToContactName, setPhoneToContactName] = useState<Map<string, string>>(new Map());
-  const contactsVersion = useContactsChangedStore((s) => s.version);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const deviceContacts = await syncDeviceContacts();
-      if (cancelled) return;
-      const map = new Map<string, string>();
-      for (const c of deviceContacts) {
-        if (!c.name) continue;
-        for (const p of c.phones) {
-          map.set(toE164NigerianPhone(p).replace(/^\+/, ''), c.name);
-        }
-      }
-      setPhoneToContactName(map);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Re-runs when `contactsVersion` bumps (a contact was just saved from
-    // profile/[id].tsx) — otherwise once per mount, since the Chats tab
-    // stays mounted for the app session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contactsVersion]);
-
-  // The actual name-priority rule, in one place: device-saved contact
-  // name first, then the raw phone number — deliberately never this
-  // person's own self-chosen `display_name` as a fallback for an unsaved
-  // contact, per the explicit spec (a self-chosen name is exactly what a
-  // bad-faith contact could use to impersonate someone trusted).
-  const resolveContactName = (partner: {
-    display_name: string | null;
-    phone: string | null;
-  }): string => {
-    if (partner.phone) {
-      const contactName = phoneToContactName.get(partner.phone);
-      if (contactName) return contactName;
-      return `+${partner.phone}`;
-    }
-    return partner.display_name ?? 'Unnamed';
-  };
+  // Device-contact name resolution (punch-list item 1, 2026-09-19;
+  // extracted into `lib/contacts.ts`'s `usePhoneContactNames` follow-up,
+  // same day, so `thread/[id].tsx` and `profile/[id].tsx` share the exact
+  // same WhatsApp-standard priority rule) — synced here since the chat
+  // list is the very first thing a user sees, not only once the Contacts
+  // sub-tab is visited.
+  const { resolveContactName } = usePhoneContactNames();
 
   const filteredThreads = (threads ?? []).filter((t) =>
     resolveContactName(t.partner).toLowerCase().includes(search.trim().toLowerCase()),

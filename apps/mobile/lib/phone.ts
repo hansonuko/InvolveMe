@@ -35,5 +35,24 @@ export function toE164Phone(raw: string, dialCode: string): string {
  * support looking up a non-Nigerian number.
  */
 export function toE164NigerianPhone(raw: string): string {
-  return toE164Phone(raw, '+234');
+  const e164 = toE164Phone(raw, '+234');
+
+  // A real, common phonebook data-entry pattern, worth normalizing rather
+  // than treating as a different number from the same person's correctly-
+  // formatted `users.phone`: someone types the local trunk format
+  // ("0802...") into a contact, then later prefixes "+234" without
+  // deleting the leading trunk `0` ("+2340802..."), or a contact-sync/
+  // export tool does the same — `toE164Phone` above trusts anything
+  // already starting with `+` as-is, so it never catches this. Scoped to
+  // this Nigeria-specific wrapper only (not the general `toE164Phone`,
+  // which the signup country-picker flow uses for arbitrary countries
+  // where a leading `0` after the dial code isn't necessarily a mistake)
+  // — this app's own contact-matching is Nigeria-only today anyway, per
+  // this function's own header comment (2026-09-19, group-creation
+  // contact-detection punch-list follow-up: "should... find users
+  // already on InvolveMe accurately").
+  if (e164.startsWith('+2340')) {
+    return `+234${e164.slice(5)}`;
+  }
+  return e164;
 }

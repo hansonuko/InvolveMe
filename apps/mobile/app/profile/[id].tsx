@@ -20,7 +20,7 @@ import { FullScreenAvatar } from '@/components/ui/FullScreenAvatar';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { withAppLockSuppressed } from '@/lib/appLock';
-import { useDeviceContacts } from '@/lib/contacts';
+import { useDeviceContacts, usePhoneContactNames } from '@/lib/contacts';
 import { useContactsChangedStore } from '@/lib/contactsChangedStore';
 import { useSession } from '@/lib/hooks/useSession';
 import { useThreadSharedLinks } from '@/lib/queries/messages';
@@ -296,6 +296,16 @@ export default function ProfileScreen() {
   const [reportOpen, setReportOpen] = useState(false);
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
 
+  // Device-saved contact name wins over this profile's own self-chosen
+  // `display_name` here too (punch-list follow-up, 2026-09-19) — the same
+  // rule `chats.tsx`'s thread list and `thread/[id].tsx`'s header already
+  // apply, via the same shared hook, so all three surfaces can never
+  // drift apart on what name they show for the same person.
+  const { resolveContactName } = usePhoneContactNames();
+  const profileDisplayName = profile
+    ? resolveContactName({ display_name: profile.display_name, phone: profile.phone })
+    : undefined;
+
   // "Save to device" (punch-list item 1) — only offered when this phone
   // number isn't already saved on the device. `null` means "not checked
   // yet," deliberately distinct from `false`, so the button doesn't
@@ -399,12 +409,12 @@ export default function ProfileScreen() {
               >
                 <Avatar
                   uri={profile.avatar_url}
-                  displayName={profile.display_name}
+                  displayName={profileDisplayName}
                   size={AVATAR_SIZE}
                 />
               </Pressable>
               <Text variant="title" style={{ marginTop: spacing.md }}>
-                {profile.display_name ?? 'Unnamed'}
+                {profileDisplayName}
               </Text>
               {profile.status_text ? (
                 <Text

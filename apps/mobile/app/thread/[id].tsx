@@ -21,6 +21,7 @@ import { EmojiPicker } from '@/components/chat/EmojiPicker';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { usePhoneContactNames } from '@/lib/contacts';
 import { useSession } from '@/lib/hooks/useSession';
 import {
   type InsufficientCreditDetails,
@@ -503,6 +504,18 @@ export default function ThreadScreen() {
   }, []);
   const lastSeenText = headerInfo ? formatLastSeen(headerInfo.partnerLastSeenAt, now) : null;
 
+  // Device-saved contact name wins over the partner's own self-chosen
+  // profile name here too (punch-list follow-up, 2026-09-19) — same rule
+  // `chats.tsx`'s thread list already applies, via the shared
+  // `usePhoneContactNames` hook so both screens can never drift apart.
+  const { resolveContactName } = usePhoneContactNames();
+  const partnerDisplayName = headerInfo
+    ? resolveContactName({
+        display_name: headerInfo.partnerName,
+        phone: headerInfo.partnerPhone,
+      })
+    : undefined;
+
   const isBlocked = !!headerInfo?.blockedByMe || !!headerInfo?.blockedByPartner;
 
   const [body, setBody] = useState('');
@@ -657,9 +670,7 @@ export default function ThreadScreen() {
       <Stack.Screen
         options={{
           headerShown: true,
-          title:
-            headerInfo?.partnerName ??
-            (headerInfo?.partnerPhone ? `+${headerInfo.partnerPhone}` : 'Chat'),
+          title: partnerDisplayName ?? 'Chat',
           headerStyle: { backgroundColor: colors.bgCanvas },
           headerTintColor: colors.textSecondary,
           headerTitleStyle: { color: colors.textPrimary },
@@ -684,13 +695,12 @@ export default function ThreadScreen() {
               >
                 <Avatar
                   uri={headerInfo.partnerAvatarUrl}
-                  displayName={headerInfo.partnerName}
+                  displayName={partnerDisplayName}
                   size={32}
                 />
                 <View>
                   <Text variant="bodyMedium" numberOfLines={1} style={{ maxWidth: 160 }}>
-                    {headerInfo.partnerName ??
-                      (headerInfo.partnerPhone ? `+${headerInfo.partnerPhone}` : 'Chat')}
+                    {partnerDisplayName ?? 'Chat'}
                   </Text>
                   {lastSeenText ? (
                     <Text
