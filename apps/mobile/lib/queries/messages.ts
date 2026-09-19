@@ -20,31 +20,56 @@ export interface Message {
    * `useEditMessage`'s own comment for why editing stops being possible
    * once a message settles. */
   edited_at: string | null;
+  /** Set by `fn_delete_message_for_everyone` (punch-list item 5,
+   * 2026-09-19) — once true, `body` has been overwritten to empty
+   * server-side and the client should render a "This message was
+   * deleted" tombstone instead, never the (already-gone) body text. */
+  deleted_for_everyone: boolean;
 }
 
 /** Messages in a thread, oldest first, kept live via Realtime — per
  * docs/05-API-REALTIME-SPEC.md §3 (`postgres_changes` on `messages`
  * filtered by `thread_id`). Presence/typing-indicator/read-receipt
  * channels from that same section aren't implemented here — flagged as a
- * deliberate v1 gap, not an oversight. */
-export function useThreadMessages(threadId: string | undefined) {
+ * deliberate v1 gap, not an oversight.
+ *
+ * `currentUserId` filters out anything the caller has personally deleted
+ * (message_deletions, punch-list item 5) — a second, separate query
+ * rather than a PostgREST embed/join, same "simpler to read than an
+ * embed" call this file's other hooks already make; an acceptable extra
+ * round trip since Realtime already refetches this wholesale on any
+ * change, not per-keystroke. */
+export function useThreadMessages(threadId: string | undefined, currentUserId: string | undefined) {
   const queryClient = useQueryClient();
   const queryKey = ['messages', threadId];
 
   const query = useQuery({
     queryKey,
-    enabled: !!threadId,
+    enabled: !!threadId && !!currentUserId,
     queryFn: async (): Promise<Message[]> => {
       const { data, error } = await supabase
         .from('messages')
         .select(
-          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at',
+          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone',
         )
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true });
 
       if (error) throw error;
-      return data ?? [];
+      if (!data?.length) return [];
+
+      const { data: deletions, error: deletionsError } = await supabase
+        .from('message_deletions')
+        .select('message_id')
+        .eq('user_id', currentUserId as string)
+        .in(
+          'message_id',
+          data.map((m) => m.id),
+        );
+      if (deletionsError) throw deletionsError;
+
+      const deletedIds = new Set((deletions ?? []).map((d) => d.message_id));
+      return data.filter((m) => !deletedIds.has(m.id));
     },
   });
 
@@ -201,6 +226,47 @@ export function useEditMessage() {
         message_id: request.messageId,
         body: request.body,
       }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['messages', variables.threadId] });
+    },
+  });
+}
+
+interface DeleteMessageRequest {
+  threadId: string;
+  messageId: string;
+}
+
+/** Wraps POST /functions/v1/delete-message-for-me — a per-viewer
+ * visibility hide (punch-list item 5, 2026-09-19), never touches the
+ * message row itself, available on any message regardless of status/age.
+ * Only invalidates this thread's own message list — nothing about this is
+ * visible to the other participant, so there's nothing for them to
+ * refetch. */
+export function useDeleteMessageForMe() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ ok: true }, EdgeFunctionError, DeleteMessageRequest>({
+    mutationFn: (request) =>
+      callEdgeFunction('delete-message-for-me', { message_id: request.messageId }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['messages', variables.threadId] });
+    },
+  });
+}
+
+/** Wraps POST /functions/v1/delete-message-for-everyone — sender-only,
+ * within the delete window; `fn_delete_message_for_everyone` enforces
+ * both entirely server-side. The other participant picks this up via the
+ * same Realtime `messages` subscription `useThreadMessages` already has
+ * (an `UPDATE` on the row), so this mutation only needs to invalidate the
+ * caller's own cache. */
+export function useDeleteMessageForEveryone() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ ok: true }, EdgeFunctionError, DeleteMessageRequest>({
+    mutationFn: (request) =>
+      callEdgeFunction('delete-message-for-everyone', { message_id: request.messageId }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['messages', variables.threadId] });
     },
