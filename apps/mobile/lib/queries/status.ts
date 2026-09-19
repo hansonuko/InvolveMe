@@ -193,6 +193,57 @@ export function useStatusMediaUrl(mediaPath: string | null) {
   });
 }
 
+export interface StatusLiker {
+  id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  /** When this person liked the status — status_likes.created_at. */
+  liked_at: string;
+}
+
+/** Poster-only "who liked this and when" (punch-list item 7, 2026-09-19) —
+ * `status_likes_select_as_poster` RLS (20260919110000_status_likes.sql)
+ * already exists specifically to support this, per that migration's own
+ * comment ("sets up a future 'who liked this' list with no further RLS
+ * change needed") — a non-poster's equivalent query just returns their
+ * own like row, not everyone's, same "poster sees all, everyone else sees
+ * only their own" shape status_views already established. */
+export function useStatusLikers(statusId: string | undefined) {
+  return useQuery({
+    queryKey: ['statusLikers', statusId],
+    enabled: !!statusId,
+    queryFn: async (): Promise<StatusLiker[]> => {
+      const { data: likes, error } = await supabase
+        .from('status_likes')
+        .select('liker_id, created_at')
+        .eq('status_id', statusId as string)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      if (!likes?.length) return [];
+
+      const { data: likers, error: likersError } = await supabase
+        .from('users')
+        .select('id, display_name, avatar_url')
+        .in(
+          'id',
+          likes.map((l) => l.liker_id),
+        );
+      if (likersError) throw likersError;
+
+      const likerById = new Map((likers ?? []).map((u) => [u.id, u]));
+      return likes.map((l) => {
+        const user = likerById.get(l.liker_id);
+        return {
+          id: l.liker_id,
+          display_name: user?.display_name ?? null,
+          avatar_url: user?.avatar_url ?? null,
+          liked_at: l.created_at,
+        };
+      });
+    },
+  });
+}
+
 /** Poster-only view count (docs/10 item 4 — "visible to the poster only").
  * `status_views_select_as_poster` RLS is what actually enforces this: a
  * non-poster's equivalent query just returns 0 rows, not an error. */
