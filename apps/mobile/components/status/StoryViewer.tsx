@@ -16,6 +16,7 @@ import {
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { Avatar } from '@/components/ui/Avatar';
+import { useKeyboardHeight } from '@/components/ui/KeyboardAvoidingScreen';
 import { Text } from '@/components/ui/Text';
 import { useSendMessage } from '@/lib/queries/messages';
 import {
@@ -191,6 +192,14 @@ function PosterPage({
   const sendMessage = useSendMessage();
   const [replyText, setReplyText] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
+  // The reply bar is `position: absolute, bottom: 0` (it sits over a
+  // full-bleed media background, not in normal flex flow), so it can't
+  // be pushed up by a flex-flow spacer the way `KeyboardAvoidingScreen`
+  // handles the message composer — it has to shift its own `bottom`
+  // by the real keyboard height directly, same underlying measurement,
+  // different application (2026-09-19, contacts/status punch-list
+  // follow-up: "add the keyboard fix to the reply status feature").
+  const keyboardHeight = useKeyboardHeight();
 
   if (!status) return null;
 
@@ -324,7 +333,12 @@ function PosterPage({
         <View
           style={[
             styles.replyBar,
-            { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, gap: spacing.sm },
+            {
+              paddingHorizontal: spacing.lg,
+              paddingBottom: spacing.lg,
+              gap: spacing.sm,
+              bottom: keyboardHeight,
+            },
           ]}
         >
           <TextInput

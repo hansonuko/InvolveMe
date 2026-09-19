@@ -45,7 +45,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
  * to correct), so every call site had those props removed too rather
  * than keeping them as unused dead weight.
  */
-function useKeyboardHeight(): number {
+/**
+ * Exported (2026-09-19, contacts/status punch-list follow-up) so screens
+ * that don't use `KeyboardAvoidingScreen`'s flex-flow spacer — because
+ * their input sits inside an absolutely-positioned overlay, e.g.
+ * `StoryViewer`'s reply bar over a full-bleed media background — can
+ * still react to the real keyboard height directly (shifting `bottom`
+ * by this value) rather than duplicating the show/hide-event logic.
+ */
+export function useKeyboardHeight(): number {
   const [height, setHeight] = useState(0);
 
   useEffect(() => {
