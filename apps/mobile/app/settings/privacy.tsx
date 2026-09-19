@@ -174,7 +174,7 @@ function ReportUserModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <Screen>
-        <KeyboardAvoidingScreen isModal>
+        <KeyboardAvoidingScreen>
           <View
             style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
           >
