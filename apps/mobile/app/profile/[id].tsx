@@ -18,6 +18,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { FullScreenAvatar } from '@/components/ui/FullScreenAvatar';
 import { Screen } from '@/components/ui/Screen';
+import { StoryViewer } from '@/components/status/StoryViewer';
 import { Text } from '@/components/ui/Text';
 import { withAppLockSuppressed } from '@/lib/appLock';
 import { useDeviceContacts, usePhoneContactNames } from '@/lib/contacts';
@@ -25,6 +26,7 @@ import { useContactsChangedStore } from '@/lib/contactsChangedStore';
 import { useSession } from '@/lib/hooks/useSession';
 import { useThreadSharedLinks } from '@/lib/queries/messages';
 import { usePublicProfile, useReportUser } from '@/lib/queries/profile';
+import { useStatusFeed } from '@/lib/queries/status';
 import { useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
 import { toE164NigerianPhone } from '@/lib/phone';
 import { supabase } from '@/lib/supabase';
@@ -295,6 +297,14 @@ export default function ProfileScreen() {
   const reportUser = useReportUser();
   const [reportOpen, setReportOpen] = useState(false);
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
+  const [statusViewerOpen, setStatusViewerOpen] = useState(false);
+
+  // Status ring on this profile's avatar (punch-list item 6, 2026-09-19) —
+  // same feed/lookup shape chats.tsx's ThreadRow already uses for the same
+  // ring on a chat-list row, just keyed to this one profile instead of
+  // every thread partner at once.
+  const { data: statusFeed } = useStatusFeed(currentUserId);
+  const statusGroup = statusFeed?.find((g) => g.poster.id === id);
 
   // Device-saved contact name wins over this profile's own self-chosen
   // `display_name` here too (punch-list follow-up, 2026-09-19) — the same
@@ -401,7 +411,17 @@ export default function ProfileScreen() {
 
             <View style={{ alignItems: 'center', marginTop: -AVATAR_SIZE / 2 }}>
               <Pressable
-                onPress={profile.avatar_url ? () => setAvatarViewerOpen(true) : undefined}
+                // Unseen status wins the tap (there's something new to see,
+                // same priority ThreadRow's own handleAvatarPress already
+                // gives it) — otherwise falls back to the existing "view
+                // profile photo" behavior, or does nothing with neither.
+                onPress={
+                  statusGroup?.hasUnseen
+                    ? () => setStatusViewerOpen(true)
+                    : profile.avatar_url
+                      ? () => setAvatarViewerOpen(true)
+                      : undefined
+                }
                 style={[
                   styles.avatarWrap,
                   { borderColor: colors.bgCanvas, backgroundColor: colors.bgCanvas },
@@ -411,6 +431,7 @@ export default function ProfileScreen() {
                   uri={profile.avatar_url}
                   displayName={profileDisplayName}
                   size={AVATAR_SIZE}
+                  ringVariant={statusGroup ? (statusGroup.hasUnseen ? 'unseen' : 'seen') : 'none'}
                 />
               </Pressable>
               <Text variant="title" style={{ marginTop: spacing.md }}>
@@ -628,6 +649,15 @@ export default function ProfileScreen() {
         uri={profile?.avatar_url}
         onClose={() => setAvatarViewerOpen(false)}
       />
+
+      {statusViewerOpen && statusGroup ? (
+        <StoryViewer
+          feed={[statusGroup]}
+          initialPosterIndex={0}
+          currentUserId={currentUserId}
+          onClose={() => setStatusViewerOpen(false)}
+        />
+      ) : null}
 
       {profile?.phone ? (
         <SaveContactModal
