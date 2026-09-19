@@ -1,12 +1,22 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Alert, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  FlatList,
+  Keyboard,
+  Modal,
+  Pressable,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { BuyCreditModal } from '@/components/ui/BuyCreditModal';
 import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
+import { EmojiPicker } from '@/components/chat/EmojiPicker';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
@@ -473,6 +483,47 @@ export default function ThreadScreen() {
   const isBlocked = !!headerInfo?.blockedByMe || !!headerInfo?.blockedByPartner;
 
   const [body, setBody] = useState('');
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const composerInputRef = useRef<TextInput>(null);
+
+  // Insert at the tracked cursor position, not always at the end — a
+  // plain append would silently relocate an emoji away from where the
+  // user was actually typing whenever they'd moved the cursor first.
+  const insertEmoji = (emoji: string) => {
+    setBody((prev) => prev.slice(0, selection.start) + emoji + prev.slice(selection.end));
+    const nextPos = selection.start + emoji.length;
+    setSelection({ start: nextPos, end: nextPos });
+  };
+
+  // The emoji panel's own backspace key — deletes one character (a
+  // single emoji is usually more than one UTF-16 code unit, but Array.from
+  // splits on whole Unicode code points, so this removes exactly one
+  // visible character/emoji, not half of one, the same class of bug a
+  // naive `.slice(0, -1)` would have).
+  const handleEmojiBackspace = () => {
+    setBody((prev) => {
+      if (selection.start === 0 && selection.start === selection.end) return prev;
+      const before = prev.slice(0, selection.end);
+      const chars = Array.from(before);
+      chars.pop();
+      const newBefore = chars.join('');
+      const removed = before.length - newBefore.length;
+      const nextPos = selection.end - removed;
+      setSelection({ start: nextPos, end: nextPos });
+      return newBefore + prev.slice(selection.end);
+    });
+  };
+
+  const toggleEmojiPicker = () => {
+    if (showEmojiPicker) {
+      setShowEmojiPicker(false);
+      composerInputRef.current?.focus();
+    } else {
+      Keyboard.dismiss();
+      setShowEmojiPicker(true);
+    }
+  };
 
   // A message that couldn't send for lack of chat credit — held locally
   // (never sent to the server, see PendingMessageBubble's own comment)
@@ -684,9 +735,24 @@ export default function ThreadScreen() {
               { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, gap: spacing.sm },
             ]}
           >
+            <Pressable
+              onPress={isBlocked ? undefined : toggleEmojiPicker}
+              disabled={isBlocked}
+              hitSlop={4}
+              style={{ paddingBottom: 6 }}
+            >
+              <Ionicons
+                name={showEmojiPicker ? 'keypad-outline' : 'happy-outline'}
+                size={24}
+                color={colors.textSecondary}
+              />
+            </Pressable>
             <TextInput
+              ref={composerInputRef}
               value={body}
               onChangeText={setBody}
+              onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
+              onFocus={() => setShowEmojiPicker(false)}
               placeholder={isBlocked ? 'Unblock to send a message' : 'Message…'}
               placeholderTextColor={colors.textSecondary}
               editable={!isBlocked}
@@ -716,6 +782,10 @@ export default function ThreadScreen() {
               <Ionicons name="send" size={20} color={colors.textInverse} />
             </Pressable>
           </View>
+
+          {showEmojiPicker ? (
+            <EmojiPicker onSelectEmoji={insertEmoji} onBackspace={handleEmojiBackspace} />
+          ) : null}
         </KeyboardAvoidingScreen>
       </Screen>
 
