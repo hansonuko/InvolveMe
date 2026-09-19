@@ -161,11 +161,11 @@ export function StatusComposer({ visible, onClose }: { visible: boolean; onClose
 
             <Pressable
               onPress={() => setStep('text')}
-              hitSlop={8}
-              style={{ marginTop: spacing.md }}
+              style={[styles.bigOption, { backgroundColor: '#333', borderRadius: radius.card }]}
             >
-              <Text variant="body" color="inverse" style={{ textDecorationLine: 'underline' }}>
-                Aa Write a text status
+              <Ionicons name="text" size={28} color="#fff" />
+              <Text variant="bodyMedium" color="inverse" style={{ marginTop: spacing.sm }}>
+                Write a text status
               </Text>
             </Pressable>
 
