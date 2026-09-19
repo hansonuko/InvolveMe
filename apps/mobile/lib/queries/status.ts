@@ -82,10 +82,31 @@ export function useCreateStatusUploadUrl() {
  * the path a signed upload URL was minted for. `fetch` on a local `file://`
  * URI + `.blob()` is the standard RN/Expo way to get uploadable bytes
  * without a separate `expo-file-system` dependency this app doesn't
- * otherwise need. */
+ * otherwise need.
+ *
+ * The Blob itself must carry the correct `type` — re-wrapping via
+ * `new Blob([original], { type })` rather than trusting `response.blob()`'s
+ * own type (RN's `fetch(file://...).blob()` frequently leaves it
+ * empty/wrong) or passing `uploadToSignedUrl`'s `fileOptions.contentType`
+ * (confirmed live, session 21: storage-js's `uploadToSignedUrl` only reads
+ * `fileOptions.contentType` on its raw-body/ReadableStream code path — for
+ * a `Blob` body it takes the FormData branch instead, which never looks at
+ * `fileOptions` at all and relies entirely on the Blob's own `.type` for
+ * the multipart part's content type. Passing `fileOptions.contentType`
+ * alongside a Blob is a silent no-op, not a smaller version of this fix).
+ * Deliberately `new Blob([original], ...)`, not `new Blob([arrayBuffer],
+ * ...)` — React Native's own `Blob` polyfill (`BlobManager.createFromParts`)
+ * explicitly throws on `ArrayBuffer`/`ArrayBufferView` parts; it only
+ * accepts other `Blob`s or strings, so wrapping the existing Blob is the
+ * one construction that actually works on-device, not just in Node.
+ * Without this, every status photo upload was hitting `status-media`'s
+ * JPEG/PNG-only bucket policy with the wrong mime type and getting
+ * rejected. StatusComposer always produces JPEG via
+ * `ImageManipulator.SaveFormat.JPEG`, so the literal is never a guess. */
 export async function uploadStatusMedia(localUri: string, path: string, token: string) {
   const response = await fetch(localUri);
-  const blob = await response.blob();
+  const original = await response.blob();
+  const blob = new Blob([original], { type: 'image/jpeg' });
   const { error } = await supabase.storage
     .from('status-media')
     .uploadToSignedUrl(path, token, blob);

@@ -171,22 +171,45 @@ export const RESPONSIVE_SCALE_MAX = 1.15;
 
 // System font stack only — no bundled custom fonts, see docs/04-DESIGN-SYSTEM.md §2
 // (RN resolves the platform default automatically when fontFamily is left undefined).
+//
+// Scale bumped 2026-09-19 (punch-list item 4) to match real WhatsApp sizing
+// after an explicit "too tiny, thicken/bolden" report — this app's own
+// `body`/`bodyMedium`/`caption`/`title` had drifted noticeably below
+// WhatsApp's actual on-screen scale (17pt body text, semibold ~17pt list
+// names, 20pt+ bold contact-name headers), not just a subjective "smaller
+// than ideal." Every consumer already reads these through `useTheme()`
+// tokens (never a hardcoded literal), so this one change is what actually
+// fixes chat-row names, Settings row labels, and profile-screen text
+// system-wide — no per-screen font overrides needed.
 export const typography = {
   // Top-level brand wordmark ("InvolveMe" in the Chats header) — deliberately
   // heavier/larger than `display`, per docs/04-DESIGN-SYSTEM.md §2: the app
   // name should read as a wordmark, not just another screen title.
   brand: { fontSize: 30, fontWeight: '800' as const, letterSpacing: 0.2 },
   display: { fontSize: 28, fontWeight: '700' as const },
-  title: { fontSize: 20, fontWeight: '600' as const },
-  body: { fontSize: 16, fontWeight: '400' as const },
-  bodyMedium: { fontSize: 16, fontWeight: '500' as const },
+  // Screen headers, thread name, a profile's own display name — bumped
+  // 20/600 -> 22/700, matching WhatsApp's bolder, larger contact-name
+  // treatment rather than reading as barely-emphasized body text.
+  title: { fontSize: 22, fontWeight: '700' as const },
+  // Message text, list-row titles' base size — 16 -> 17, WhatsApp's own
+  // real bubble/body text size (not a stylistic choice, the literal point
+  // size WhatsApp ships at on both platforms' default scale).
+  body: { fontSize: 17, fontWeight: '400' as const },
+  // Sender name, chat-row contact name, list titles — bumped 16/500 ->
+  // 17/600, the specific "thicken/bolden the user list on the chat row
+  // screen" ask: WhatsApp's own chat-list contact names are semibold, not
+  // merely medium-weight.
+  bodyMedium: { fontSize: 17, fontWeight: '600' as const },
   // Same size/weight as `body`, wider line-height — for dense multi-
   // paragraph prose (Terms of Service / Privacy Policy,
   // components/LegalDocumentScreen.tsx) where `body`'s default spacing
   // reads too tight over long-form text; every other use of `body` is
   // short chat/UI copy that doesn't need this.
-  bodyRelaxed: { fontSize: 16, fontWeight: '400' as const, lineHeight: 24 },
-  caption: { fontSize: 13, fontWeight: '400' as const },
+  bodyRelaxed: { fontSize: 17, fontWeight: '400' as const, lineHeight: 26 },
+  // Timestamps, message previews, field labels — bumped 13 -> 14, enough
+  // to stop reading as genuinely tiny while staying clearly subordinate
+  // to `body`.
+  caption: { fontSize: 14, fontWeight: '400' as const },
   // Bottom tab bar labels — bolder/larger than React Navigation's default
   // (~11/500) so the tab bar reads as more prominent, per
   // docs/04-DESIGN-SYSTEM.md §2. Bumped 12→14 on 2026-09-14 alongside the

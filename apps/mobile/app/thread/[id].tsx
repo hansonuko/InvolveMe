@@ -747,7 +747,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    fontSize: 16,
+    fontSize: 17, // matches typography.body — punch-list item 4, 2026-09-19
     maxHeight: 120,
   },
   // 44x44 minimum tap target per docs/04-DESIGN-SYSTEM.md §6 — the old

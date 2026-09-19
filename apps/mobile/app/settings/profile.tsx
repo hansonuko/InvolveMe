@@ -359,6 +359,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
-  input: { borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16 },
-  linkInput: { borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14 },
+  // fontSize matches typography.body (17) so these text inputs' actual
+  // typed values read at the same size as the rest of the app's body text
+  // — linkInput previously hardcoded a smaller 14, inconsistent with the
+  // name/about input right above it (punch-list item 4, 2026-09-19).
+  input: { borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 17 },
+  linkInput: { borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, fontSize: 17 },
 });

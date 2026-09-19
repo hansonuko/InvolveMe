@@ -640,14 +640,23 @@ function ContactRow({
  * Settings already uses, per-row rather than a single bulk share (a share
  * sheet is inherently a one-recipient-at-a-time interaction on both
  * platforms). A `SectionList` (built into react-native, no new dependency)
- * rather than two separate FlatLists, so long lists still virtualize. */
+ * rather than two separate FlatLists, so long lists still virtualize.
+ *
+ * Search + alphabetical order (punch-list item 3, 2026-09-19): both
+ * sections sort by display name (`localeCompare`, not a raw string `<`,
+ * so accented/non-ASCII names still land in the right place) and the
+ * search box filters both by the same display name — matching the
+ * `chats` sub-tab's own search bar shape/placement (own local state, a
+ * non-sticky `ListHeaderComponent` that scrolls with the list) rather
+ * than inventing a second search pattern in this same file. */
 function ContactsList() {
   const router = useRouter();
-  const { colors, spacing } = useTheme();
+  const { colors, spacing, radius } = useTheme();
   const { status, error, sync } = useDeviceContacts();
   const findUsers = useFindUsersByPhones();
   const startThread = useStartThread();
   const [contacts, setContacts] = useState<DeviceContact[]>([]);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -712,26 +721,75 @@ function ContactsList() {
 
   const matchByPhone = new Map((findUsers.data?.matches ?? []).map((m) => [m.phone, m] as const));
 
+  const nameOf = (c: DeviceContact, u: MatchedContactUser | null) =>
+    c.name ?? u?.display_name ?? '';
+  const byName = (
+    a: { contact: DeviceContact; user: MatchedContactUser | null },
+    b: { contact: DeviceContact; user: MatchedContactUser | null },
+  ) => nameOf(a.contact, a.user).localeCompare(nameOf(b.contact, b.user));
+
+  const query = search.trim().toLowerCase();
   const onInvolveMe: { contact: DeviceContact; user: MatchedContactUser | null }[] = [];
   const toInvite: { contact: DeviceContact; user: MatchedContactUser | null }[] = [];
   for (const c of contacts) {
     const match = c.phones
       .map((p) => matchByPhone.get(toE164NigerianPhone(p).replace(/^\+/, '')))
       .find((m): m is MatchedContactUser => !!m);
+    if (
+      query &&
+      !nameOf(c, match ?? null)
+        .toLowerCase()
+        .includes(query)
+    )
+      continue;
     (match ? onInvolveMe : toInvite).push({ contact: c, user: match ?? null });
   }
+  onInvolveMe.sort(byName);
+  toInvite.sort(byName);
 
   const sections: ContactsSection[] = [
     ...(onInvolveMe.length ? [{ title: 'On InvolveMe' as const, data: onInvolveMe }] : []),
     ...(toInvite.length ? [{ title: 'Invite' as const, data: toInvite }] : []),
   ];
 
+  // Search box always renders once there's a real contact list to search —
+  // even when the current query has zeroed out both sections, so the user
+  // can see/clear what they typed instead of the box vanishing along with
+  // the empty result (same reasoning the `chats` sub-tab's own search bar
+  // follows: it's a ListHeaderComponent, not conditional on results).
+  const searchBar = (
+    <View style={{ paddingBottom: spacing.md }}>
+      <View
+        style={[
+          styles.searchBar,
+          {
+            backgroundColor: colors.bgSurfaceAlt,
+            borderRadius: radius.pill,
+            paddingHorizontal: spacing.lg,
+          },
+        ]}
+      >
+        <Ionicons name="search" size={18} color={colors.textTertiary} />
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search contacts"
+          placeholderTextColor={colors.textTertiary}
+          style={[styles.searchInput, { color: colors.textPrimary }]}
+        />
+      </View>
+    </View>
+  );
+
   if (sections.length === 0) {
     return (
-      <View style={styles.empty}>
-        <Text variant="body" color="tertiary">
-          No contacts with phone numbers found.
-        </Text>
+      <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm }}>
+        {contacts.length > 0 ? searchBar : null}
+        <View style={styles.empty}>
+          <Text variant="body" color="tertiary">
+            {query ? 'No contacts match your search.' : 'No contacts with phone numbers found.'}
+          </Text>
+        </View>
       </View>
     );
   }
@@ -741,6 +799,8 @@ function ContactsList() {
       sections={sections}
       keyExtractor={(item) => item.contact.id}
       contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm }}
+      ListHeaderComponent={searchBar}
+      stickySectionHeadersEnabled={false}
       renderSectionHeader={({ section }) => (
         <Text
           variant="caption"
@@ -896,6 +956,6 @@ const styles = StyleSheet.create({
   subHeaderCol: { flex: 1, alignItems: 'center' },
   subHeaderIndicator: { height: 2, width: 32, borderRadius: 1 },
   searchBar: { flexDirection: 'row', alignItems: 'center', height: 44, gap: 8 },
-  searchInput: { flex: 1, fontSize: 16, paddingVertical: 0 },
+  searchInput: { flex: 1, fontSize: 17, paddingVertical: 0 }, // matches typography.body
   empty: { paddingTop: 48, alignItems: 'center' },
 });
