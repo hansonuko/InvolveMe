@@ -25,6 +25,15 @@ export interface Message {
    * server-side and the client should render a "This message was
    * deleted" tombstone instead, never the (already-gone) body text. */
   deleted_for_everyone: boolean;
+  /** The quoted message's id, for a WhatsApp-style reply preview —
+   * resolved against this same thread's already-loaded `messages` array
+   * client-side (no extra query), since every message in a thread is
+   * already in memory once the thread screen has loaded. `null` for an
+   * ordinary (non-reply) message. */
+  reply_to_message_id: string | null;
+  /** Renders a small "Forwarded" tag — display-only, never a pricing
+   * signal (see migration 20260920090000's header comment). */
+  is_forwarded: boolean;
 }
 
 /** Messages in a thread, oldest first, kept live via Realtime — per
@@ -50,7 +59,7 @@ export function useThreadMessages(threadId: string | undefined, currentUserId: s
       const { data, error } = await supabase
         .from('messages')
         .select(
-          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone',
+          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, reply_to_message_id, is_forwarded',
         )
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true });
@@ -155,6 +164,12 @@ interface SendMessageRequest {
    * a normal online send; the outbox drain (lib/outboxDrain.ts) passes the
    * same uuid the message was queued under on every retry. */
   clientMessageId?: string;
+  /** WhatsApp-style reply — the quoted message's id. Validated server-side
+   * against the target thread. */
+  replyToMessageId?: string;
+  /** Display-only "Forwarded" tag — see the Message interface's own field
+   * for why this never affects billing. */
+  isForwarded?: boolean;
 }
 
 interface SendMessageResponse {
@@ -192,6 +207,8 @@ export function useSendMessage() {
         recipient_id: request.recipientId,
         body: request.body,
         client_message_id: request.clientMessageId,
+        reply_to_message_id: request.replyToMessageId,
+        is_forwarded: request.isForwarded,
       }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['messages', data.thread_id] });

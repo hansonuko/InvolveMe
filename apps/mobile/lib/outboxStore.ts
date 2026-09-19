@@ -18,6 +18,13 @@ export interface OutboxItem {
   target:
     | { kind: '1:1'; threadId?: string; recipientId?: string }
     | { kind: 'group'; groupThreadId: string };
+  /** WhatsApp-style reply/forward metadata, carried through a queued send
+   * exactly like an online one — see thread/[id].tsx's `sendOrQueue`
+   * helper, the single place that decides online-vs-queued for both a
+   * normal send and a forward. `replyToMessageId` only applies to `1:1`
+   * targets in this pass (see docs comment on the mobile reply UI). */
+  replyToMessageId?: string;
+  isForwarded?: boolean;
 }
 
 interface OutboxState {

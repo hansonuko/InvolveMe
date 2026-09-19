@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -10,6 +10,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 
@@ -19,6 +26,7 @@ import { Button } from '@/components/ui/Button';
 import { BuyCreditModal } from '@/components/ui/BuyCreditModal';
 import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
 import { EmojiPicker } from '@/components/chat/EmojiPicker';
+import { type ForwardTarget, ForwardMessageModal } from '@/components/chat/ForwardMessageModal';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
@@ -33,11 +41,12 @@ import {
   useSendMessage,
   useThreadMessages,
 } from '@/lib/queries/messages';
+import { useSendGroupMessage } from '@/lib/queries/groups';
 import { useReportUser } from '@/lib/queries/profile';
 import { useMarkThreadRead, useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { useIsOnline } from '@/lib/network';
-import { useOutboxStore } from '@/lib/outboxStore';
+import { type OutboxItem, useOutboxStore } from '@/lib/outboxStore';
 import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 import { useWallets, walletBalance } from '@/lib/queries/wallet';
@@ -368,15 +377,33 @@ function ThreadOverflowMenu({
   );
 }
 
+/** Sender label + snippet for a reply's quoted-message block — resolved by
+ * the parent (ThreadScreen) against the thread's already-loaded messages,
+ * not fetched separately (every message in an open thread is already in
+ * memory). `undefined` fields mean "couldn't resolve" (e.g. the original
+ * was purged in a way this client no longer has it cached) rather than a
+ * crash — rendered as a generic "Message unavailable" placeholder, the
+ * same honest-fallback posture `deleted_for_everyone` already gets. */
+export interface QuotedPreview {
+  senderLabel: string;
+  body: string;
+  isDeleted: boolean;
+}
+
+const SWIPE_REPLY_THRESHOLD = 56;
+const SWIPE_REPLY_MAX = 76;
+
 function MessageBubble({
   message,
   isOwn,
   isRead,
   readAt,
+  quotedPreview,
   selectionMode,
   isSelected,
   onOpenActions,
   onToggleSelect,
+  onSwipeReply,
 }: {
   message: Message;
   isOwn: boolean;
@@ -397,102 +424,218 @@ function MessageBubble({
    * and for older ones is the same real timestamp, just not necessarily
    * the instant that specific message scrolled into view. */
   readAt?: string | null;
-  /** Multi-select (punch-list item 5, 2026-09-19) — while active, a tap
-   * toggles this bubble's selection instead of doing nothing; long-press
-   * still opens the same action sheet every message gets regardless. */
+  /** Set only when `message.reply_to_message_id` is non-null — see
+   * QuotedPreview's own comment for how this is resolved. */
+  quotedPreview?: QuotedPreview;
+  /** Multi-select — while active, a tap toggles this bubble's selection
+   * instead of doing nothing; long-press now enters selection mode
+   * directly (WhatsApp's own model) rather than opening a popup, so every
+   * message action (Reply, Forward, Delete, Edit) lives in one always-
+   * discoverable place: the selection header. */
   selectionMode: boolean;
   isSelected: boolean;
-  /** Long-press always opens the action sheet now (Edit/Delete for me/
-   * Delete for everyone/Select), not just for editable messages — before
-   * punch-list item 5 this was gated to `isEditable` only, which meant a
-   * non-editable message had no long-press affordance at all. */
   onOpenActions: (message: Message) => void;
   onToggleSelect: (messageId: string) => void;
+  /** Swipe-right-to-reply (WhatsApp/Telegram's own signature gesture) —
+   * the fast path that doesn't require entering selection mode at all.
+   * Disabled while already selecting or on a deleted-for-everyone
+   * tombstone (nothing real to quote). */
+  onSwipeReply: (message: Message) => void;
 }) {
   const { colors, spacing, radius } = useTheme();
   const isDeleted = message.deleted_for_everyone;
   const dimInverseText = isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined;
 
+  const translateX = useSharedValue(0);
+  const swipeEnabled = !selectionMode && !isDeleted;
+
+  // Rightward-only horizontal pan; `failOffsetY` releases the gesture back
+  // to the FlatList's own vertical scroll the moment vertical intent is
+  // clearer than horizontal, so this can't fight normal list scrolling.
+  const panGesture = Gesture.Pan()
+    .enabled(swipeEnabled)
+    .activeOffsetX(10)
+    .failOffsetY([-10, 10])
+    .onUpdate((event) => {
+      translateX.value = Math.max(0, Math.min(event.translationX, SWIPE_REPLY_MAX));
+    })
+    .onEnd(() => {
+      if (translateX.value > SWIPE_REPLY_THRESHOLD) {
+        runOnJS(onSwipeReply)(message);
+      }
+      translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+    });
+
+  const bubbleTranslateStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+  const replyIconStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(translateX.value / SWIPE_REPLY_THRESHOLD, 1),
+  }));
+
   return (
-    <View
-      style={[
-        styles.bubbleRow,
-        {
-          justifyContent: isOwn ? 'flex-end' : 'flex-start',
-          marginBottom: spacing.sm,
-          backgroundColor: isSelected ? withAlpha(colors.brandPrimary, 0.12) : 'transparent',
-          borderRadius: radius.card,
-        },
-      ]}
-    >
-      {selectionMode ? (
-        <View style={{ justifyContent: 'center', paddingHorizontal: spacing.sm }}>
-          <Ionicons
-            name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
-            size={22}
-            color={isSelected ? colors.brandPrimary : colors.textTertiary}
-          />
-        </View>
-      ) : null}
-      <Pressable
-        onPress={selectionMode ? () => onToggleSelect(message.id) : undefined}
-        onLongPress={() => onOpenActions(message)}
+    <GestureDetector gesture={panGesture}>
+      <View
         style={[
-          styles.bubble,
+          styles.bubbleRow,
           {
-            backgroundColor: isOwn ? colors.brandPrimary : colors.bgSurfaceAlt,
-            borderRadius: radius.bubble,
-            padding: spacing.md,
+            justifyContent: isOwn ? 'flex-end' : 'flex-start',
+            marginBottom: spacing.sm,
+            backgroundColor: isSelected ? withAlpha(colors.brandPrimary, 0.12) : 'transparent',
+            borderRadius: radius.card,
           },
         ]}
       >
-        {isDeleted ? (
-          <Text
-            variant="body"
-            color={isOwn ? 'inverse' : 'secondary'}
-            style={[{ fontStyle: 'italic' }, dimInverseText]}
+        {swipeEnabled ? (
+          <Animated.View
+            style={[
+              { position: 'absolute', left: 6, top: 0, bottom: 0, justifyContent: 'center' },
+              replyIconStyle,
+            ]}
           >
-            This message was deleted
-          </Text>
-        ) : (
-          <Text variant="body" color={isOwn ? 'inverse' : undefined}>
-            {message.body}
-          </Text>
-        )}
-        <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
-          {!isDeleted ? (
-            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
-              {message.credits_charged} cr
-            </Text>
-          ) : null}
-          {!isDeleted && message.edited_at ? (
-            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
-              · Edited
-            </Text>
-          ) : null}
-          {!isDeleted && message.status === 'escrowed' ? (
-            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
-              · awaiting reply
-            </Text>
-          ) : !isDeleted && message.status === 'refunded' ? (
-            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
-              · refunded
-            </Text>
-          ) : null}
-          <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
-            {formatMessageTime(message.created_at)}
-            {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
-          </Text>
-          {isOwn && isRead !== undefined ? (
+            <Ionicons name="arrow-undo" size={20} color={colors.textSecondary} />
+          </Animated.View>
+        ) : null}
+        {selectionMode ? (
+          <View style={{ justifyContent: 'center', paddingHorizontal: spacing.sm }}>
             <Ionicons
-              name={isRead ? 'checkmark-done' : 'checkmark'}
-              size={14}
-              color={withAlpha(colors.textInverse, isRead ? 1 : 0.75)}
+              name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+              size={22}
+              color={isSelected ? colors.brandPrimary : colors.textTertiary}
             />
-          ) : null}
-        </View>
-      </Pressable>
-    </View>
+          </View>
+        ) : null}
+        <Animated.View style={bubbleTranslateStyle}>
+          <Pressable
+            onPress={selectionMode ? () => onToggleSelect(message.id) : undefined}
+            onLongPress={() => onOpenActions(message)}
+            style={[
+              styles.bubble,
+              {
+                backgroundColor: isOwn ? colors.brandPrimary : colors.bgSurfaceAlt,
+                borderRadius: radius.bubble,
+                padding: spacing.md,
+              },
+            ]}
+          >
+            {!isDeleted && message.is_forwarded ? (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  marginBottom: spacing.xs,
+                }}
+              >
+                <Ionicons
+                  name="arrow-redo-outline"
+                  size={12}
+                  color={isOwn ? withAlpha(colors.textInverse, 0.75) : colors.textSecondary}
+                />
+                <Text
+                  variant="caption"
+                  color={isOwn ? undefined : 'secondary'}
+                  style={[{ fontStyle: 'italic' }, dimInverseText]}
+                >
+                  Forwarded
+                </Text>
+              </View>
+            ) : null}
+            {!isDeleted && quotedPreview ? (
+              <View
+                style={{
+                  borderLeftWidth: 3,
+                  borderLeftColor: isOwn ? withAlpha(colors.textInverse, 0.6) : colors.brandPrimary,
+                  paddingLeft: spacing.sm,
+                  marginBottom: spacing.xs,
+                }}
+              >
+                <Text
+                  variant="caption"
+                  color={isOwn ? undefined : 'secondary'}
+                  style={[{ fontWeight: '700' }, dimInverseText]}
+                >
+                  {quotedPreview.senderLabel}
+                </Text>
+                <Text
+                  variant="caption"
+                  numberOfLines={1}
+                  color={isOwn ? undefined : 'secondary'}
+                  style={[quotedPreview.isDeleted ? { fontStyle: 'italic' } : null, dimInverseText]}
+                >
+                  {quotedPreview.body}
+                </Text>
+              </View>
+            ) : null}
+            {isDeleted ? (
+              <Text
+                variant="body"
+                color={isOwn ? 'inverse' : 'secondary'}
+                style={[{ fontStyle: 'italic' }, dimInverseText]}
+              >
+                This message was deleted
+              </Text>
+            ) : (
+              <Text variant="body" color={isOwn ? 'inverse' : undefined}>
+                {message.body}
+              </Text>
+            )}
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
+              {!isDeleted ? (
+                <Text
+                  variant="caption"
+                  color={isOwn ? undefined : 'secondary'}
+                  style={dimInverseText}
+                >
+                  {message.credits_charged} cr
+                </Text>
+              ) : null}
+              {!isDeleted && message.edited_at ? (
+                <Text
+                  variant="caption"
+                  color={isOwn ? undefined : 'secondary'}
+                  style={dimInverseText}
+                >
+                  · Edited
+                </Text>
+              ) : null}
+              {!isDeleted && message.status === 'escrowed' ? (
+                <Text
+                  variant="caption"
+                  color={isOwn ? undefined : 'secondary'}
+                  style={dimInverseText}
+                >
+                  · awaiting reply
+                </Text>
+              ) : !isDeleted && message.status === 'refunded' ? (
+                <Text
+                  variant="caption"
+                  color={isOwn ? undefined : 'secondary'}
+                  style={dimInverseText}
+                >
+                  · refunded
+                </Text>
+              ) : null}
+              <Text
+                variant="caption"
+                color={isOwn ? undefined : 'secondary'}
+                style={dimInverseText}
+              >
+                {formatMessageTime(message.created_at)}
+                {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
+              </Text>
+              {isOwn && isRead !== undefined ? (
+                <Ionicons
+                  name={isRead ? 'checkmark-done' : 'checkmark'}
+                  size={14}
+                  color={withAlpha(colors.textInverse, isRead ? 1 : 0.75)}
+                />
+              ) : null}
+            </View>
+          </Pressable>
+        </Animated.View>
+      </View>
+    </GestureDetector>
   );
 }
 
@@ -569,12 +712,28 @@ export default function ThreadScreen() {
 
   const { data: messages, isLoading } = useThreadMessages(id, currentUserId);
   const sendMessage = useSendMessage();
+  const sendGroupMessage = useSendGroupMessage();
   const editMessage = useEditMessage();
   const deleteForMe = useDeleteMessageForMe();
   const deleteForEveryone = useDeleteMessageForEveryone();
   const markThreadRead = useMarkThreadRead();
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
-  const [actionSheetMessage, setActionSheetMessage] = useState<Message | null>(null);
+  // Long-press now enters selection mode directly (WhatsApp's own model —
+  // see MessageBubble's header comment) instead of opening a popup; the one
+  // remaining popup is this small overflow sheet for actions that don't
+  // earn a permanent header icon (currently just Edit, only ever shown
+  // when exactly one eligible message is selected).
+  const [overflowMenuVisible, setOverflowMenuVisible] = useState(false);
+  // WhatsApp-style reply — set either via the selection header's Reply icon
+  // (single-select only) or by swiping a bubble right. Mutually exclusive
+  // with `editingMessage`: starting one clears the other, since the
+  // composer only has one "replying to X" slot.
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  // Forward — captured at the moment "Forward" is tapped (a snapshot of
+  // `selectedMessages`, not a live reference) so the modal's own target-
+  // picking doesn't need to keep the thread's selection state alive.
+  const [forwardMessages, setForwardMessages] = useState<Message[] | null>(null);
+  const [forwarding, setForwarding] = useState(false);
   // Multi-select (punch-list item 5, 2026-09-19) — "Select" in a message's
   // own long-press menu turns this on, pre-selecting that message; further
   // taps toggle other messages while it stays on. Exited via the header's
@@ -657,9 +816,11 @@ export default function ThreadScreen() {
   // A message that couldn't send for lack of chat credit — held locally
   // (never sent to the server, see PendingMessageBubble's own comment)
   // until useWallets' live balance update reports enough to retry.
-  const [pendingSend, setPendingSend] = useState<{ body: string; requiredCredits: number } | null>(
-    null,
-  );
+  const [pendingSend, setPendingSend] = useState<{
+    body: string;
+    requiredCredits: number;
+    replyToMessageId?: string;
+  } | null>(null);
   const { data: wallets } = useWallets(currentUserId);
   const topupBalance = walletBalance(wallets, 'topup_credit');
 
@@ -678,8 +839,9 @@ export default function ThreadScreen() {
     if (sendMessage.isPending) return;
 
     const text = pendingSend.body;
+    const replyToMessageId = pendingSend.replyToMessageId;
     sendMessage.mutate(
-      { threadId: id, body: text },
+      { threadId: id, body: text, replyToMessageId },
       {
         onSuccess: () => setPendingSend(null),
         onError: (error) => {
@@ -688,6 +850,7 @@ export default function ThreadScreen() {
             setPendingSend({
               body: text,
               requiredCredits: details?.credits_required ?? pendingSend.requiredCredits,
+              replyToMessageId,
             });
           } else {
             setPendingSend(null); // a different failure — don't keep silently retrying
@@ -735,6 +898,8 @@ export default function ThreadScreen() {
       return;
     }
 
+    const replyToMessageId = replyingTo?.id;
+
     // Offline outbox (docs/13-OFFLINE-MODE-SCOPING.md): queue rather than
     // attempt the send — WhatsApp's own behavior is to accept the compose
     // immediately and show a pending bubble, not block or error. Editing
@@ -747,25 +912,125 @@ export default function ThreadScreen() {
         createdAt: new Date().toISOString(),
         senderId: currentUserId,
         target: { kind: '1:1', threadId: id },
+        replyToMessageId,
       });
       setBody('');
+      setReplyingTo(null);
       return;
     }
 
     sendMessage.mutate(
-      { threadId: id, body: text },
+      { threadId: id, body: text, replyToMessageId },
       {
-        onSuccess: () => setBody(''),
+        onSuccess: () => {
+          setBody('');
+          setReplyingTo(null);
+        },
         onError: (error) => {
           if (error.code === 'insufficient_credit') {
             const details = error.details as InsufficientCreditDetails | undefined;
-            setPendingSend({ body: text, requiredCredits: details?.credits_required ?? 0 });
+            setPendingSend({
+              body: text,
+              requiredCredits: details?.credits_required ?? 0,
+              replyToMessageId,
+            });
             setBody('');
+            setReplyingTo(null);
           }
-          // other errors: leave `body` as typed, the error banner below shows it
+          // other errors: leave `body`/`replyingTo` as they were, the error
+          // banner below shows it — matches the pre-existing "don't lose
+          // what was typed on a real failure" posture.
         },
       },
     );
+  };
+
+  /** Swipe-right-to-reply (any bubble) or the selection header's Reply icon
+   * (single-select only) both land here. Cancels an in-progress edit
+   * first — the two composer modes are mutually exclusive — but leaves
+   * whatever the user was already typing untouched otherwise, matching
+   * WhatsApp: swiping to reply adds the quote context above your draft, it
+   * doesn't discard it. */
+  const handleSwipeReply = (message: Message) => {
+    if (editingMessage) {
+      setEditingMessage(null);
+      setBody('');
+    }
+    setReplyingTo(message);
+    composerInputRef.current?.focus();
+  };
+
+  const handleCancelReply = () => setReplyingTo(null);
+
+  /** Opens the Forward target picker for the given messages — a snapshot
+   * taken at tap time, not a live reference into `selectedIds`, so the
+   * modal keeps working correctly even after selection mode exits. */
+  const handleOpenForward = (targets: Message[]) => {
+    setForwardMessages(targets);
+    exitSelection();
+  };
+
+  /** Sends every message in `forwardMessages` to every picked target,
+   * respecting the same online/offline branch `handleSend` uses (a forward
+   * composed while offline queues exactly like a normal send) — one
+   * Promise.allSettled batch rather than N awaited round trips, so a slow
+   * or failing target doesn't stall the others. */
+  const handleConfirmForward = async (targets: ForwardTarget[]) => {
+    if (!forwardMessages || !currentUserId) return;
+    setForwarding(true);
+
+    const jobs = forwardMessages.flatMap((message) =>
+      targets.map(async (target) => {
+        if (!isOnline) {
+          const item: OutboxItem =
+            target.kind === '1:1'
+              ? {
+                  clientMessageId: Crypto.randomUUID(),
+                  body: message.body,
+                  createdAt: new Date().toISOString(),
+                  senderId: currentUserId,
+                  target: { kind: '1:1', threadId: target.id },
+                  isForwarded: true,
+                }
+              : {
+                  clientMessageId: Crypto.randomUUID(),
+                  body: message.body,
+                  createdAt: new Date().toISOString(),
+                  senderId: currentUserId,
+                  target: { kind: 'group', groupThreadId: target.id },
+                  isForwarded: true,
+                };
+          useOutboxStore.getState().enqueue(item);
+          return;
+        }
+
+        if (target.kind === '1:1') {
+          await sendMessage.mutateAsync({
+            threadId: target.id,
+            body: message.body,
+            isForwarded: true,
+          });
+        } else {
+          await sendGroupMessage.mutateAsync({
+            groupThreadId: target.id,
+            body: message.body,
+            isForwarded: true,
+          });
+        }
+      }),
+    );
+
+    const results = await Promise.allSettled(jobs);
+    setForwarding(false);
+    setForwardMessages(null);
+
+    const failures = results.filter((r) => r.status === 'rejected').length;
+    if (failures > 0) {
+      Alert.alert(
+        'Some messages could not be forwarded',
+        `${failures} of ${results.length} failed to send.`,
+      );
+    }
   };
 
   const handleCancelEdit = () => {
@@ -774,12 +1039,16 @@ export default function ThreadScreen() {
   };
 
   const handleRequestEdit = (message: Message) => {
+    setReplyingTo(null);
     setEditingMessage(message);
     setBody(message.body);
     setSelection({ start: message.body.length, end: message.body.length });
     composerInputRef.current?.focus();
   };
 
+  // Long-press enters selection mode directly now (WhatsApp's own model —
+  // see MessageBubble's header comment for why this replaced a per-message
+  // popup): every action lives in the selection header from here on.
   const enterSelection = (messageId: string) => {
     setSelectionMode(true);
     setSelectedIds(new Set([messageId]));
@@ -805,38 +1074,12 @@ export default function ThreadScreen() {
     });
   };
 
-  const handleDeleteForMe = (message: Message) => {
-    if (!id) return;
-    Alert.alert('Delete this message?', 'This will delete it for you only.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () =>
-          deleteForMe.mutate(
-            { threadId: id, messageId: message.id },
-            { onError: (error) => Alert.alert('Could not delete', error.message) },
-          ),
-      },
-    ]);
-  };
-
-  const handleDeleteForEveryone = (message: Message) => {
-    if (!id) return;
-    Alert.alert('Delete for everyone?', 'This message will be deleted for everyone in this chat.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () =>
-          deleteForEveryone.mutate(
-            { threadId: id, messageId: message.id },
-            { onError: (error) => Alert.alert('Could not delete', error.message) },
-          ),
-      },
-    ]);
-  };
-
+  // A single message's delete now always goes through the same selection +
+  // trash-icon path as a batch (enterSelection pre-selects just that one
+  // message on long-press) — runBatchDelete below already handles n=1 and
+  // n>1 identically, so there's no need for separate single-message
+  // handlers anymore; the dedicated Delete-for-me/Delete-for-everyone
+  // functions this replaced were removed rather than kept as unused code.
   const selectedMessages = (messages ?? []).filter((m) => selectedIds.has(m.id));
   // "Delete for everyone" only offered on a multi-select batch when every
   // selected message is the caller's own and not already a tombstone —
@@ -890,31 +1133,55 @@ export default function ThreadScreen() {
     );
   };
 
-  const actionSheetActions: ActionSheetAction[] = actionSheetMessage
+  // WhatsApp-style selection-header eligibility (every message action now
+  // lives here, discoverable regardless of any one message's own state —
+  // the fix for "Edit disappeared" the multi-select/delete feature
+  // surfaced: Edit was always correctly hidden once a message settles
+  // (docs/03-ECONOMY-LEDGER.md), the real problem was that a shifting
+  // popup made that easy to miss. A persistent header with icons that only
+  // enable/disable, plus one overflow for the rest, doesn't have that
+  // problem).
+  const canReplySelected =
+    selectedMessages.length === 1 && !selectedMessages[0].deleted_for_everyone;
+  const canForwardSelected =
+    selectedMessages.length > 0 && selectedMessages.every((m) => !m.deleted_for_everyone);
+  const canEditSelected =
+    selectedMessages.length === 1 &&
+    selectedMessages[0].sender_id === currentUserId &&
+    selectedMessages[0].status === 'escrowed' &&
+    !selectedMessages[0].deleted_for_everyone;
+
+  const overflowActions: ActionSheetAction[] = canEditSelected
     ? [
-        ...(actionSheetMessage.sender_id === currentUserId &&
-        actionSheetMessage.status === 'escrowed' &&
-        !actionSheetMessage.deleted_for_everyone
-          ? [{ label: 'Edit', onPress: () => handleRequestEdit(actionSheetMessage) }]
-          : []),
         {
-          label: 'Delete for me',
-          destructive: true,
-          onPress: () => handleDeleteForMe(actionSheetMessage),
+          label: 'Edit',
+          onPress: () => {
+            handleRequestEdit(selectedMessages[0]);
+            exitSelection();
+          },
         },
-        ...(actionSheetMessage.sender_id === currentUserId &&
-        !actionSheetMessage.deleted_for_everyone
-          ? [
-              {
-                label: 'Delete for everyone',
-                destructive: true,
-                onPress: () => handleDeleteForEveryone(actionSheetMessage),
-              },
-            ]
-          : []),
-        { label: 'Select', onPress: () => enterSelection(actionSheetMessage.id) },
       ]
     : [];
+
+  // Quoted-reply previews resolved locally — every message in an open
+  // thread is already loaded in `messages`, so a reply's quote never needs
+  // its own round trip. `undefined` (not found) means the original has
+  // scrolled out of this query's loaded range or is otherwise unavailable;
+  // MessageBubble renders that as an honest "Message unavailable" rather
+  // than guessing.
+  const messagesById = useMemo(() => new Map((messages ?? []).map((m) => [m.id, m])), [messages]);
+  const getQuotedPreview = (message: Message): QuotedPreview | undefined => {
+    if (!message.reply_to_message_id) return undefined;
+    const original = messagesById.get(message.reply_to_message_id);
+    if (!original) {
+      return { senderLabel: 'Original message', body: 'Message unavailable', isDeleted: false };
+    }
+    return {
+      senderLabel: original.sender_id === currentUserId ? 'You' : (partnerDisplayName ?? 'Them'),
+      body: original.deleted_for_everyone ? 'This message was deleted' : original.body,
+      isDeleted: original.deleted_for_everyone,
+    };
+  };
 
   return (
     <>
@@ -982,15 +1249,47 @@ export default function ThreadScreen() {
                 ) : (
                   <Text variant="bodyMedium">Chat</Text>
                 ),
+          // WhatsApp's own selection toolbar shape: the common actions get
+          // a permanent icon (Reply/Forward/Delete), enabled or hidden
+          // based on what's actually selected, and everything else
+          // (currently just Edit) lives behind one overflow "⋮" — the fix
+          // for "Edit is nowhere to be found" the multi-select/delete
+          // feature surfaced (see the eligibility comment above
+          // `overflowActions`).
+          //
+          // Deliberately missing: Copy. It needs a native clipboard module
+          // (`expo-clipboard`/`@react-native-clipboard/clipboard`) that
+          // isn't compiled into the current build — same "OTA can't ship
+          // new native linkage, never build without explicit ask" rule
+          // docs/13-OFFLINE-MODE-SCOPING.md already established for
+          // NetInfo. Queued behind the same future native build, not
+          // silently dropped.
           headerRight: selectionMode
             ? () => (
-                <Pressable onPress={handleBatchDelete} hitSlop={12} disabled={batchDeleting}>
-                  <Ionicons
-                    name="trash-outline"
-                    size={22}
-                    color={batchDeleting ? colors.textTertiary : colors.textSecondary}
-                  />
-                </Pressable>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+                  {canReplySelected ? (
+                    <Pressable onPress={() => handleSwipeReply(selectedMessages[0])} hitSlop={10}>
+                      <Ionicons name="arrow-undo" size={21} color={colors.textSecondary} />
+                    </Pressable>
+                  ) : null}
+                  {canForwardSelected ? (
+                    <Pressable onPress={() => handleOpenForward(selectedMessages)} hitSlop={10}>
+                      <Ionicons name="arrow-redo" size={21} color={colors.textSecondary} />
+                    </Pressable>
+                  ) : null}
+                  <Pressable onPress={handleBatchDelete} hitSlop={10} disabled={batchDeleting}>
+                    <Ionicons
+                      name="trash-outline"
+                      size={21}
+                      color={batchDeleting ? colors.textTertiary : colors.textSecondary}
+                    />
+                  </Pressable>
+                  {overflowActions.length > 0 ? (
+                    <Pressable onPress={() => setOverflowMenuVisible(true)} hitSlop={10}>
+                      <Ionicons name="ellipsis-vertical" size={21} color={colors.textSecondary} />
+                    </Pressable>
+                  ) : null}
+                </View>
               )
             : () =>
                 headerInfo ? (
@@ -1051,10 +1350,12 @@ export default function ThreadScreen() {
                     isOwn={isOwn}
                     isRead={isRead}
                     readAt={headerInfo?.partnerLastReadAt}
+                    quotedPreview={getQuotedPreview(item)}
                     selectionMode={selectionMode}
                     isSelected={selectedIds.has(item.id)}
-                    onOpenActions={setActionSheetMessage}
+                    onOpenActions={(m) => enterSelection(m.id)}
                     onToggleSelect={toggleSelected}
+                    onSwipeReply={handleSwipeReply}
                   />
                 );
               }}
@@ -1084,6 +1385,35 @@ export default function ThreadScreen() {
               <Text variant="caption" color="danger">
                 {sendMessage.error.message}
               </Text>
+            </View>
+          ) : null}
+
+          {replyingTo ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: spacing.lg,
+                paddingVertical: spacing.sm,
+                gap: spacing.sm,
+                backgroundColor: colors.bgSurfaceAlt,
+                borderLeftWidth: 3,
+                borderLeftColor: colors.brandPrimary,
+              }}
+            >
+              <Ionicons name="arrow-undo" size={16} color={colors.textSecondary} />
+              <View style={{ flex: 1 }}>
+                <Text variant="caption" color="secondary" style={{ fontWeight: '700' }}>
+                  Replying to{' '}
+                  {replyingTo.sender_id === currentUserId ? 'yourself' : partnerDisplayName}
+                </Text>
+                <Text variant="body" numberOfLines={1} color="secondary">
+                  {replyingTo.deleted_for_everyone ? 'This message was deleted' : replyingTo.body}
+                </Text>
+              </View>
+              <Pressable onPress={handleCancelReply} hitSlop={8}>
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
+              </Pressable>
             </View>
           ) : null}
 
@@ -1201,9 +1531,18 @@ export default function ThreadScreen() {
       <BuyCreditModal visible={buyCreditVisible} onClose={() => setBuyCreditVisible(false)} />
 
       <ActionSheet
-        visible={!!actionSheetMessage}
-        onClose={() => setActionSheetMessage(null)}
-        actions={actionSheetActions}
+        visible={overflowMenuVisible}
+        onClose={() => setOverflowMenuVisible(false)}
+        actions={overflowActions}
+      />
+
+      <ForwardMessageModal
+        visible={!!forwardMessages}
+        onClose={() => setForwardMessages(null)}
+        currentUserId={currentUserId}
+        messageCount={forwardMessages?.length ?? 0}
+        onConfirm={(targets) => void handleConfirmForward(targets)}
+        sending={forwarding}
       />
     </>
   );

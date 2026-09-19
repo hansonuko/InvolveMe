@@ -41,7 +41,7 @@ import {
   useSetGroupMemberRole,
   useUpdateGroupProfile,
 } from '@/lib/queries/groups';
-import { useTheme } from '@/theme';
+import { useTheme, withAlpha } from '@/theme';
 
 const GROUP_DESCRIPTION_MAX_LENGTH = 500;
 const GROUP_AVATAR_SIZE = 88;
@@ -528,10 +528,12 @@ function GroupMessageBubble({
   body,
   senderName,
   isOwn,
+  isForwarded,
 }: {
   body: string;
   senderName: string | null;
   isOwn: boolean;
+  isForwarded: boolean;
 }) {
   const { colors, spacing, radius } = useTheme();
   return (
@@ -562,6 +564,28 @@ function GroupMessageBubble({
           >
             {senderName ?? 'Unknown'}
           </Text>
+        ) : null}
+        {isForwarded ? (
+          <View
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: spacing.xs }}
+          >
+            <Ionicons
+              name="arrow-redo-outline"
+              size={12}
+              color={isOwn ? withAlpha(colors.textInverse, 0.75) : colors.textSecondary}
+            />
+            <Text
+              variant="caption"
+              color={isOwn ? undefined : 'secondary'}
+              style={
+                isOwn
+                  ? { color: withAlpha(colors.textInverse, 0.75), fontStyle: 'italic' }
+                  : { fontStyle: 'italic' }
+              }
+            >
+              Forwarded
+            </Text>
+          </View>
         ) : null}
         <Text variant="body" color={isOwn ? 'inverse' : undefined}>
           {body}
@@ -733,6 +757,7 @@ export default function GroupThreadScreen() {
                     body={item.body}
                     senderName={memberById.get(item.sender_id)?.display_name ?? null}
                     isOwn={isOwn}
+                    isForwarded={item.is_forwarded}
                   />
                 );
               }}

@@ -28,6 +28,13 @@ interface SendMessageRequestBody {
   // safe after a dropped connection. Optional: every pre-offline-mode
   // caller omits it and behaves exactly as before.
   client_message_id?: string;
+  // The quoted message's id, for a WhatsApp-style reply — fn_send_message
+  // validates this actually belongs to the target thread server-side, so
+  // this being client-supplied carries no trust risk.
+  reply_to_message_id?: string;
+  // Display-only "Forwarded" tag (see this migration's own header comment
+  // for why this never touches pricing). Omit/false for a normal send.
+  is_forwarded?: boolean;
 }
 
 interface FnSendMessageRow {
@@ -76,6 +83,9 @@ function mapSendMessageError(pgMessage: string): Response {
   if (pgMessage.startsWith('message_too_long')) {
     return errorResponse(400, 'message_too_long', pgMessage);
   }
+  if (pgMessage.startsWith('invalid_reply_target')) {
+    return errorResponse(400, 'invalid_reply_target', 'That message cannot be replied to.');
+  }
   if (pgMessage.startsWith('insufficient_credit')) {
     // fn_send_message raises 'insufficient_credit: need % have %'.
     const match = /need (\d+) have (\d+)/.exec(pgMessage);
@@ -120,6 +130,13 @@ Deno.serve(async (req) => {
     (typeof payload.client_message_id !== 'string' || !UUID_RE.test(payload.client_message_id))
   ) {
     return errorResponse(400, 'invalid_request', 'client_message_id must be a UUID.');
+  }
+
+  if (
+    payload.reply_to_message_id !== undefined &&
+    (typeof payload.reply_to_message_id !== 'string' || !UUID_RE.test(payload.reply_to_message_id))
+  ) {
+    return errorResponse(400, 'invalid_request', 'reply_to_message_id must be a UUID.');
   }
 
   let threadId = payload.thread_id;
@@ -212,6 +229,8 @@ Deno.serve(async (req) => {
       p_sender_id: user.id,
       p_body: payload.body,
       p_client_message_id: payload.client_message_id ?? null,
+      p_reply_to_message_id: payload.reply_to_message_id ?? null,
+      p_is_forwarded: payload.is_forwarded ?? false,
     })
     .single();
 
