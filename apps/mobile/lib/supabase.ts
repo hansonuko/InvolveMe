@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import { AppState } from 'react-native';
 
 /**
  * Supabase client — auth + realtime reads only.
@@ -44,3 +45,29 @@ export const supabase = createClient(
     },
   },
 );
+
+// Real gap found 2026-09-20 investigating a live user report of being
+// bounced back to the phone-number entry screen far more often than a
+// WhatsApp-equivalent app should — this is Supabase's own officially
+// documented requirement for React Native that this app never wired up.
+// `autoRefreshToken: true` above only keeps the access token refreshed via
+// a JS timer that ticks while the app is in the foreground; React Native
+// suspends JS execution (including timers) the moment the app is
+// backgrounded, so that timer cannot fire to refresh a token that expires
+// while the user has switched away — the default access-token lifetime is
+// commonly 1 hour, which is a completely ordinary amount of time for a
+// messaging app to sit backgrounded during a normal day. Without this,
+// returning to the app after that window finds an expired access token
+// with no refresh ever attempted, which supabase-js then can't silently
+// recover from — the client reports no session, and app/_layout.tsx's
+// auth gate (correctly, given what it's told) routes back to `/(auth)`,
+// the phone-number entry screen, exactly matching the report. This makes
+// every foreground transition explicitly kick the refresh check itself,
+// closing the gap instead of relying on a timer that may never get to run.
+AppState.addEventListener('change', (state) => {
+  if (state === 'active') {
+    void supabase.auth.startAutoRefresh();
+  } else {
+    void supabase.auth.stopAutoRefresh();
+  }
+});
