@@ -83,6 +83,35 @@ export async function freezeUserWalletsAction(
   redirect('/dashboard/fraud-signals');
 }
 
+export async function resolveUserReportAction(
+  _prev: FraudActionState,
+  formData: FormData,
+): Promise<FraudActionState> {
+  const admin = await requireAdmin();
+  const reportId = String(formData.get('report_id') ?? '');
+  const resolution = String(formData.get('resolution') ?? '');
+  const note = String(formData.get('note') ?? '').trim();
+
+  if (!reportId || !['warned', 'suspended', 'banned', 'dismissed'].includes(resolution)) {
+    return { error: 'Invalid request.' };
+  }
+
+  const { error } = await db().rpc('fn_admin_resolve_user_report', {
+    p_actor_admin_id: admin.id,
+    p_report_id: reportId,
+    p_resolution: resolution,
+    p_note: note || null,
+  });
+  if (error)
+    return {
+      error: error.message.includes('not_authorized')
+        ? 'You do not have permission to do that.'
+        : 'Could not resolve that report.',
+    };
+
+  redirect('/dashboard/user-reports');
+}
+
 export async function setWalletFrozenAction(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
   const walletId = String(formData.get('wallet_id') ?? '');

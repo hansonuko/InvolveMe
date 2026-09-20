@@ -47,6 +47,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
                 Fraud signals
               </Link>
             )}
+            {canViewReportsQueue && (
+              <Link
+                href="/dashboard/user-reports"
+                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
+              >
+                User reports
+              </Link>
+            )}
           </nav>
         </div>
         <div className="flex items-center gap-4">
