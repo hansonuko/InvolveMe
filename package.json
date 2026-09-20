@@ -16,6 +16,8 @@
     "test:db:ci": "node supabase/tests/wallet-functions.test.js",
     "test:admin": "node --env-file=.env supabase/tests/admin-rbac-functions.test.js",
     "test:admin:ci": "node supabase/tests/admin-rbac-functions.test.js",
+    "test:admin-reports": "node --env-file=.env supabase/tests/admin-reports-fraud-functions.test.js",
+    "test:admin-reports:ci": "node supabase/tests/admin-reports-fraud-functions.test.js",
     "test:fraud": "node --env-file=.env supabase/tests/fraud-functions.test.js",
     "test:fraud:ci": "node supabase/tests/fraud-functions.test.js",
     "test:chargeback": "node --env-file=.env supabase/tests/chargeback-functions.test.js",

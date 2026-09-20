@@ -134,6 +134,11 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: npm run test:admin:ci
 
+      - name: Admin reports/fraud queue tests (grant locks, freeze/suspend, resolution)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: npm run test:admin-reports:ci
+
   # Placeholder — activates once supabase/migrations exist (Phase 1).
   # Runs schema migrations against the staging Supabase project on merge to
   # main, per docs/01-ARCHITECTURE.md "Environments".
