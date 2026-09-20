@@ -5,6 +5,7 @@ import { db } from '@/lib/supabase-admin';
 import { encodeCursor, decodeCursor, cursorFilter } from '@/lib/pagination';
 import { formatWalletAmount, formatKobo, WALLET_KIND_LABELS } from '@/lib/money';
 import { reasonLabel, ALL_REASONS } from '@/lib/ledgerReasons';
+import { setWalletFrozenAction } from '@/app/actions/fraud';
 
 const LEDGER_PAGE_SIZE = 25;
 // Per-user, inherently low-cardinality lists (docs/14 §8's "never offset
@@ -47,6 +48,8 @@ export default async function UserDetailPage({
 
   const allowed = await checkPermission(admin.id, 'view_users');
   if (!allowed) redirect('/dashboard');
+
+  const canFreezeWallets = await checkPermission(admin.id, 'resolve_fraud_signal');
 
   const { id } = await params;
   const { cursor: cursorParam, reason: reasonFilter } = await searchParams;
@@ -150,6 +153,19 @@ export default async function UserDetailPage({
                 {formatWalletAmount(w.balance, w.kind, w.currency)}
               </p>
               {w.is_frozen && <p className="mt-1 text-xs font-medium text-red-400">Frozen</p>}
+              {canFreezeWallets && (
+                <form action={setWalletFrozenAction} className="mt-2">
+                  <input type="hidden" name="wallet_id" value={w.id} />
+                  <input type="hidden" name="user_id" value={id} />
+                  <input type="hidden" name="frozen" value={(!w.is_frozen).toString()} />
+                  <button
+                    type="submit"
+                    className="text-xs font-medium text-[var(--foreground)]/60 hover:text-[var(--foreground)]"
+                  >
+                    {w.is_frozen ? 'Unfreeze' : 'Freeze'}
+                  </button>
+                </form>
+              )}
             </div>
           ))}
           {walletRows.length === 0 && (
