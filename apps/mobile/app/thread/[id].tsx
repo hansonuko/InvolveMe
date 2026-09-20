@@ -40,6 +40,7 @@ import { useMarkThreadRead, useSetThreadBlocked, useSetThreadMuted } from '@/lib
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { useIsOnline } from '@/lib/network';
 import { type OutboxItem, useOutboxStore } from '@/lib/outboxStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 import { useWallets, walletBalance } from '@/lib/queries/wallet';
@@ -778,8 +779,17 @@ export default function ThreadScreen() {
   const topupBalance = walletBalance(wallets, 'topup_credit');
 
   const isOnline = useIsOnline();
-  const outboxItems = useOutboxStore((s) =>
-    s.items.filter((i) => i.target.kind === '1:1' && i.target.threadId === id),
+  // `useShallow` matters here, not just style: `.filter()` returns a brand
+  // new array reference on every call, and Zustand's default selector
+  // comparison is reference equality — without this, any store notification
+  // (even for a totally unrelated thread's outbox item) would report this
+  // selector as "changed" and re-render this screen. Currently latent
+  // (nothing can enqueue while lib/network.ts's offline stub always
+  // reports online — see docs/13-OFFLINE-MODE-SCOPING.md §5), but a real,
+  // fixable instability rather than something to leave for whenever the
+  // native build lands.
+  const outboxItems = useOutboxStore(
+    useShallow((s) => s.items.filter((i) => i.target.kind === '1:1' && i.target.threadId === id)),
   );
 
   useEffect(() => {
