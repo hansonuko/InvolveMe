@@ -464,131 +464,113 @@ function MessageBubble({
           />
         </View>
       ) : null}
-      <View>
-        <Pressable
-          onPress={selectionMode ? () => onToggleSelect(message.id) : undefined}
-          onLongPress={() => onOpenActions(message)}
-          style={[
-            styles.bubble,
-            {
-              backgroundColor: isOwn ? colors.brandPrimary : colors.bgSurfaceAlt,
-              borderRadius: radius.bubble,
-              padding: spacing.md,
-            },
-          ]}
-        >
-          {!isDeleted && message.is_forwarded ? (
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                marginBottom: spacing.xs,
-              }}
-            >
-              <Ionicons
-                name="arrow-redo-outline"
-                size={12}
-                color={isOwn ? withAlpha(colors.textInverse, 0.75) : colors.textSecondary}
-              />
-              <Text
-                variant="caption"
-                color={isOwn ? undefined : 'secondary'}
-                style={[{ fontStyle: 'italic' }, dimInverseText]}
-              >
-                Forwarded
-              </Text>
-            </View>
-          ) : null}
-          {!isDeleted && quotedPreview ? (
-            <View
-              style={{
-                borderLeftWidth: 3,
-                borderLeftColor: isOwn ? withAlpha(colors.textInverse, 0.6) : colors.brandPrimary,
-                paddingLeft: spacing.sm,
-                marginBottom: spacing.xs,
-              }}
-            >
-              <Text
-                variant="caption"
-                color={isOwn ? undefined : 'secondary'}
-                style={[{ fontWeight: '700' }, dimInverseText]}
-              >
-                {quotedPreview.senderLabel}
-              </Text>
-              <Text
-                variant="caption"
-                numberOfLines={1}
-                color={isOwn ? undefined : 'secondary'}
-                style={[quotedPreview.isDeleted ? { fontStyle: 'italic' } : null, dimInverseText]}
-              >
-                {quotedPreview.body}
-              </Text>
-            </View>
-          ) : null}
-          {isDeleted ? (
+      <Pressable
+        onPress={selectionMode ? () => onToggleSelect(message.id) : undefined}
+        onLongPress={() => onOpenActions(message)}
+        style={[
+          styles.bubble,
+          {
+            backgroundColor: isOwn ? colors.brandPrimary : colors.bgSurfaceAlt,
+            borderRadius: radius.bubble,
+            padding: spacing.md,
+          },
+        ]}
+      >
+        {!isDeleted && message.is_forwarded ? (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              marginBottom: spacing.xs,
+            }}
+          >
+            <Ionicons
+              name="arrow-redo-outline"
+              size={12}
+              color={isOwn ? withAlpha(colors.textInverse, 0.75) : colors.textSecondary}
+            />
             <Text
-              variant="body"
-              color={isOwn ? 'inverse' : 'secondary'}
+              variant="caption"
+              color={isOwn ? undefined : 'secondary'}
               style={[{ fontStyle: 'italic' }, dimInverseText]}
             >
-              This message was deleted
+              Forwarded
             </Text>
-          ) : (
-            <Text variant="body" color={isOwn ? 'inverse' : undefined}>
-              {message.body}
-            </Text>
-          )}
-          <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
-            {!isDeleted ? (
-              <Text
-                variant="caption"
-                color={isOwn ? undefined : 'secondary'}
-                style={dimInverseText}
-              >
-                {message.credits_charged} cr
-              </Text>
-            ) : null}
-            {!isDeleted && message.edited_at ? (
-              <Text
-                variant="caption"
-                color={isOwn ? undefined : 'secondary'}
-                style={dimInverseText}
-              >
-                · Edited
-              </Text>
-            ) : null}
-            {!isDeleted && message.status === 'escrowed' ? (
-              <Text
-                variant="caption"
-                color={isOwn ? undefined : 'secondary'}
-                style={dimInverseText}
-              >
-                · awaiting reply
-              </Text>
-            ) : !isDeleted && message.status === 'refunded' ? (
-              <Text
-                variant="caption"
-                color={isOwn ? undefined : 'secondary'}
-                style={dimInverseText}
-              >
-                · refunded
-              </Text>
-            ) : null}
-            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
-              {formatMessageTime(message.created_at)}
-              {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
-            </Text>
-            {isOwn && isRead !== undefined ? (
-              <Ionicons
-                name={isRead ? 'checkmark-done' : 'checkmark'}
-                size={14}
-                color={withAlpha(colors.textInverse, isRead ? 1 : 0.75)}
-              />
-            ) : null}
           </View>
-        </Pressable>
-      </View>
+        ) : null}
+        {!isDeleted && quotedPreview ? (
+          <View
+            style={{
+              borderLeftWidth: 3,
+              borderLeftColor: isOwn ? withAlpha(colors.textInverse, 0.6) : colors.brandPrimary,
+              paddingLeft: spacing.sm,
+              marginBottom: spacing.xs,
+            }}
+          >
+            <Text
+              variant="caption"
+              color={isOwn ? undefined : 'secondary'}
+              style={[{ fontWeight: '700' }, dimInverseText]}
+            >
+              {quotedPreview.senderLabel}
+            </Text>
+            <Text
+              variant="caption"
+              numberOfLines={1}
+              color={isOwn ? undefined : 'secondary'}
+              style={[quotedPreview.isDeleted ? { fontStyle: 'italic' } : null, dimInverseText]}
+            >
+              {quotedPreview.body}
+            </Text>
+          </View>
+        ) : null}
+        {isDeleted ? (
+          <Text
+            variant="body"
+            color={isOwn ? 'inverse' : 'secondary'}
+            style={[{ fontStyle: 'italic' }, dimInverseText]}
+          >
+            This message was deleted
+          </Text>
+        ) : (
+          <Text variant="body" color={isOwn ? 'inverse' : undefined}>
+            {message.body}
+          </Text>
+        )}
+        <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
+          {!isDeleted ? (
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
+              {message.credits_charged} cr
+            </Text>
+          ) : null}
+          {!isDeleted && message.edited_at ? (
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
+              · Edited
+            </Text>
+          ) : null}
+          {!isDeleted && message.status === 'escrowed' ? (
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
+              · awaiting reply
+            </Text>
+          ) : !isDeleted && message.status === 'refunded' ? (
+            <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
+              · refunded
+            </Text>
+          ) : null}
+          <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
+            {formatMessageTime(message.created_at)}
+            {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
+          </Text>
+          {isOwn && isRead !== undefined ? (
+            <Ionicons
+              name={isRead ? 'checkmark-done' : 'checkmark'}
+              size={14}
+              color={withAlpha(colors.textInverse, isRead ? 1 : 0.75)}
+            />
+          ) : null}
+        </View>
+      </Pressable>
     </View>
   );
 }
