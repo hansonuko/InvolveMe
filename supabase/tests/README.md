@@ -84,3 +84,27 @@ testing and only breaks under real concurrent access. Mocking the database
 here would test nothing that actually matters — this suite deliberately
 fires genuinely simultaneous requests from separate connections at the real
 dev database, per `CLAUDE.md`'s instruction not to rush this phase.
+
+## Never delete/reset the platform wallets (`platform_revenue_*`, `platform_reserve_*`)
+
+Found 2026-09-20, while building the admin dashboard's Treasury view: a
+`resetPlatformWallets`-shaped helper existed in six test files, deleting
+**every** `ledger_entries` row on these four wallets and zeroing their
+balance as routine cleanup. They're a **shared, global resource**, not a
+fresh fixture scoped to one test run — unlike a random-UUID test user, which
+is safe to delete because nothing else references it. That helper had been
+silently destroying real platform revenue history on every `npm run
+test:db`/`test:chargeback`/etc. run, including in CI's `test-wallet-code`
+job on every PR touching `supabase/migrations/`.
+
+If a test needs to assert something about a platform wallet's balance,
+**snapshot it before the operation under test and assert the delta**
+(`after - before`), never an absolute post-test value — that's already
+correct regardless of whatever pre-existing balance is sitting there from
+real activity or earlier test runs, and it's the pattern every fixed test
+now uses (search for `revenueBefore`/`revenueAfter` in
+`chargeback-functions.test.js` for a worked example, or `platformBefore`/
+`platformAfter` in `group-chat-functions.test.js`). Ledger-conservation
+checks (`sum(ledger_entries) == balance`) never needed this in the first
+place — that assertion is inherently relative and holds regardless of
+starting balance.

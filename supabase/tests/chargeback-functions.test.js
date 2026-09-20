@@ -80,20 +80,6 @@ async function deleteTestUser(admin, id) {
   await admin.query('delete from auth.users where id = $1', [id]); // cascades to public.users
 }
 
-async function resetPlatformWallets(admin) {
-  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
-  await admin.query(
-    `delete from public.ledger_entries where wallet_id in (
-       select id from public.wallets where user_id is null
-         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')
-     )`,
-  );
-  await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
-  await admin.query(
-    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')",
-  );
-}
-
 async function walletRow(admin, userId, kind) {
   const r = await admin.query(
     'select id, balance, is_frozen from public.wallets where user_id=$1 and kind=$2',
@@ -174,7 +160,6 @@ async function testReserveSkimOnTopupConfirm(admin) {
     `net=${netDelta} reserve=${reserveDelta} fee=${topup.platform_fee_kobo}`,
   );
 
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
 }
 
@@ -227,7 +212,6 @@ async function testReserveSkimOnEscrowRelease(admin) {
   );
 
   await deleteTestThread(admin, threadId);
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
   await deleteTestUser(admin, B);
 }
@@ -285,7 +269,6 @@ async function testReserveSkimOnCreditTransfer(admin) {
     `net=${netDelta} reserve=${reserveDelta} platform_cut=${platformCut}`,
   );
 
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
   await deleteTestUser(admin, B);
 }
@@ -438,7 +421,6 @@ async function testChargebackCreatesDebtAndFreezes(admin) {
   );
 
   await deleteTestThread(admin, threadId);
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
   await deleteTestUser(admin, B);
 }
@@ -469,7 +451,6 @@ async function testChargebackIsIdempotent(admin) {
     `after_first=${walletAfterFirst.balance} after_second=${walletAfterSecond.balance}`,
   );
 
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
 }
 
@@ -562,7 +543,6 @@ async function testConcurrentChargebackCannotDoubleDebit(admin) {
     `ledger_sum=${sum} balance=${wallet.balance}`,
   );
 
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
 }
 

@@ -108,20 +108,6 @@ async function walletBalance(admin, userId, kind) {
   return Number(r.rows[0].balance);
 }
 
-async function resetPlatformEarningsCutWallet(admin) {
-  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
-  await admin.query(
-    `delete from public.ledger_entries where wallet_id in (
-       select id from public.wallets where user_id is null
-         and kind in ('platform_revenue_earnings_cut', 'platform_reserve_earnings_cut')
-     )`,
-  );
-  await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
-  await admin.query(
-    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_earnings_cut', 'platform_reserve_earnings_cut')",
-  );
-}
-
 async function deleteTestUser(admin, id) {
   admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await admin.query(
@@ -293,7 +279,6 @@ async function main() {
     await deleteTestUser(admin, C.id);
   } finally {
     deno.kill();
-    await resetPlatformEarningsCutWallet(admin);
     await deleteTestUser(admin, A.id);
     await deleteTestUser(admin, B.id);
     await admin.end();

@@ -133,20 +133,6 @@ async function ledgerSum(admin, walletId) {
   return Number(r.rows[0].sum);
 }
 
-async function resetPlatformWallets(admin) {
-  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
-  await admin.query(
-    `delete from public.ledger_entries where wallet_id in (
-       select id from public.wallets where user_id is null
-         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')
-     )`,
-  );
-  await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
-  await admin.query(
-    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')",
-  );
-}
-
 async function deleteWebhookEvent(admin, eventId) {
   await admin.query('delete from public.webhook_events_seen where provider_event_id = $1', [
     eventId,
@@ -222,7 +208,6 @@ async function testChargeCompletedConfirmsTopup(admin) {
   );
 
   await deleteWebhookEvent(admin, eventId);
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
 }
 
