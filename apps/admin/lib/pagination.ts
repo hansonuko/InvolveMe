@@ -27,9 +27,12 @@ export function decodeCursor(raw: string | string[] | undefined): PageCursor | n
 }
 
 // PostgREST `or=` filter string for "strictly before this cursor" in a
-// `created_at desc, id desc` ordering.
-export function cursorFilter(cursor: PageCursor): string {
-  return `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`;
+// `<column> desc, id desc` ordering. `column` defaults to `created_at`
+// (every table this was originally written for) but some tables — e.g.
+// `pricing_config_history.changed_at` — use a different name for the same
+// role, so the column is overridable rather than duplicating this function.
+export function cursorFilter(cursor: PageCursor, column: string = 'created_at'): string {
+  return `${column}.lt.${cursor.createdAt},and(${column}.eq.${cursor.createdAt},id.lt.${cursor.id})`;
 }
 
 // `,`, `(`, `)` are structural in PostgREST's `or=` filter grammar — a
