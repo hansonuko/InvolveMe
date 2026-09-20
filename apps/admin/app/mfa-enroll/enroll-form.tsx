@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import Link from 'next/link';
 import { confirmEnrollAction, type ActionState } from '@/app/actions/auth';
 
 export function EnrollForm() {
@@ -22,12 +23,12 @@ export function EnrollForm() {
             </li>
           ))}
         </ul>
-        <a
+        <Link
           href="/dashboard"
           className="mt-6 block w-full rounded bg-[var(--accent)] py-2 text-center text-sm font-medium text-white"
         >
           I’ve saved them — continue
-        </a>
+        </Link>
       </div>
     );
   }
