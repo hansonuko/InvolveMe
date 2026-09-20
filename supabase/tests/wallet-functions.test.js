@@ -86,24 +86,6 @@ async function deleteTestUser(admin, id) {
   await admin.query('delete from auth.users where id = $1', [id]);
 }
 
-async function resetPlatformWallets(admin) {
-  // Must clear the corresponding ledger_entries too, not just zero the
-  // cached balance directly — doing only the latter is exactly the bug
-  // class fn_run_reconciliation_check exists to catch, and would leak a
-  // stale mismatch into whichever test runs next.
-  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
-  await admin.query(
-    `delete from public.ledger_entries where wallet_id in (
-       select id from public.wallets where user_id is null
-         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')
-     )`,
-  );
-  await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
-  await admin.query(
-    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')",
-  );
-}
-
 async function walletRow(admin, userId, kind) {
   const r = await admin.query(
     'select id, balance from public.wallets where user_id=$1 and kind=$2',
@@ -222,9 +204,6 @@ async function testConcurrentTopupConfirmationIsIdempotent(admin) {
   // credits must only land once. That's the actual property under test.
 
   const aWallet = await walletRow(admin, A, 'topup_credit');
-  const platformWallet = await admin.query(
-    "select balance from public.wallets where kind='platform_revenue_topup_fees' and user_id is null",
-  );
 
   log(
     'both racing confirm calls complete without error (idempotent, not rejected)',
@@ -244,11 +223,6 @@ async function testConcurrentTopupConfirmationIsIdempotent(admin) {
     sum === Number(aWallet.balance),
     `ledger_sum=${sum} balance=${aWallet.balance}`,
   );
-
-  // Reset the platform fee wallet contribution from this test before cleanup
-  // (it's a shared singleton row, not deleted with the user).
-  await resetPlatformWallets(admin);
-  void platformWallet;
 
   await deleteTestUser(admin, A);
 }
@@ -414,7 +388,6 @@ async function testLedgerConservationUnderConcurrentLoad(admin) {
     allReconciled ? undefined : JSON.stringify(details.filter((d) => !d.ok)),
   );
 
-  await resetPlatformWallets(admin);
   await deleteTestThread(admin, threadAB);
   await deleteTestThread(admin, threadCD);
   for (const userId of users) {
@@ -517,7 +490,6 @@ async function testTransferSplitAndLedgerConservation(admin) {
     );
   }
 
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
   await deleteTestUser(admin, B);
 }
@@ -580,7 +552,6 @@ async function testConcurrentTransferPreventsDoubleSpend(admin) {
     `ledger_sum=${sum} balance=${aWalletAfter.balance}`,
   );
 
-  await resetPlatformWallets(admin);
   await deleteTestUser(admin, A);
   await deleteTestUser(admin, B);
 }

@@ -93,20 +93,6 @@ async function deleteTestGroup(admin, groupId) {
   await admin.query('delete from public.group_threads where id = $1', [groupId]);
 }
 
-async function resetPlatformWallets(admin) {
-  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
-  await admin.query(
-    `delete from public.ledger_entries where wallet_id in (
-       select id from public.wallets where user_id is null
-         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')
-     )`,
-  );
-  await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
-  await admin.query(
-    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')",
-  );
-}
-
 async function walletRow(admin, userId, kind) {
   const r = await admin.query(
     'select id, balance from public.wallets where user_id=$1 and kind=$2',
@@ -256,7 +242,6 @@ async function testMemberMessageSplitAndLedgerConservation(admin) {
     }
   } finally {
     await setGroupChatEnabled(admin, false);
-    await resetPlatformWallets(admin);
     await deleteTestGroup(admin, groupId);
     await deleteTestUser(admin, owner);
     await deleteTestUser(admin, member);
@@ -276,6 +261,12 @@ async function testOwnerSelfPostDoesNotEarn(admin) {
 
   await setGroupChatEnabled(admin, true);
   try {
+    const platformBefore = (
+      await admin.query(
+        "select balance from public.wallets where user_id is null and kind = 'platform_revenue_earnings_cut'",
+      )
+    ).rows[0];
+
     const res = await admin.query('select * from public.fn_send_group_message($1, $2, $3)', [
       groupId,
       owner,
@@ -304,19 +295,19 @@ async function testOwnerSelfPostDoesNotEarn(admin) {
       `balance=${ownerEarnings.balance}`,
     );
 
-    const platformWallet = (
+    const platformAfter = (
       await admin.query(
         "select balance from public.wallets where user_id is null and kind = 'platform_revenue_earnings_cut'",
       )
     ).rows[0];
+    const platformDelta = Number(platformAfter.balance) - Number(platformBefore.balance);
     log(
       'the platform wallet is untouched by a self-post — no cut is taken on a message nobody else received it from',
-      Number(platformWallet.balance) === 0,
-      `balance=${platformWallet.balance}`,
+      platformDelta === 0,
+      `delta=${platformDelta}`,
     );
   } finally {
     await setGroupChatEnabled(admin, false);
-    await resetPlatformWallets(admin);
     await deleteTestGroup(admin, groupId);
     await deleteTestUser(admin, owner);
   }
@@ -382,7 +373,6 @@ async function testConcurrentGroupMessagePreventsDoubleSpend(admin) {
     );
   } finally {
     await setGroupChatEnabled(admin, false);
-    await resetPlatformWallets(admin);
     await deleteTestGroup(admin, groupId);
     await deleteTestUser(admin, owner);
     await deleteTestUser(admin, member);

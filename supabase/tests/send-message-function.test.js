@@ -143,20 +143,6 @@ async function deleteTestThread(admin, threadId) {
   await admin.query('delete from public.threads where id = $1', [threadId]);
 }
 
-async function resetPlatformWallets(admin) {
-  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
-  await admin.query(
-    `delete from public.ledger_entries where wallet_id in (
-       select id from public.wallets where user_id is null
-         and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')
-     )`,
-  );
-  await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
-  await admin.query(
-    "update public.wallets set balance = 0 where user_id is null and kind in ('platform_revenue_topup_fees','platform_revenue_earnings_cut','platform_reserve_topup_fees','platform_reserve_earnings_cut')",
-  );
-}
-
 async function walletRow(admin, userId, kind) {
   const r = await admin.query(
     'select id, balance from public.wallets where user_id=$1 and kind=$2',
@@ -229,6 +215,25 @@ async function testFullPaidExchange(admin) {
   await admin.query(
     `insert into public.ledger_entries (wallet_id, amount, reason) values ($1, 20, 'manual_adjustment')`,
     [aWallet.id],
+  );
+
+  // Snapshotted before either message sends, not reset to zero afterward —
+  // the platform wallets are a shared singleton, not this test's own
+  // fixture, so the real assertion has to be about what THIS test added
+  // (the delta), never the wallet's absolute post-test balance.
+  const platformRevenueBefore = Number(
+    (
+      await admin.query(
+        "select balance from public.wallets where kind='platform_revenue_earnings_cut' and user_id is null",
+      )
+    ).rows[0].balance,
+  );
+  const platformReserveBefore = Number(
+    (
+      await admin.query(
+        "select balance from public.wallets where kind='platform_reserve_earnings_cut' and user_id is null",
+      )
+    ).rows[0].balance,
   );
 
   // A opens the thread with a 30-word message: 1 block, base 2 credits.
@@ -304,12 +309,14 @@ async function testFullPaidExchange(admin) {
   const platformReserveWallet = await admin.query(
     "select balance from public.wallets where kind='platform_reserve_earnings_cut' and user_id is null",
   );
-  const platformTotal =
-    Number(platformWallet.rows[0].balance) + Number(platformReserveWallet.rows[0].balance);
+  const platformRevenueDelta = Number(platformWallet.rows[0].balance) - platformRevenueBefore;
+  const platformReserveDelta =
+    Number(platformReserveWallet.rows[0].balance) - platformReserveBefore;
+  const platformTotalDelta = platformRevenueDelta + platformReserveDelta;
   log(
     'platform earns its cut across both releases (revenue + reserve combined)',
-    platformTotal === cut1 + cut2,
-    `expected=${cut1 + cut2} actual=${platformTotal} (revenue=${platformWallet.rows[0].balance} reserve=${platformReserveWallet.rows[0].balance})`,
+    platformTotalDelta === cut1 + cut2,
+    `expected=${cut1 + cut2} actual=${platformTotalDelta} (revenue_delta=${platformRevenueDelta} reserve_delta=${platformReserveDelta})`,
   );
 
   const msgs = await admin.query(
@@ -354,7 +361,6 @@ async function testFullPaidExchange(admin) {
     JSON.stringify(details.filter((d) => !d.ok)),
   );
 
-  await resetPlatformWallets(admin);
   await deleteTestThread(admin, threadId);
   await deleteTestUser(admin, A);
   await deleteTestUser(admin, B);
