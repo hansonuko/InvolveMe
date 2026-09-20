@@ -18,6 +18,8 @@
     "test:admin:ci": "node supabase/tests/admin-rbac-functions.test.js",
     "test:admin-reports": "node --env-file=.env supabase/tests/admin-reports-fraud-functions.test.js",
     "test:admin-reports:ci": "node supabase/tests/admin-reports-fraud-functions.test.js",
+    "test:admin-pricing": "node --env-file=.env supabase/tests/admin-pricing-config-functions.test.js",
+    "test:admin-pricing:ci": "node supabase/tests/admin-pricing-config-functions.test.js",
     "test:fraud": "node --env-file=.env supabase/tests/fraud-functions.test.js",
     "test:fraud:ci": "node supabase/tests/fraud-functions.test.js",
     "test:chargeback": "node --env-file=.env supabase/tests/chargeback-functions.test.js",
