@@ -26,6 +26,7 @@ import { useSession } from '@/lib/hooks/useSession';
 import { pickAndPrepareImage } from '@/lib/media';
 import { useIsOnline } from '@/lib/network';
 import { useOutboxStore } from '@/lib/outboxStore';
+import { useShallow } from 'zustand/react/shallow';
 import { type MatchedContactUser } from '@/lib/queries/contacts';
 import { uploadProfileMedia } from '@/lib/queries/profileMedia';
 import {
@@ -639,8 +640,12 @@ export default function GroupThreadScreen() {
   const sendMessage = useSendGroupMessage();
 
   const isOnline = useIsOnline();
-  const outboxItems = useOutboxStore((s) =>
-    s.items.filter((i) => i.target.kind === 'group' && i.target.groupThreadId === id),
+  // See thread/[id].tsx's identical selector for why useShallow matters
+  // here, not just style.
+  const outboxItems = useOutboxStore(
+    useShallow((s) =>
+      s.items.filter((i) => i.target.kind === 'group' && i.target.groupThreadId === id),
+    ),
   );
 
   const [body, setBody] = useState('');
