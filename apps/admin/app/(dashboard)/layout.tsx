@@ -10,6 +10,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canViewUsers = await checkPermission(admin.id, 'view_users');
   const canViewTreasury = await checkPermission(admin.id, 'view_treasury');
   const canViewReportsQueue = await checkPermission(admin.id, 'view_reports_queue');
+  const canEditPricing = await checkPermission(admin.id, 'edit_pricing_config');
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
@@ -53,6 +54,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
                 className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
               >
                 User reports
+              </Link>
+            )}
+            {canEditPricing && (
+              <Link
+                href="/dashboard/pricing"
+                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
+              >
+                Pricing
               </Link>
             )}
           </nav>
