@@ -15,11 +15,27 @@ import { useTheme } from '@/theme';
  * since the share sheet backgrounds this app the same way. There's no
  * support inbox to send this to directly, so sharing (e.g. to an email
  * app) is the whole mechanism, matching `getLastCrash`'s own doc comment
- * ("a future 'send crash report' support flow"). */
-function reportCrash(crash: { message: string; stack?: string; timestamp: string }) {
+ * ("a future 'send crash report' support flow").
+ *
+ * Real gap fixed 2026-09-20, found while chasing a real "Maximum update
+ * depth exceeded" crash live: `ErrorBoundary.componentDidCatch` has
+ * *always* captured React's own `componentStack` (the actual component
+ * tree at the moment of the crash, by name — e.g. "in MessageBubble, in
+ * ThreadScreen"), but this function silently dropped it, sharing only the
+ * generic internal-reconciler `stack` (raw React source addresses, useless
+ * for identifying which of this app's own components was involved). Every
+ * report shared before this fix was missing the one field that actually
+ * points at app code. */
+function reportCrash(crash: {
+  message: string;
+  stack?: string;
+  componentStack?: string;
+  timestamp: string;
+}) {
   const lines = [
     `InvolveMe crash report — ${crash.timestamp}`,
     crash.message,
+    crash.componentStack ? `Component stack:${crash.componentStack}` : '',
     crash.stack ?? '',
   ].filter(Boolean);
   return withAppLockSuppressed(() => Share.share({ message: lines.join('\n\n') }));
