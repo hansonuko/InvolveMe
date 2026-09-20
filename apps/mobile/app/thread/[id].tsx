@@ -403,7 +403,6 @@ function MessageBubble({
   message,
   isOwn,
   isRead,
-  readAt,
   quotedPreview,
   selectionMode,
   isSelected,
@@ -415,17 +414,11 @@ function MessageBubble({
   /** `undefined` on the other participant's own messages (no receipt is
    * ever shown on someone else's bubble) — `true`/`false` only applies to
    * the caller's own messages, and only when the partner has read
-   * receipts enabled (see useThreadHeaderInfo). */
+   * receipts enabled (see useThreadHeaderInfo). Still drives the single-
+   * vs-double-tick icon; the "· Read <time>" text next to it was removed
+   * by explicit request (2026-09-20) — the exact read timestamp is no
+   * longer shown, only whether it's been read. */
   isRead?: boolean;
-  /** This specific message's own `read_at` — stamped once by
-   * `fn_mark_thread_read` the first time the partner reads it and frozen
-   * from then on, so it's a real, exact per-message timestamp (not derived
-   * live from the thread's shared read cursor the way it used to be,
-   * which caused every older message's shown time to jump forward to
-   * match the cursor's latest value on each subsequent read — a real bug,
-   * fixed in migration 20260920100000). Only ever rendered when `isRead`
-   * is `true`. */
-  readAt?: string | null;
   /** Set only when `message.reply_to_message_id` is non-null — see
    * QuotedPreview's own comment for how this is resolved. */
   quotedPreview?: QuotedPreview;
@@ -560,7 +553,6 @@ function MessageBubble({
           ) : null}
           <Text variant="caption" color={isOwn ? undefined : 'secondary'} style={dimInverseText}>
             {formatMessageTime(message.created_at)}
-            {isOwn && isRead && readAt ? ` · Read ${formatMessageTime(readAt)}` : ''}
           </Text>
           {isOwn && isRead !== undefined ? (
             <Ionicons
@@ -1284,13 +1276,11 @@ export default function ThreadScreen() {
                 const isOwn = item.sender_id === currentUserId;
                 // `headerInfo.partnerLastReadAt === null` still means "the
                 // partner has read receipts off" (see useThreadHeaderInfo)
-                // — that privacy gate is preserved exactly as before. What
-                // changed is the read TIME itself: previously derived live
-                // from that same shared thread-wide cursor (so an older
-                // message's shown time kept jumping forward to match
-                // whatever the cursor's latest value was), now read
-                // straight off this message's own `read_at`, stamped once
-                // and frozen at the moment it was actually first read.
+                // — that privacy gate is preserved exactly as before. Drives
+                // only the single-vs-double-tick icon now; the "· Read
+                // <time>" text this used to also gate was removed by
+                // explicit request (2026-09-20) — see MessageBubble's own
+                // `isRead` doc comment.
                 const isRead = !isOwn
                   ? undefined
                   : headerInfo?.partnerLastReadAt === null
@@ -1301,7 +1291,6 @@ export default function ThreadScreen() {
                     message={item}
                     isOwn={isOwn}
                     isRead={isRead}
-                    readAt={item.read_at}
                     quotedPreview={getQuotedPreview(item)}
                     selectionMode={selectionMode}
                     isSelected={selectedIds.has(item.id)}
