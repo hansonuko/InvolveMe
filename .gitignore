@@ -46,6 +46,10 @@ apps/mobile/android/
 # --- Turborepo ---
 .turbo/
 
+# --- Next.js (apps/admin, apps/marketing once built) ---
+.next/
+next-env.d.ts
+
 # --- Metro / bundler cache ---
 .metro-health-check*
 

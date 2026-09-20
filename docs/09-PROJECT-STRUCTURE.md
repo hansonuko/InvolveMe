@@ -5,7 +5,7 @@ Monorepo, npm/pnpm workspaces. One Expo app, one Supabase backend folder, shared
 ```
 InvolveMe/
 ├── apps/
-│   ├── admin/                       # PLANNED, not built — Next.js admin dashboard, see docs/14
+│   ├── admin/                       # Phase A in progress — Next.js admin dashboard skeleton, see docs/14
 │   ├── marketing/                   # PLANNED, not built — Next.js/Astro marketing site, see docs/15
 │   └── mobile/                      # Expo app
 │       ├── app/                     # expo-router file-based routes
