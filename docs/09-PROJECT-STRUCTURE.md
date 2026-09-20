@@ -5,6 +5,8 @@ Monorepo, npm/pnpm workspaces. One Expo app, one Supabase backend folder, shared
 ```
 InvolveMe/
 ├── apps/
+│   ├── admin/                       # PLANNED, not built — Next.js admin dashboard, see docs/14
+│   ├── marketing/                   # PLANNED, not built — Next.js/Astro marketing site, see docs/15
 │   └── mobile/                      # Expo app
 │       ├── app/                     # expo-router file-based routes
 │       │   ├── (auth)/              # OTP login/signup
@@ -49,6 +51,7 @@ InvolveMe/
 │   │   ├── flutterwave.ts
 │   │   └── paystack.ts              # provisioned, not wired until PAYMENTS_ACTIVE_PROVIDER flips
 │   ├── ledger-types/                # generated TS types from Postgres schema (supabase gen types)
+│   ├── legal-content/               # PLANNED, not built — shared ToS/Privacy source, see docs/15 §6
 │   └── config/                      # shared eslint/tsconfig/prettier
 │
 ├── docs/                            # this blueprint
@@ -64,7 +67,7 @@ InvolveMe/
 
 ## Conventions
 
-- Anything under `apps/mobile` that needs a balance, cost, or fee number **imports it from a server response or `pricing_config` snapshot** — `lib/pricing.ts` exists only to render a cost *preview* while typing, and is explicitly documented in-file as non-authoritative, matching `CLAUDE.md` rule #1.
+- Anything under `apps/mobile` that needs a balance, cost, or fee number **imports it from a server response or `pricing_config` snapshot** — `lib/pricing.ts` exists only to render a cost _preview_ while typing, and is explicitly documented in-file as non-authoritative, matching `CLAUDE.md` rule #1.
 - New Edge Function → new folder under `supabase/functions/`, always paired with a test file exercising both the happy path and the concurrency/idempotency case per `CLAUDE.md`.
 - New DB change → new file in `supabase/migrations/`, never edit an already-applied migration.
 - Design tokens live in exactly one place (`apps/mobile/theme/`); components consume them, never redefine colors/spacing locally.
