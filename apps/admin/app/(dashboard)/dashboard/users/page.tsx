@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentAdmin, checkPermission } from '@/lib/auth';
 import { db } from '@/lib/supabase-admin';
@@ -82,8 +83,11 @@ export default async function UsersListPage({
           <tbody>
             {pageRows.map((row) => (
               <tr key={row.id} className="border-b border-[var(--border)]/50">
-                {/* Not a link yet — the user detail page (Phase B piece 2) doesn't exist until that piece ships. */}
-                <td className="py-2 pr-4">{row.display_name ?? '—'}</td>
+                <td className="py-2 pr-4">
+                  <Link href={`/dashboard/users/${row.id}`} className="hover:underline">
+                    {row.display_name ?? '—'}
+                  </Link>
+                </td>
                 <td className="py-2 pr-4">{row.phone ?? '—'}</td>
                 <td className="py-2 pr-4">{row.kyc_tier}</td>
                 <td className="py-2 pr-4">{row.is_suspended ? 'Suspended' : 'Active'}</td>
@@ -105,12 +109,12 @@ export default async function UsersListPage({
       </div>
 
       {nextCursor && (
-        <a
+        <Link
           href={`/dashboard/users?${new URLSearchParams({ ...(q ? { q } : {}), cursor: nextCursor }).toString()}`}
           className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
         >
           Next page
-        </a>
+        </Link>
       )}
     </main>
   );

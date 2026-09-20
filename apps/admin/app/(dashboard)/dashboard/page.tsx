@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { getCurrentAdmin, checkPermission } from '@/lib/auth';
 
 export default async function DashboardHomePage() {
@@ -13,12 +14,12 @@ export default async function DashboardHomePage() {
       </p>
 
       {canManageAdmins && (
-        <a
+        <Link
           href="/dashboard/admins/new"
           className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
         >
           Create admin account
-        </a>
+        </Link>
       )}
     </main>
   );

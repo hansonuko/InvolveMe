@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentAdmin, checkPermission } from '@/lib/auth';
 import { logoutAction } from '@/app/actions/auth';
@@ -14,19 +15,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="flex items-center gap-6">
           <span className="text-sm font-medium text-[var(--foreground)]">InvolveMe Admin</span>
           <nav className="flex items-center gap-4">
-            <a
+            <Link
               href="/dashboard"
               className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
             >
               Dashboard
-            </a>
+            </Link>
             {canViewUsers && (
-              <a
+              <Link
                 href="/dashboard/users"
                 className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
               >
                 Users
-              </a>
+              </Link>
             )}
           </nav>
         </div>
