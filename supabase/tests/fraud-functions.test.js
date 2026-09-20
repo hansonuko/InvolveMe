@@ -778,6 +778,65 @@ async function testAutoSweepSignalAgingOutOfLookbackUnblocksSweep(admin) {
   await deleteTestUser(admin, A);
 }
 
+// Found while scoping admin dashboard Phase D (session 28): before
+// 20260920150000_withdrawal_trust_respects_dismissed_signals.sql, this
+// function never checked resolved_at at all (that column didn't exist
+// when fn_is_withdrawal_trusted was first written) — an admin dismissing
+// a signal through the Phase C fraud queue had zero effect here, which
+// defeated the queue's whole point. Escalating must still disqualify
+// (matches an admin actively confirming it's concerning); dismissing must
+// not (matches an admin confirming it wasn't real fraud).
+async function testAutoSweepDismissedSignalUnblocksTrustButEscalatedDoesNot(admin) {
+  const A = await createAgedUser(admin, 60);
+  await setupWithdrawableWallet(admin, A, 100000, 30);
+  const signal = await admin.query(
+    `insert into public.fraud_signals (user_id, signal_type, severity, metadata) values ($1, 'chargeback', 'high', '{}') returning id`,
+    [A],
+  );
+  const signalId = signal.rows[0].id;
+
+  let trusted = await admin.query('select public.fn_is_withdrawal_trusted($1) as t', [A]);
+  log(
+    'setup: an unresolved high-severity signal disqualifies, as before',
+    trusted.rows[0].t === false,
+  );
+
+  await admin.query(
+    `update public.fraud_signals set resolved_at = now(), resolution = 'dismissed' where id = $1`,
+    [signalId],
+  );
+  trusted = await admin.query('select public.fn_is_withdrawal_trusted($1) as t', [A]);
+  log(
+    'dismissing the signal restores trust — the actual fix',
+    trusted.rows[0].t === true,
+    `trusted=${trusted.rows[0].t}`,
+  );
+
+  await admin.query('select public.fn_run_auto_withdraw_sweep()');
+  const walletAfterDismiss = await admin.query(
+    `select balance from public.wallets where user_id = $1 and kind = 'withdrawable_cash'`,
+    [A],
+  );
+  log(
+    'the payee sweeps normally at the trusted threshold once dismissed',
+    Number(walletAfterDismiss.rows[0].balance) === 0,
+    `balance=${walletAfterDismiss.rows[0].balance}`,
+  );
+
+  await admin.query(`update public.fraud_signals set resolution = 'escalated' where id = $1`, [
+    signalId,
+  ]);
+  trusted = await admin.query('select public.fn_is_withdrawal_trusted($1) as t', [A]);
+  log(
+    'escalating the same signal (instead of dismissing) still disqualifies',
+    trusted.rows[0].t === false,
+    `trusted=${trusted.rows[0].t}`,
+  );
+
+  await admin.query('delete from public.fraud_signals where id = $1', [signalId]);
+  await deleteTestUser(admin, A);
+}
+
 async function testManualWithdrawalUnaffectedByTrustStatus(admin) {
   const A = await createAgedUser(admin, 5); // fresh, untrusted
   const { bankAccountId } = await setupWithdrawableWallet(admin, A, 100000, 1); // only 1h old — wouldn't auto-sweep either way
@@ -823,6 +882,7 @@ async function main() {
     await testAutoSweepUntrustedPayeeHoldsUntilLongerThreshold(admin);
     await testAutoSweepHeldIndefinitelyWhileHighSeveritySignalIsRecent(admin);
     await testAutoSweepSignalAgingOutOfLookbackUnblocksSweep(admin);
+    await testAutoSweepDismissedSignalUnblocksTrustButEscalatedDoesNot(admin);
     await testManualWithdrawalUnaffectedByTrustStatus(admin);
   } finally {
     await admin.end();
