@@ -14,6 +14,8 @@
     "test": "turbo run test",
     "test:db": "node --env-file=.env supabase/tests/wallet-functions.test.js",
     "test:db:ci": "node supabase/tests/wallet-functions.test.js",
+    "test:admin": "node --env-file=.env supabase/tests/admin-rbac-functions.test.js",
+    "test:admin:ci": "node supabase/tests/admin-rbac-functions.test.js",
     "test:fraud": "node --env-file=.env supabase/tests/fraud-functions.test.js",
     "test:fraud:ci": "node supabase/tests/fraud-functions.test.js",
     "test:chargeback": "node --env-file=.env supabase/tests/chargeback-functions.test.js",
