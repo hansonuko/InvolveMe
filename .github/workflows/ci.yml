@@ -144,6 +144,11 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: npm run test:admin-pricing:ci
 
+      - name: Admin dual-approval tests (self-approval block, matching permissions, single-use consume)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: npm run test:admin-dual-approval:ci
+
   # Placeholder — activates once supabase/migrations exist (Phase 1).
   # Runs schema migrations against the staging Supabase project on merge to
   # main, per docs/01-ARCHITECTURE.md "Environments".
