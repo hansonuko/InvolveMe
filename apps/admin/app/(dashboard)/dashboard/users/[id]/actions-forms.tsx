@@ -69,13 +69,13 @@ export function ProposeManualAdjustmentForm({
         <button
           type="submit"
           disabled={pending || !amount.trim() || !note.trim()}
-          className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-40"
+          className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] disabled:opacity-40"
         >
           Propose
         </button>
       </div>
       {state && 'error' in state && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}

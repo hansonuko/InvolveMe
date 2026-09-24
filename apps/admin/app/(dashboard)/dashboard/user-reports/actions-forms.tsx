@@ -32,7 +32,7 @@ export function ResolveReportForm({ reportId }: { reportId: string }) {
           name="resolution"
           value="warned"
           disabled={pending}
-          className="rounded border border-[var(--border)] px-3 py-1 text-xs text-yellow-400 hover:text-yellow-300 disabled:opacity-60"
+          className="rounded border border-[var(--border)] px-3 py-1 text-xs text-[var(--warning)] hover:text-[var(--warning)]/80 disabled:opacity-60"
         >
           Warn
         </button>
@@ -41,7 +41,7 @@ export function ResolveReportForm({ reportId }: { reportId: string }) {
           name="resolution"
           value="suspended"
           disabled={pending}
-          className="rounded bg-orange-600 px-3 py-1 text-xs font-medium text-white hover:bg-orange-500 disabled:opacity-60"
+          className="rounded bg-[var(--warning)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] hover:bg-[var(--warning)]/90 disabled:opacity-60"
         >
           Suspend
         </button>
@@ -50,13 +50,13 @@ export function ResolveReportForm({ reportId }: { reportId: string }) {
           name="resolution"
           value="banned"
           disabled={pending}
-          className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-60"
+          className="rounded bg-[var(--danger)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] hover:bg-[var(--danger)]/90 disabled:opacity-60"
         >
           Ban
         </button>
       </div>
       {state && 'error' in state && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}

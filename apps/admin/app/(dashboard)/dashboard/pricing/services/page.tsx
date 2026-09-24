@@ -58,7 +58,7 @@ export default async function ServicePricingPage() {
       </p>
 
       {configError && (
-        <p className="mt-4 text-sm text-red-400">
+        <p className="mt-4 text-sm text-[var(--danger)]">
           Could not load service pricing: {configError.message}
         </p>
       )}

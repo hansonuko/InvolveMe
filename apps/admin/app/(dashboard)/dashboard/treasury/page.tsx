@@ -154,7 +154,7 @@ export default async function TreasuryPage() {
       </p>
 
       {walletsError && (
-        <p className="mt-4 text-sm text-red-400">
+        <p className="mt-4 text-sm text-[var(--danger)]">
           Could not load platform wallets: {walletsError.message}
         </p>
       )}
@@ -213,7 +213,7 @@ export default async function TreasuryPage() {
         </p>
 
         {dailyError && (
-          <p className="mt-2 text-sm text-red-400">
+          <p className="mt-2 text-sm text-[var(--danger)]">
             Could not load daily totals: {dailyError.message}
           </p>
         )}
@@ -258,7 +258,7 @@ export default async function TreasuryPage() {
         </p>
 
         {bankAccountsError && (
-          <p className="mt-2 text-sm text-red-400">
+          <p className="mt-2 text-sm text-[var(--danger)]">
             Could not load bank accounts: {bankAccountsError.message}
           </p>
         )}
@@ -291,7 +291,7 @@ export default async function TreasuryPage() {
 
         {canManageBankAccounts && (
           <div className="mt-4 space-y-3">
-            {banksError && <p className="text-sm text-red-400">{banksError}</p>}
+            {banksError && <p className="text-sm text-[var(--danger)]">{banksError}</p>}
             {!banksError &&
               Array.from(currencies).map((currency) => (
                 <RegisterBankAccountForm key={currency} currency={currency} banks={banks} />
@@ -331,7 +331,7 @@ export default async function TreasuryPage() {
         )}
 
         {withdrawalsError && (
-          <p className="mt-2 text-sm text-red-400">
+          <p className="mt-2 text-sm text-[var(--danger)]">
             Could not load withdrawal history: {withdrawalsError.message}
           </p>
         )}

@@ -1,14 +1,104 @@
 @import 'tailwindcss';
 
+/*
+ * Deep Wine — mirrors docs/04-DESIGN-SYSTEM.md §1 exactly (same hex values
+ * as apps/mobile/theme/tokens.ts's `palette`). This app kept its own
+ * unbranded placeholder palette since Phase A (docs/14 §3 originally
+ * argued an internal tool didn't need one) — this is the deliberate
+ * reversal of that call, not a new invention: every value below is taken
+ * directly from the already-shipping mobile palette, not re-derived.
+ *
+ * Existing token NAMES (--background/--foreground/--surface/--border/
+ * --accent) are kept as-is — hundreds of call sites across this app
+ * already reference them via Tailwind's `text-[var(--foreground)]`-style
+ * arbitrary values, including with opacity modifiers (`/60`, `/70`...),
+ * which keep working unchanged since these are still real CSS colors.
+ * Only new roles get new names.
+ */
 :root {
-  --background: #0b0c10;
-  --foreground: #e8e8ea;
-  --surface: #16171d;
-  --border: #2a2b33;
-  --accent: #7c5cff;
+  --background: #fdfff7; /* color.bg.canvas */
+  --surface: #ffffff; /* color.bg.surface */
+  --surface-alt: #ede8e3; /* color.bg.surfaceAlt */
+  --border: #f4f1eb; /* color.border.subtle */
+  --accent: #5f1b31; /* color.brand.primary — theme-invariant */
+  --accent-pressed: #471425; /* color.brand.primaryPressed — theme-invariant */
+  --foreground: #0e0407; /* color.text.primary */
+  --foreground-accent: #5f1b31; /* color.text.secondary — "accent on canvas" role */
+  --muted: #7d696f; /* color.text.tertiary */
+  --on-accent: #fdfff7; /* color.text.inverse — theme-invariant */
+  --success: #0d874e; /* color.semantic.success */
+  --danger: #d63d32; /* color.semantic.danger */
+  --warning: #aa6306; /* color.semantic.warning */
+  --credit: #f5a623; /* color.accent.credit */
+
+  /* Tells the browser to render native form-control chrome (select
+     popups, scrollbars, date pickers) in matching light chrome — the
+     other half of the dropdown-legibility fix below; color-scheme alone
+     governs UA chrome, not text/background inside <option>, which is set
+     explicitly further down. */
+  color-scheme: light;
+}
+
+/* System preference, only when the admin hasn't set an explicit choice
+   (next-themes never adds data-theme="light" for the system-light case,
+   so this guard only matters for the dark branch below — kept here too
+   for the :not([data-theme="light"]) exclusion to be self-documenting). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --background: #1a1013; /* color.bg.canvas (dark) */
+    --surface: #241820; /* color.bg.surface (dark) */
+    --surface-alt: #3a2430; /* color.bg.surfaceAlt (dark) */
+    --border: #3a2a30; /* color.border.subtle (dark) */
+    --foreground: #f5ede9; /* color.text.primary (dark) */
+    /* Plain white in dark mode, not a lightened wine — docs/04 §1's own
+       "reverse in dark mode: dark background, white text" instruction,
+       and identical to --foreground by design (no separate dark-mode
+       accent hue — see the design doc's own note on this). */
+    --foreground-accent: #f5ede9;
+    --muted: #a8a29e; /* color.text.tertiary (dark) */
+    --success: #32d583; /* color.semantic.success (dark) */
+    --danger: #f97066; /* color.semantic.danger (dark) */
+    --warning: #fdb022; /* color.semantic.warning (dark) */
+    --credit: #ffc24d; /* color.accent.credit (dark) */
+    color-scheme: dark;
+  }
+}
+
+/* Explicit override always wins in both directions, regardless of OS
+   preference — this is what makes the manual toggle (next-themes,
+   attribute="data-theme") actually override "system." */
+:root[data-theme='dark'] {
+  --background: #1a1013;
+  --surface: #241820;
+  --surface-alt: #3a2430;
+  --border: #3a2a30;
+  --foreground: #f5ede9;
+  --foreground-accent: #f5ede9;
+  --muted: #a8a29e;
+  --success: #32d583;
+  --danger: #f97066;
+  --warning: #fdb022;
+  --credit: #ffc24d;
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
+  color: var(--foreground);
+}
+
+/* The dropdown-contrast fix: a native <select>'s open popup list does
+   NOT inherit `bg-transparent` on the <select> element itself — browsers
+   render that popup with OS-default chrome regardless, so light text
+   (correct against this app's own dark surfaces) was landing on a
+   default-white popup with near-zero contrast, and would break the same
+   way in reverse for a light theme with dark option text on a
+   browser-default-dark popup. Explicit background/color on `option`
+   (respected by every major engine for popup-list rendering) plus
+   `color-scheme` above on `select` fixes both directions in both themes,
+   globally, without touching every individual <select>'s className. */
+select,
+option {
+  background-color: var(--surface);
   color: var(--foreground);
 }

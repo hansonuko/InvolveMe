@@ -20,12 +20,12 @@ export function ApproveForm({ pendingActionId }: { pendingActionId: string }) {
       <button
         type="submit"
         disabled={pending}
-        className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-60"
+        className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] disabled:opacity-60"
       >
         Approve
       </button>
       {state && 'error' in state && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}
@@ -64,7 +64,7 @@ export function RejectForm({
         {label}
       </button>
       {state && 'error' in state && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}
@@ -160,12 +160,12 @@ export function ApplyForm({
       <button
         type="submit"
         disabled={pending}
-        className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-500 disabled:opacity-60"
+        className="rounded bg-[var(--success)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] hover:bg-[var(--success)]/90 disabled:opacity-60"
       >
         Apply
       </button>
       {state && 'error' in state && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}

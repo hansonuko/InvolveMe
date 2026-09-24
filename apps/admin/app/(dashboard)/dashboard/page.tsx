@@ -16,7 +16,7 @@ export default async function DashboardHomePage() {
       {canManageAdmins && (
         <Link
           href="/dashboard/admins"
-          className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
+          className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--on-accent)]"
         >
           Manage admins
         </Link>

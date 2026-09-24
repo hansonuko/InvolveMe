@@ -38,12 +38,12 @@ export function ConvertEarningsForm({ currency }: { currency: string }) {
       <button
         type="submit"
         disabled={pending || !credits.trim()}
-        className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-40"
+        className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] disabled:opacity-40"
       >
         Convert to cash
       </button>
       {state && 'error' in state && (
-        <p className="w-full text-xs text-red-400" role="alert">
+        <p className="w-full text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}
@@ -63,12 +63,12 @@ export function DeactivateBankAccountForm({ bankAccountId }: { bankAccountId: st
       <button
         type="submit"
         disabled={pending}
-        className="text-xs text-[var(--foreground)]/60 hover:text-red-400 disabled:opacity-60"
+        className="text-xs text-[var(--foreground)]/60 hover:text-[var(--danger)] disabled:opacity-60"
       >
         Deactivate
       </button>
       {state && 'error' in state && (
-        <p className="mt-1 text-xs text-red-400" role="alert">
+        <p className="mt-1 text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}
@@ -147,7 +147,7 @@ export function RegisterBankAccountForm({
         </button>
       </form>
       {resolveState && 'error' in resolveState && (
-        <p className="mt-1 text-xs text-red-400" role="alert">
+        <p className="mt-1 text-xs text-[var(--danger)]" role="alert">
           {resolveState.error}
         </p>
       )}
@@ -176,14 +176,14 @@ export function RegisterBankAccountForm({
           <button
             type="submit"
             disabled={proposePending}
-            className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-40"
+            className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] disabled:opacity-40"
           >
             Propose registration
           </button>
         </form>
       )}
       {proposeState && 'error' in proposeState && (
-        <p className="mt-1 text-xs text-red-400" role="alert">
+        <p className="mt-1 text-xs text-[var(--danger)]" role="alert">
           {proposeState.error}
         </p>
       )}
@@ -233,12 +233,12 @@ export function ProposeWithdrawalForm({
       <button
         type="submit"
         disabled={pending || !amount.trim() || !bankAccountId}
-        className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-40"
+        className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] disabled:opacity-40"
       >
         Propose withdrawal
       </button>
       {state && 'error' in state && (
-        <p className="w-full text-xs text-red-400" role="alert">
+        <p className="w-full text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}

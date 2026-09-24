@@ -140,14 +140,14 @@ export default async function FraudSignalsPage({
         </select>
         <button
           type="submit"
-          className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white"
+          className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)]"
         >
           Filter
         </button>
       </form>
 
       {signalsError && (
-        <p className="mt-4 text-sm text-red-400">
+        <p className="mt-4 text-sm text-[var(--danger)]">
           Could not load fraud signals: {signalsError.message}
         </p>
       )}
@@ -165,9 +165,9 @@ export default async function FraudSignalsPage({
                   <span
                     className={
                       signal.severity === 'high'
-                        ? 'text-red-400'
+                        ? 'text-[var(--danger)]'
                         : signal.severity === 'medium'
-                          ? 'text-yellow-400'
+                          ? 'text-[var(--warning)]'
                           : 'text-[var(--foreground)]/60'
                     }
                   >
@@ -228,7 +228,7 @@ export default async function FraudSignalsPage({
       {nextCursor && (
         <Link
           href={`/dashboard/fraud-signals?${new URLSearchParams({ ...baseParams, cursor: nextCursor }).toString()}`}
-          className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
+          className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--on-accent)]"
         >
           Next page
         </Link>

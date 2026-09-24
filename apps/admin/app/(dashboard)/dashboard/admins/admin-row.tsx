@@ -130,12 +130,12 @@ export function AdminRow({
       </div>
 
       {statusState && 'error' in statusState && (
-        <p className="mt-2 text-xs text-red-400" role="alert">
+        <p className="mt-2 text-xs text-[var(--danger)]" role="alert">
           {statusState.error}
         </p>
       )}
       {mfaState && 'error' in mfaState && (
-        <p className="mt-2 text-xs text-red-400" role="alert">
+        <p className="mt-2 text-xs text-[var(--danger)]" role="alert">
           {mfaState.error}
         </p>
       )}
@@ -170,7 +170,7 @@ export function AdminRow({
           </div>
 
           {rolesState && 'error' in rolesState && (
-            <p className="mt-2 text-xs text-red-400" role="alert">
+            <p className="mt-2 text-xs text-[var(--danger)]" role="alert">
               {rolesState.error}
             </p>
           )}
@@ -178,7 +178,7 @@ export function AdminRow({
           <button
             type="submit"
             disabled={rolesPending}
-            className="mt-3 rounded bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+            className="mt-3 rounded bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--on-accent)] disabled:opacity-60"
           >
             Save roles
           </button>

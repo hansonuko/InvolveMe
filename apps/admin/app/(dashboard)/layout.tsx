@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentAdmin, checkPermission } from '@/lib/auth';
 import { logoutAction } from '@/app/actions/auth';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const admin = await getCurrentAdmin();
@@ -93,7 +94,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </nav>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-sm text-[var(--foreground)]/60">{admin.email}</span>
+          <ThemeToggle />
+          <span className="text-sm text-[var(--foreground)]/60">{admin.displayName}</span>
           <form action={logoutAction}>
             <button
               type="submit"

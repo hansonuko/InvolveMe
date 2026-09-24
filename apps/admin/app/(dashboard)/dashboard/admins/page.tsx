@@ -72,7 +72,7 @@ export default async function AdminsListPage() {
         <h1 className="text-lg font-semibold text-[var(--foreground)]">Admins</h1>
         <Link
           href="/dashboard/admins/new"
-          className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
+          className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--on-accent)]"
         >
           Create admin account
         </Link>
@@ -83,7 +83,9 @@ export default async function AdminsListPage() {
       </p>
 
       {adminError && (
-        <p className="mt-4 text-sm text-red-400">Could not load admins: {adminError.message}</p>
+        <p className="mt-4 text-sm text-[var(--danger)]">
+          Could not load admins: {adminError.message}
+        </p>
       )}
 
       <div className="mt-6 divide-y divide-[var(--border)] rounded border border-[var(--border)] bg-[var(--surface)]">
