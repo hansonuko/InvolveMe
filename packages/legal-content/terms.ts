@@ -12,11 +12,14 @@
  * itself and stays true here; §15 (Governing Law) is flagged inline as
  * the clause most worth a real lawyer's pass before this ships publicly.
  *
- * Structured as data (not markdown parsed at runtime) so
- * LegalDocumentScreen can render it with the existing design-system
- * Text/Screen primitives — no new dependency, works fully offline, ships
- * with the app bundle instead of depending on a network fetch to read
- * your own Terms of Service.
+ * Structured as data (not markdown parsed at runtime), shared via this
+ * package (docs/15-MARKETING-SITE-PWA-SCOPING.md §6) so the mobile app
+ * (apps/mobile/components/LegalDocumentScreen.tsx) and the marketing site
+ * (apps/marketing/components/LegalDocument.tsx) render the exact same
+ * source with their own native-vs-web presentation primitives — one edit
+ * updates both surfaces, they can never silently drift apart. Moved here
+ * from apps/mobile/content/legal/terms.ts 2026-09-24 (Phase B); no wording
+ * changed in the move.
  */
 
 export interface LegalSection {

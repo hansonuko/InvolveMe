@@ -1,5 +1,5 @@
 import { LegalDocumentScreen } from '@/components/LegalDocumentScreen';
-import { PRIVACY_LAST_UPDATED, PRIVACY_POLICY } from '@/content/legal/privacy';
+import { PRIVACY_LAST_UPDATED, PRIVACY_POLICY } from '@involveme/legal-content';
 
 export default function PrivacyPolicyScreen() {
   return (

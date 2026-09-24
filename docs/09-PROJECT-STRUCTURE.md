@@ -51,7 +51,7 @@ InvolveMe/
 │   │   ├── flutterwave.ts
 │   │   └── paystack.ts              # provisioned, not wired until PAYMENTS_ACTIVE_PROVIDER flips
 │   ├── ledger-types/                # generated TS types from Postgres schema (supabase gen types)
-│   ├── legal-content/               # PLANNED, not built — shared ToS/Privacy source, see docs/15 §6
+│   ├── legal-content/               # Phase B built — shared ToS/Privacy source (apps/mobile + apps/marketing both import it), see docs/15 §6
 │   └── config/                      # shared eslint/tsconfig/prettier
 │
 ├── docs/                            # this blueprint

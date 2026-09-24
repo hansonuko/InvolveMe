@@ -1,5 +1,5 @@
 import { LegalDocumentScreen } from '@/components/LegalDocumentScreen';
-import { TERMS_LAST_UPDATED, TERMS_OF_SERVICE } from '@/content/legal/terms';
+import { TERMS_LAST_UPDATED, TERMS_OF_SERVICE } from '@involveme/legal-content';
 
 export default function TermsOfServiceScreen() {
   return (
