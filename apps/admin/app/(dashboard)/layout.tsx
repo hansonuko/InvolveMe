@@ -1,8 +1,6 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentAdmin, checkPermission } from '@/lib/auth';
-import { logoutAction } from '@/app/actions/auth';
-import { ThemeToggle } from '@/components/ThemeToggle';
+import { Sidebar, type NavGroup } from '@/components/Sidebar';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const admin = await getCurrentAdmin();
@@ -15,98 +13,69 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canApprovePendingActions = await checkPermission(admin.id, 'approve_pending_action');
   const canManageAdmins = await checkPermission(admin.id, 'manage_admin_roles');
 
+  // Sub-routes fold into their closest parent's own nav item rather than
+  // staying flat top-level links — the actual URL hierarchy already
+  // groups them this way (/pricing/services, /pricing/strategy,
+  // /pricing/history are all real children of /pricing), this just makes
+  // the sidebar reflect that instead of listing nine unrelated-looking
+  // flat items.
+  const groups: NavGroup[] = [{ href: '/dashboard', label: 'Dashboard', icon: 'dashboard' }];
+
+  if (canViewUsers) {
+    groups.push({
+      href: '/dashboard/users',
+      label: 'Users',
+      icon: 'users',
+      children: [{ href: '/dashboard/users/analytics', label: 'Location stats' }],
+    });
+  }
+  if (canViewTreasury) {
+    groups.push({ href: '/dashboard/treasury', label: 'Treasury', icon: 'treasury' });
+  }
+  if (canViewReportsQueue) {
+    groups.push({
+      href: '/dashboard/fraud-signals',
+      label: 'Fraud signals',
+      icon: 'fraudSignals',
+    });
+    groups.push({
+      href: '/dashboard/user-reports',
+      label: 'User reports',
+      icon: 'userReports',
+    });
+  }
+  if (canEditPricing) {
+    groups.push({
+      href: '/dashboard/pricing',
+      label: 'Pricing',
+      icon: 'pricing',
+      children: [
+        { href: '/dashboard/pricing/services', label: 'Service pricing' },
+        { href: '/dashboard/pricing/strategy', label: 'Message strategy' },
+        { href: '/dashboard/pricing/history', label: 'Change history' },
+      ],
+    });
+  }
+  if (canApprovePendingActions) {
+    groups.push({
+      href: '/dashboard/pending-actions',
+      label: 'Pending actions',
+      icon: 'pendingActions',
+    });
+  }
+  if (canManageAdmins) {
+    groups.push({
+      href: '/dashboard/admins',
+      label: 'Admins',
+      icon: 'admins',
+      children: [{ href: '/dashboard/admins/new', label: 'Create admin' }],
+    });
+  }
+
   return (
-    <div className="min-h-screen bg-[var(--background)]">
-      <header className="flex items-center justify-between border-b border-[var(--border)] px-6 py-3">
-        <div className="flex items-center gap-6">
-          <span className="text-sm font-medium text-[var(--foreground)]">InvolveMe Admin</span>
-          <nav className="flex items-center gap-4">
-            <Link
-              href="/dashboard"
-              className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-            >
-              Dashboard
-            </Link>
-            {canViewUsers && (
-              <Link
-                href="/dashboard/users"
-                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-              >
-                Users
-              </Link>
-            )}
-            {canViewUsers && (
-              <Link
-                href="/dashboard/users/analytics"
-                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-              >
-                Location stats
-              </Link>
-            )}
-            {canViewTreasury && (
-              <Link
-                href="/dashboard/treasury"
-                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-              >
-                Treasury
-              </Link>
-            )}
-            {canViewReportsQueue && (
-              <Link
-                href="/dashboard/fraud-signals"
-                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-              >
-                Fraud signals
-              </Link>
-            )}
-            {canViewReportsQueue && (
-              <Link
-                href="/dashboard/user-reports"
-                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-              >
-                User reports
-              </Link>
-            )}
-            {canEditPricing && (
-              <Link
-                href="/dashboard/pricing"
-                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-              >
-                Pricing
-              </Link>
-            )}
-            {canApprovePendingActions && (
-              <Link
-                href="/dashboard/pending-actions"
-                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-              >
-                Pending actions
-              </Link>
-            )}
-            {canManageAdmins && (
-              <Link
-                href="/dashboard/admins"
-                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
-              >
-                Admins
-              </Link>
-            )}
-          </nav>
-        </div>
-        <div className="flex items-center gap-4">
-          <ThemeToggle />
-          <span className="text-sm text-[var(--foreground)]/60">{admin.displayName}</span>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="text-sm text-[var(--foreground)]/60 hover:text-[var(--foreground)]"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
-      </header>
-      {children}
+    <div className="flex min-h-screen flex-col bg-[var(--background)] md:flex-row">
+      <Sidebar groups={groups} adminDisplayName={admin.displayName} />
+      <main className="min-w-0 flex-1">{children}</main>
     </div>
   );
 }
