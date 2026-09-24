@@ -3,16 +3,16 @@ import { ScrollView, View } from 'react-native';
 
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
-import type { LegalSection } from '@/content/legal/terms';
+import type { LegalSection } from '@involveme/legal-content';
 import { useTheme } from '@/theme';
 
 /**
  * Shared renderer for the Terms of Service / Privacy Policy screens
  * (apps/mobile/app/legal/terms.tsx, privacy.tsx) — see
- * content/legal/terms.ts's header comment for why these are structured
- * data rendered with the existing design-system primitives rather than a
- * markdown file parsed at runtime: no new dependency, works fully
- * offline, ships with the app bundle.
+ * packages/legal-content/terms.ts's header comment for why these are
+ * structured data rendered with the existing design-system primitives
+ * rather than a markdown file parsed at runtime: no new dependency, works
+ * fully offline, ships with the app bundle.
  */
 export function LegalDocumentScreen({
   title,

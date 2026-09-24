@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
+    "@involveme/legal-content": "*",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.49.4",
     "@tanstack/query-async-storage-persister": "^5.103.1",

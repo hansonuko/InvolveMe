@@ -16,12 +16,19 @@ const COLUMNS = [
       { href: '/contact', label: 'Contact' },
     ],
   },
+  {
+    title: 'Legal',
+    links: [
+      { href: '/legal/terms', label: 'Terms of Service' },
+      { href: '/legal/privacy', label: 'Privacy Policy' },
+    ],
+  },
 ];
 
 export function Footer() {
   return (
     <footer className="border-t border-border bg-surface">
-      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 md:grid-cols-[1.2fr_1fr_1fr]">
+      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 md:grid-cols-[1.2fr_1fr_1fr_1fr]">
         <div>
           <p className="text-title font-extrabold text-foreground-accent">InvolveMe</p>
           <p className="mt-3 max-w-xs text-caption text-muted">
