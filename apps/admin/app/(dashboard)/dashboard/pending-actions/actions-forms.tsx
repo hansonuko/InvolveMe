@@ -137,6 +137,16 @@ export function ApplyForm({
           />
         </>
       )}
+      {actionType === 'message_pricing_strategy_change' && (
+        <>
+          <input type="hidden" name="currency" value={String(payload.currency ?? '')} />
+          <input
+            type="hidden"
+            name="active_strategy"
+            value={String(payload.active_strategy ?? '')}
+          />
+        </>
+      )}
       <button
         type="submit"
         disabled={pending}

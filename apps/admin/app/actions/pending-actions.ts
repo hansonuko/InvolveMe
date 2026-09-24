@@ -185,6 +185,18 @@ export async function applyPendingActionAction(
     if (error) return { error: friendlyError(error.message) };
   } else if (actionType === 'platform_withdrawal') {
     return applyPlatformWithdrawal(admin.id, pendingActionId, formData);
+  } else if (actionType === 'message_pricing_strategy_change') {
+    const currency = String(formData.get('currency') ?? '');
+    const activeStrategy = String(formData.get('active_strategy') ?? '');
+    if (!currency || !activeStrategy) return { error: 'Invalid request.' };
+
+    const { error } = await db().rpc('fn_admin_set_message_pricing_strategy', {
+      p_actor_admin_id: admin.id,
+      p_pending_action_id: pendingActionId,
+      p_currency: currency,
+      p_active_strategy: activeStrategy,
+    });
+    if (error) return { error: friendlyError(error.message) };
   } else {
     return { error: 'Unknown action type.' };
   }
@@ -331,6 +343,30 @@ export async function proposePlatformWithdrawalAction(
     p_actor_admin_id: admin.id,
     p_action_type: 'platform_withdrawal',
     p_payload: { currency, amount_minor: amountMinor, platform_bank_account_id: bankAccountId },
+  });
+  if (error) return { error: friendlyError(error.message) };
+
+  redirect('/dashboard/pending-actions');
+}
+
+const MESSAGE_PRICING_STRATEGIES = ['tiered_word_block', 'flat_per_message', 'linear_per_word'];
+
+export async function proposeMessagePricingStrategyChangeAction(
+  _prev: PendingActionState,
+  formData: FormData,
+): Promise<PendingActionState> {
+  const admin = await requireAdmin();
+  const currency = String(formData.get('currency') ?? '');
+  const activeStrategy = String(formData.get('active_strategy') ?? '');
+
+  if (!currency || !MESSAGE_PRICING_STRATEGIES.includes(activeStrategy)) {
+    return { error: 'Pick a valid strategy.' };
+  }
+
+  const { error } = await db().rpc('fn_admin_propose_pending_action', {
+    p_actor_admin_id: admin.id,
+    p_action_type: 'message_pricing_strategy_change',
+    p_payload: { currency, active_strategy: activeStrategy },
   });
   if (error) return { error: friendlyError(error.message) };
 

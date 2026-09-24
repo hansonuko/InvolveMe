@@ -22,6 +22,13 @@ export const PRICING_CATEGORIES: PricingCategory[] = [
       'message_delete_window_minutes',
       'status_upload_credits_text',
       'status_upload_credits_media',
+      // Only takes effect under its own strategy (flat_per_message /
+      // linear_per_word respectively) — see /dashboard/pricing/strategy.
+      // Listed here regardless of which strategy is currently active, same
+      // as every other key: this page is a display convenience, not a
+      // filter on what's "relevant right now."
+      'message_flat_credits',
+      'message_credits_per_100_words',
     ],
   },
   {

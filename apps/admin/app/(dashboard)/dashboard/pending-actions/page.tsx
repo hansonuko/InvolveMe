@@ -29,6 +29,13 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   manual_ledger_adjustment: 'Manual ledger adjustment',
   platform_bank_account_registration: 'Platform bank account registration',
   platform_withdrawal: 'Platform treasury withdrawal',
+  message_pricing_strategy_change: 'Message pricing strategy change',
+};
+
+const MESSAGE_PRICING_STRATEGY_LABELS: Record<string, string> = {
+  tiered_word_block: 'Tiered word block (the current default)',
+  flat_per_message: 'Flat per message',
+  linear_per_word: 'Linear per word',
 };
 
 export default async function PendingActionsPage({
@@ -169,6 +176,10 @@ export default async function PendingActionsPage({
         ? `${bankAccount.bank_name} •••• ${bankAccount.account_number_last4}`
         : 'unknown account';
       return `${formatKobo(Number(row.payload.amount_minor), String(row.payload.currency))} → ${destination}`;
+    }
+    if (row.action_type === 'message_pricing_strategy_change') {
+      const strategy = String(row.payload.active_strategy ?? '');
+      return `${row.payload.currency}: switch to ${MESSAGE_PRICING_STRATEGY_LABELS[strategy] ?? strategy}`;
     }
     return JSON.stringify(row.payload);
   }
