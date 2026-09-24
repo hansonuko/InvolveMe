@@ -55,7 +55,15 @@ export default async function UsersListPage({
 
   return (
     <main className="p-8">
-      <h1 className="text-lg font-semibold text-[var(--foreground)]">Users</h1>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h1 className="text-lg font-semibold text-[var(--foreground)]">Users</h1>
+        <Link
+          href="/dashboard/users/analytics"
+          className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)] hover:underline"
+        >
+          Location stats →
+        </Link>
+      </div>
 
       <form method="get" className="mt-4 max-w-sm">
         <input
