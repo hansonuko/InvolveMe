@@ -14,6 +14,7 @@
     "@involveme/payments": "*",
     "@supabase/supabase-js": "^2.49.4",
     "jose": "^5.9.6",
+    "lucide-react": "^1.48.0",
     "next": "^15.1.6",
     "next-themes": "^0.4.6",
     "otpauth": "^9.3.6",
