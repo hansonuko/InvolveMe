@@ -387,6 +387,186 @@ async function testTransferWebhooksCompleteWithdrawals(admin) {
   await deleteTestUser(admin, A);
 }
 
+// =============================================================================
+// Test 4: a transfer.completed reference that belongs to
+// platform_withdrawals, not withdrawals — Phase F piece 3's fallback
+// routing. Fixtures inserted directly (this connection is the DB owner,
+// same "bypass the dual-approval RPCs for test setup" precedent every
+// other admin-* test file already establishes) rather than through the
+// real propose/approve/initiate flow, since what's under test here is the
+// webhook's routing, not the dual-approval engine itself (covered
+// exhaustively by admin-platform-withdrawal-functions.test.js).
+// =============================================================================
+
+const QA_CURRENCY = 'QAWH';
+
+async function seedPlatformWithdrawalFixture(admin, { amountMinor }) {
+  const walletRes = await admin.query(
+    `insert into wallets (kind, currency, user_id) values ('platform_revenue_topup_fees', $1, null)
+     on conflict (kind, currency) where user_id is null do update set currency = excluded.currency
+     returning id`,
+    [QA_CURRENCY],
+  );
+  const walletId = walletRes.rows[0].id;
+  await admin.query(
+    `insert into ledger_entries (wallet_id, amount, reason, ref_type, currency) values ($1, $2, 'manual_adjustment', 'admin_action', $3)`,
+    [walletId, amountMinor * 10, QA_CURRENCY],
+  );
+
+  const bankRes = await admin.query(
+    `insert into platform_bank_accounts (currency, bank_name, account_number_last4, provider_account_id, account_name, is_active, added_by_admin_id)
+     values ($1, 'QA Webhook Test Bank', '0000', $2, 'InvolveMe QA', true, (select id from admin_users limit 1))
+     returning id`,
+    [QA_CURRENCY, `prov-${crypto.randomUUID()}`],
+  );
+
+  const adminRes = await admin.query('select id from admin_users limit 1');
+  const proposeRes = await admin.query('select fn_admin_propose_pending_action($1, $2, $3) as id', [
+    adminRes.rows[0].id,
+    'platform_withdrawal',
+    JSON.stringify({
+      currency: QA_CURRENCY,
+      amount_minor: amountMinor,
+      platform_bank_account_id: bankRes.rows[0].id,
+    }),
+  ]);
+  // Self-approval is blocked (cannot_approve_own_action) — a second admin
+  // fixture approves, matching the real dual-approval flow rather than
+  // bypassing it, since fn_admin_initiate_platform_withdrawal itself is
+  // exercised here for real, not stubbed.
+  const secondAdminRes = await admin.query(
+    `insert into admin_users (id, email, display_name, password_hash) values (gen_random_uuid(), $1, 'QA Second Admin', 'x') returning id`,
+    [`qa-webhook-second-${crypto.randomUUID()}@test.invalid`],
+  );
+  await admin.query(
+    `insert into admin_user_roles (admin_user_id, role_id) select $1, id from admin_roles where name = 'super_admin'`,
+    [secondAdminRes.rows[0].id],
+  );
+  await admin.query('select fn_admin_approve_pending_action($1, $2)', [
+    secondAdminRes.rows[0].id,
+    proposeRes.rows[0].id,
+  ]);
+
+  const initRes = await admin.query(
+    'select fn_admin_initiate_platform_withdrawal($1, $2, $3, $4, $5) as id',
+    [adminRes.rows[0].id, proposeRes.rows[0].id, QA_CURRENCY, amountMinor, bankRes.rows[0].id],
+  );
+
+  return {
+    walletId,
+    bankAccountId: bankRes.rows[0].id,
+    pendingActionId: proposeRes.rows[0].id,
+    secondAdminId: secondAdminRes.rows[0].id,
+    withdrawalId: initRes.rows[0].id,
+  };
+}
+
+async function cleanupPlatformWithdrawalFixture(admin, fixture) {
+  if (fixture.withdrawalId)
+    await admin.query('delete from platform_withdrawals where id = $1', [fixture.withdrawalId]);
+  if (fixture.pendingActionId)
+    await admin.query('delete from admin_pending_actions where id = $1', [fixture.pendingActionId]);
+  if (fixture.secondAdminId) {
+    await admin.query('delete from admin_user_roles where admin_user_id = $1', [
+      fixture.secondAdminId,
+    ]);
+    await admin.query('alter table admin_audit_log disable trigger admin_audit_log_no_delete');
+    await admin.query('delete from admin_audit_log where admin_user_id = $1', [
+      fixture.secondAdminId,
+    ]);
+    await admin.query('alter table admin_audit_log enable trigger admin_audit_log_no_delete');
+    await admin.query('delete from admin_users where id = $1', [fixture.secondAdminId]);
+  }
+  await admin.query('begin');
+  try {
+    await admin.query('alter table ledger_entries disable trigger ledger_entries_no_delete');
+    await admin.query('delete from ledger_entries where wallet_id = $1', [fixture.walletId]);
+    await admin.query('alter table ledger_entries enable trigger ledger_entries_no_delete');
+    await admin.query('commit');
+  } catch (e) {
+    await admin.query('rollback');
+    throw e;
+  }
+  await admin.query('delete from wallets where id = $1', [fixture.walletId]);
+  await admin.query('delete from platform_bank_accounts where id = $1', [fixture.bankAccountId]);
+}
+
+async function testTransferWebhooksCompletePlatformWithdrawals(admin) {
+  const completedFixture = await seedPlatformWithdrawalFixture(admin, { amountMinor: 1000 });
+  const completedTransferId = `trf_qa_${crypto.randomUUID()}`;
+  const completedEventId = `transfer.completed:${completedTransferId}`;
+
+  try {
+    const completed = await postWebhook({
+      event: 'transfer.completed',
+      data: {
+        id: completedTransferId,
+        reference: completedFixture.withdrawalId,
+        status: 'SUCCESSFUL',
+      },
+    });
+    log(
+      'transfer.completed for a platform_withdrawals reference (not in withdrawals) -> 200 processed via the fallback',
+      completed.status === 200 && completed.json?.status === 'processed',
+      JSON.stringify(completed.json),
+    );
+
+    const row = await admin.query(
+      'select status, provider_reference from platform_withdrawals where id = $1',
+      [completedFixture.withdrawalId],
+    );
+    log(
+      'the platform withdrawal is marked paid with the real provider reference, not left processing',
+      row.rows[0]?.status === 'paid' && row.rows[0]?.provider_reference === completedTransferId,
+      JSON.stringify(row.rows[0]),
+    );
+  } finally {
+    await deleteWebhookEvent(admin, completedEventId);
+    await cleanupPlatformWithdrawalFixture(admin, completedFixture);
+  }
+
+  const failedFixture = await seedPlatformWithdrawalFixture(admin, { amountMinor: 500 });
+  const failedTransferId = `trf_qa_${crypto.randomUUID()}`;
+  const failedEventId = `transfer.completed:${failedTransferId}`;
+
+  try {
+    const walletBefore = await admin.query('select balance from wallets where id = $1', [
+      failedFixture.walletId,
+    ]);
+
+    const failed = await postWebhook({
+      event: 'transfer.completed',
+      data: { id: failedTransferId, reference: failedFixture.withdrawalId, status: 'FAILED' },
+    });
+    log(
+      'transfer.completed FAILED for a platform_withdrawals reference -> 200 processed via the fallback',
+      failed.status === 200 && failed.json?.status === 'processed',
+      JSON.stringify(failed.json),
+    );
+
+    const row = await admin.query('select status from platform_withdrawals where id = $1', [
+      failedFixture.withdrawalId,
+    ]);
+    log(
+      'the platform withdrawal is marked failed',
+      row.rows[0]?.status === 'failed',
+      JSON.stringify(row.rows[0]),
+    );
+
+    const walletAfter = await admin.query('select balance from wallets where id = $1', [
+      failedFixture.walletId,
+    ]);
+    log(
+      'the debit was refunded back to the platform wallet',
+      Number(walletAfter.rows[0].balance) === Number(walletBefore.rows[0].balance) + 500,
+      `before=${walletBefore.rows[0].balance} after=${walletAfter.rows[0].balance}`,
+    );
+  } finally {
+    await deleteWebhookEvent(admin, failedEventId);
+    await cleanupPlatformWithdrawalFixture(admin, failedFixture);
+  }
+}
+
 async function main() {
   const admin = new Client({ connectionString: DB_URL, ssl: { rejectUnauthorized: false } });
   admin.on('error', (e) => process.stderr.write(`[connection error, non-fatal] ${e.message}\n`));
@@ -410,6 +590,7 @@ async function main() {
     await testChargeCompletedConfirmsTopup(admin);
     await testSignatureVerification(admin);
     await testTransferWebhooksCompleteWithdrawals(admin);
+    await testTransferWebhooksCompletePlatformWithdrawals(admin);
   } finally {
     deno.kill();
     await admin.end();

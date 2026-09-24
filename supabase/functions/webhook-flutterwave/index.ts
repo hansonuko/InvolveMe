@@ -69,6 +69,20 @@
 // *shape* now logs loudly so a future mismatch is visible in
 // `supabase functions logs webhook-flutterwave` within minutes, not
 // silently invisible for weeks the way this exact bug was.
+//
+// Admin dashboard Phase F piece 3 (docs/14-ADMIN-DASHBOARD-SCOPING.md §5):
+// a transfer.completed reference can now belong to either the user
+// withdrawals table or the admin-initiated platform_withdrawals table —
+// the same reference field, two possible owners, since
+// fn_admin_initiate_platform_withdrawal (piece 2) reuses
+// platform_withdrawals.id as the payout reference exactly like
+// fn_initiate_withdrawal already does with withdrawals.id. Handled as a
+// fallback, not a lookup-then-branch: try the existing (unchanged, proven)
+// user-withdrawal RPC first; only on its own specific
+// 'withdrawal_not_found' does this fall through to the platform-withdrawal
+// equivalent. Every existing success/failure path for a real user
+// withdrawal is untouched byte-for-byte — this only adds a second thing to
+// try when the first one says "not mine."
 
 import { serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
@@ -210,21 +224,41 @@ Deno.serve(async (req) => {
       console.error('webhook-flutterwave: marking topup failed errored:', error.message);
     }
   } else if (event === 'transfer.completed' && payload.data?.reference && status === 'successful') {
-    const withdrawalId = payload.data.reference;
+    const reference = payload.data.reference;
     const { error } = await db.rpc('fn_complete_withdrawal', {
-      p_withdrawal_id: withdrawalId,
+      p_withdrawal_id: reference,
       p_provider_ref: providerRef,
     });
-    if (error) {
-      console.error('webhook-flutterwave: fn_complete_withdrawal failed:', error.message);
+    if (!error) {
+      runInBackground(() => notifyWithdrawalCompleted(db, reference));
+    } else if (error.message.includes('withdrawal_not_found')) {
+      const { error: platformError } = await db.rpc('fn_admin_complete_platform_withdrawal', {
+        p_platform_withdrawal_id: reference,
+        p_provider_reference: providerRef,
+      });
+      if (platformError) {
+        console.error(
+          'webhook-flutterwave: reference matched neither withdrawals nor platform_withdrawals (fn_admin_complete_platform_withdrawal failed):',
+          platformError.message,
+        );
+      }
     } else {
-      runInBackground(() => notifyWithdrawalCompleted(db, withdrawalId));
+      console.error('webhook-flutterwave: fn_complete_withdrawal failed:', error.message);
     }
   } else if (event === 'transfer.completed' && payload.data?.reference) {
-    const { error } = await db.rpc('fn_fail_withdrawal', {
-      p_withdrawal_id: payload.data.reference,
-    });
-    if (error) {
+    const reference = payload.data.reference;
+    const { error } = await db.rpc('fn_fail_withdrawal', { p_withdrawal_id: reference });
+    if (error && error.message.includes('withdrawal_not_found')) {
+      const { error: platformError } = await db.rpc('fn_admin_fail_platform_withdrawal', {
+        p_platform_withdrawal_id: reference,
+      });
+      if (platformError) {
+        console.error(
+          'webhook-flutterwave: reference matched neither withdrawals nor platform_withdrawals (fn_admin_fail_platform_withdrawal failed):',
+          platformError.message,
+        );
+      }
+    } else if (error) {
       console.error('webhook-flutterwave: fn_fail_withdrawal failed:', error.message);
     }
   } else {
