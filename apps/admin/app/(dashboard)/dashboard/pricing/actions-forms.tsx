@@ -1,19 +1,28 @@
 'use client';
 
 import { useActionState, useState } from 'react';
-import { updatePricingConfigAction, type PricingActionState } from '@/app/actions/pricing';
+import {
+  updatePricingConfigAction,
+  proposePricingConfigChangeAction,
+  type PricingActionState,
+} from '@/app/actions/pricing';
 
 export function PricingConfigForm({
   configKey,
   currency,
   currentValue,
+  isMaterial,
 }: {
   configKey: string;
   currency: string;
   currentValue: number;
+  isMaterial: boolean;
 }) {
+  // _bps keys propose a dual-approved change instead of applying directly
+  // (docs/14 §4.2/§4.4, Phase E piece 2) — same form, different action and
+  // button copy, so this isn't two near-duplicate components.
   const [state, formAction, pending] = useActionState<PricingActionState, FormData>(
-    updatePricingConfigAction,
+    isMaterial ? proposePricingConfigChangeAction : updatePricingConfigAction,
     null,
   );
   const [value, setValue] = useState(String(currentValue));
@@ -36,7 +45,7 @@ export function PricingConfigForm({
           disabled={pending || value === String(currentValue) || value.trim() === ''}
           className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-40"
         >
-          Save
+          {isMaterial ? 'Propose change' : 'Save'}
         </button>
       </div>
       {state && 'error' in state && (
