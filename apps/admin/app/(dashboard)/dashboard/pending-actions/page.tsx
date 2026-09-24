@@ -30,6 +30,7 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   platform_bank_account_registration: 'Platform bank account registration',
   platform_withdrawal: 'Platform treasury withdrawal',
   message_pricing_strategy_change: 'Message pricing strategy change',
+  admin_account_status_change: 'Admin account status change',
 };
 
 const MESSAGE_PRICING_STRATEGY_LABELS: Record<string, string> = {
@@ -83,7 +84,14 @@ export default async function PendingActionsPage({
   const adminIds = Array.from(
     new Set(
       pageRows
-        .flatMap((r) => [r.requested_by, r.approved_by, r.rejected_by])
+        .flatMap((r) => [
+          r.requested_by,
+          r.approved_by,
+          r.rejected_by,
+          r.action_type === 'admin_account_status_change'
+            ? (r.payload.target_admin_id as string | undefined)
+            : undefined,
+        ])
         .filter((v): v is string => !!v),
     ),
   );
@@ -180,6 +188,10 @@ export default async function PendingActionsPage({
     if (row.action_type === 'message_pricing_strategy_change') {
       const strategy = String(row.payload.active_strategy ?? '');
       return `${row.payload.currency}: switch to ${MESSAGE_PRICING_STRATEGY_LABELS[strategy] ?? strategy}`;
+    }
+    if (row.action_type === 'admin_account_status_change') {
+      const target = adminLabel(String(row.payload.target_admin_id ?? ''));
+      return `${target}: ${row.payload.disable ? 'disable account' : 'reactivate account'}`;
     }
     return JSON.stringify(row.payload);
   }
