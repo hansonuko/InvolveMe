@@ -11,6 +11,7 @@
     "create-first-admin": "node --env-file=.env.local --import tsx scripts/create-first-admin.ts"
   },
   "dependencies": {
+    "@involveme/payments": "*",
     "@supabase/supabase-js": "^2.49.4",
     "jose": "^5.9.6",
     "next": "^15.1.6",

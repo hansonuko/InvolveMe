@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentAdmin, checkPermission } from '@/lib/auth';
 import { db } from '@/lib/supabase-admin';
 import { encodeCursor, decodeCursor, cursorFilter } from '@/lib/pagination';
-import { formatWalletAmount, WALLET_KIND_LABELS } from '@/lib/money';
+import { formatWalletAmount, formatKobo, WALLET_KIND_LABELS } from '@/lib/money';
 import { pricingValueHint } from '@/lib/pricingCategories';
 import { ApproveForm, RejectForm, ApplyForm } from './actions-forms';
 
@@ -27,6 +27,8 @@ type PendingAction = {
 const ACTION_TYPE_LABELS: Record<string, string> = {
   pricing_config_update: 'Pricing config change',
   manual_ledger_adjustment: 'Manual ledger adjustment',
+  platform_bank_account_registration: 'Platform bank account registration',
+  platform_withdrawal: 'Platform treasury withdrawal',
 };
 
 export default async function PendingActionsPage({
@@ -104,6 +106,24 @@ export default async function PendingActionsPage({
     : { data: [] as { id: string; display_name: string | null; phone: string | null }[] };
   const walletUserById = new Map((walletUsers ?? []).map((u) => [u.id, u]));
 
+  const bankAccountIds = Array.from(
+    new Set(
+      pageRows
+        .filter((r) => r.action_type === 'platform_withdrawal')
+        .map((r) => r.payload.platform_bank_account_id as string)
+        .filter(Boolean),
+    ),
+  );
+  const { data: bankAccountsForWithdrawals } = bankAccountIds.length
+    ? await db()
+        .from('platform_bank_accounts')
+        .select('id, bank_name, account_number_last4')
+        .in('id', bankAccountIds)
+    : { data: [] as { id: string; bank_name: string; account_number_last4: string }[] };
+  const bankAccountByIdForWithdrawals = new Map(
+    (bankAccountsForWithdrawals ?? []).map((b) => [b.id, b]),
+  );
+
   function adminLabel(id: string | null): string {
     if (!id) return '—';
     return adminEmailById.get(id) ?? id;
@@ -135,6 +155,20 @@ export default async function PendingActionsPage({
       return `${userLabel ? `${userLabel} — ` : ''}${walletLabel}: ${signed}${
         row.payload.note ? ` — "${row.payload.note}"` : ''
       }`;
+    }
+    if (row.action_type === 'platform_bank_account_registration') {
+      return `${row.payload.bank_name} •••• ${row.payload.account_number_last4} (${row.payload.currency}) — ${row.payload.account_name}${
+        row.payload.label ? ` — ${row.payload.label}` : ''
+      }`;
+    }
+    if (row.action_type === 'platform_withdrawal') {
+      const bankAccount = bankAccountByIdForWithdrawals.get(
+        row.payload.platform_bank_account_id as string,
+      );
+      const destination = bankAccount
+        ? `${bankAccount.bank_name} •••• ${bankAccount.account_number_last4}`
+        : 'unknown account';
+      return `${formatKobo(Number(row.payload.amount_minor), String(row.payload.currency))} → ${destination}`;
     }
     return JSON.stringify(row.payload);
   }
