@@ -89,12 +89,20 @@ export default async function PricingPage() {
             before it applies.
           </p>
         </div>
-        <Link
-          href="/dashboard/pricing/history"
-          className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)] hover:underline"
-        >
-          Change history →
-        </Link>
+        <div className="flex flex-col items-end gap-1">
+          <Link
+            href="/dashboard/pricing/services"
+            className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)] hover:underline"
+          >
+            Service pricing →
+          </Link>
+          <Link
+            href="/dashboard/pricing/history"
+            className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)] hover:underline"
+          >
+            Change history →
+          </Link>
+        </div>
       </div>
 
       {error && (
