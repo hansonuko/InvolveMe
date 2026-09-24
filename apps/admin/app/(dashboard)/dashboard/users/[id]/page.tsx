@@ -171,7 +171,9 @@ export default async function UserDetailPage({
               <p className="mt-1 text-lg font-semibold text-[var(--foreground)]">
                 {formatWalletAmount(w.balance, w.kind, w.currency)}
               </p>
-              {w.is_frozen && <p className="mt-1 text-xs font-medium text-red-400">Frozen</p>}
+              {w.is_frozen && (
+                <p className="mt-1 text-xs font-medium text-[var(--danger)]">Frozen</p>
+              )}
               {canFreezeWallets && (
                 <form action={setWalletFrozenAction} className="mt-2">
                   <input type="hidden" name="wallet_id" value={w.id} />
@@ -319,7 +321,7 @@ export default async function UserDetailPage({
             </select>
             <button
               type="submit"
-              className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white"
+              className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)]"
             >
               Filter
             </button>
@@ -327,7 +329,9 @@ export default async function UserDetailPage({
         </div>
 
         {ledgerError && (
-          <p className="mt-2 text-sm text-red-400">Could not load transactions: {ledgerError}</p>
+          <p className="mt-2 text-sm text-[var(--danger)]">
+            Could not load transactions: {ledgerError}
+          </p>
         )}
 
         <table className="mt-3 w-full text-left text-sm text-[var(--foreground)]">
@@ -375,7 +379,7 @@ export default async function UserDetailPage({
               ...(reasonFilter ? { reason: reasonFilter } : {}),
               cursor: nextCursor,
             }).toString()}`}
-            className="mt-4 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
+            className="mt-4 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--on-accent)]"
           >
             Next page
           </Link>

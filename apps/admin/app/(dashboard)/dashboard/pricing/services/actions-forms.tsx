@@ -34,14 +34,14 @@ export function ServiceToggleForm({
         disabled={pending}
         className={
           nextValue === 1
-            ? 'rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-40'
+            ? 'rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] disabled:opacity-40'
             : 'rounded border border-[var(--border)] px-3 py-1 text-xs text-[var(--foreground)]/80 hover:text-[var(--foreground)] disabled:opacity-40'
         }
       >
         {nextValue === 1 ? 'Enable' : 'Disable'}
       </button>
       {state && 'error' in state && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}

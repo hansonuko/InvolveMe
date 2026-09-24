@@ -45,7 +45,9 @@ export default async function UserLocationStatsPage() {
       </p>
 
       {error && (
-        <p className="mt-4 text-sm text-red-400">Could not load location stats: {error.message}</p>
+        <p className="mt-4 text-sm text-[var(--danger)]">
+          Could not load location stats: {error.message}
+        </p>
       )}
 
       {!error && (

@@ -117,14 +117,14 @@ export default async function UserReportsPage({
         </select>
         <button
           type="submit"
-          className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white"
+          className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--on-accent)]"
         >
           Filter
         </button>
       </form>
 
       {reportsError && (
-        <p className="mt-4 text-sm text-red-400">
+        <p className="mt-4 text-sm text-[var(--danger)]">
           Could not load user reports: {reportsError.message}
         </p>
       )}
@@ -186,7 +186,7 @@ export default async function UserReportsPage({
       {nextCursor && (
         <Link
           href={`/dashboard/user-reports?${new URLSearchParams({ ...baseParams, cursor: nextCursor }).toString()}`}
-          className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
+          className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--on-accent)]"
         >
           Next page
         </Link>

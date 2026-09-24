@@ -89,7 +89,7 @@ export default async function MessagePricingStrategyPage() {
       </p>
 
       {strategyError && (
-        <p className="mt-4 text-sm text-red-400">
+        <p className="mt-4 text-sm text-[var(--danger)]">
           Could not load message pricing strategy: {strategyError.message}
         </p>
       )}

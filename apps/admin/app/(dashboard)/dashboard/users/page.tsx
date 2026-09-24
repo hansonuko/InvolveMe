@@ -102,7 +102,9 @@ export default async function UsersListPage({
         ) : null}
       </p>
 
-      {error && <p className="mt-4 text-sm text-red-400">Could not load users: {error.message}</p>}
+      {error && (
+        <p className="mt-4 text-sm text-[var(--danger)]">Could not load users: {error.message}</p>
+      )}
 
       <div className="mt-6 overflow-x-auto">
         <table className="w-full text-left text-sm text-[var(--foreground)]">
@@ -147,7 +149,7 @@ export default async function UsersListPage({
       {nextCursor && (
         <Link
           href={`/dashboard/users?${new URLSearchParams({ ...(q ? { q } : {}), cursor: nextCursor }).toString()}`}
-          className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
+          className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--on-accent)]"
         >
           Next page
         </Link>

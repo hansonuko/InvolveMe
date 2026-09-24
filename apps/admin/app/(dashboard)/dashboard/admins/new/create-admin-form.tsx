@@ -62,7 +62,7 @@ export function CreateAdminForm({ roles }: { roles: Role[] }) {
       </fieldset>
 
       {state && 'error' in state && (
-        <p className="mt-4 text-sm text-red-400" role="alert">
+        <p className="mt-4 text-sm text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}
@@ -70,7 +70,7 @@ export function CreateAdminForm({ roles }: { roles: Role[] }) {
       <button
         type="submit"
         disabled={pending}
-        className="mt-6 rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+        className="mt-6 rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--on-accent)] disabled:opacity-60"
       >
         {pending ? 'Creating…' : 'Create admin'}
       </button>

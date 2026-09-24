@@ -39,7 +39,7 @@ export default function LoginPage() {
         />
 
         {state && 'error' in state && (
-          <p className="mt-4 text-sm text-red-400" role="alert">
+          <p className="mt-4 text-sm text-[var(--danger)]" role="alert">
             {state.error}
           </p>
         )}
@@ -47,7 +47,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={pending}
-          className="mt-6 w-full rounded bg-[var(--accent)] py-2 text-sm font-medium text-white disabled:opacity-60"
+          className="mt-6 w-full rounded bg-[var(--accent)] py-2 text-sm font-medium text-[var(--on-accent)] disabled:opacity-60"
         >
           {pending ? 'Signing in…' : 'Sign in'}
         </button>

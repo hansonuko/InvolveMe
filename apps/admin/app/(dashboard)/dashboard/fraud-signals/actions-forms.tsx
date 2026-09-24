@@ -39,13 +39,13 @@ export function ResolveForm({ signalId }: { signalId: string }) {
           name="resolution"
           value="escalated"
           disabled={pending}
-          className="rounded bg-red-500/80 px-3 py-1 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-60"
+          className="rounded bg-[var(--danger)]/80 px-3 py-1 text-xs font-medium text-[var(--on-accent)] hover:bg-[var(--danger)]/90 disabled:opacity-60"
         >
           Escalate
         </button>
       </div>
       {state && 'error' in state && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}
@@ -70,12 +70,12 @@ export function FreezeForm({ userId }: { userId: string }) {
       <button
         type="submit"
         disabled={pending}
-        className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-60"
+        className="rounded bg-[var(--danger)] px-3 py-1 text-xs font-medium text-[var(--on-accent)] hover:bg-[var(--danger)]/90 disabled:opacity-60"
       >
         Freeze user&apos;s wallets
       </button>
       {state && 'error' in state && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--danger)]" role="alert">
           {state.error}
         </p>
       )}

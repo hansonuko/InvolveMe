@@ -112,7 +112,9 @@ export default async function PricingPage() {
       </div>
 
       {error && (
-        <p className="mt-4 text-sm text-red-400">Could not load pricing config: {error.message}</p>
+        <p className="mt-4 text-sm text-[var(--danger)]">
+          Could not load pricing config: {error.message}
+        </p>
       )}
 
       <div className="mt-6 space-y-8">
