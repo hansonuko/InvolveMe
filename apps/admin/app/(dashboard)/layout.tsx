@@ -33,6 +33,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
                 Users
               </Link>
             )}
+            {canViewUsers && (
+              <Link
+                href="/dashboard/users/analytics"
+                className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)]"
+              >
+                Location stats
+              </Link>
+            )}
             {canViewTreasury && (
               <Link
                 href="/dashboard/treasury"
