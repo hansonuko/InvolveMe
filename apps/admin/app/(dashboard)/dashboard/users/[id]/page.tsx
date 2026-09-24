@@ -216,32 +216,34 @@ export default async function UserDetailPage({
         {(kycRecords ?? []).length === 0 ? (
           <p className="mt-2 text-sm text-[var(--foreground)]/60">No KYC records.</p>
         ) : (
-          <table className="mt-3 w-full text-left text-sm text-[var(--foreground)]">
-            <thead>
-              <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
-                <th className="pb-2 pr-4 font-medium">Tier</th>
-                <th className="pb-2 pr-4 font-medium">Provider</th>
-                <th className="pb-2 pr-4 font-medium">Status</th>
-                <th className="pb-2 pr-4 font-medium">Verified</th>
-                <th className="pb-2 font-medium">Expires</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(kycRecords ?? []).map((k) => (
-                <tr key={k.id} className="border-b border-[var(--border)]/50">
-                  <td className="py-2 pr-4">{k.tier}</td>
-                  <td className="py-2 pr-4">{k.provider ?? '—'}</td>
-                  <td className="py-2 pr-4">{k.status}</td>
-                  <td className="py-2 pr-4">
-                    {k.verified_at ? new Date(k.verified_at).toLocaleDateString() : '—'}
-                  </td>
-                  <td className="py-2">
-                    {k.expires_at ? new Date(k.expires_at).toLocaleDateString() : '—'}
-                  </td>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm text-[var(--foreground)]">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
+                  <th className="pb-2 pr-4 font-medium">Tier</th>
+                  <th className="pb-2 pr-4 font-medium">Provider</th>
+                  <th className="pb-2 pr-4 font-medium">Status</th>
+                  <th className="pb-2 pr-4 font-medium">Verified</th>
+                  <th className="pb-2 font-medium">Expires</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(kycRecords ?? []).map((k) => (
+                  <tr key={k.id} className="border-b border-[var(--border)]/50">
+                    <td className="py-2 pr-4">{k.tier}</td>
+                    <td className="py-2 pr-4">{k.provider ?? '—'}</td>
+                    <td className="py-2 pr-4">{k.status}</td>
+                    <td className="py-2 pr-4">
+                      {k.verified_at ? new Date(k.verified_at).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="py-2">
+                      {k.expires_at ? new Date(k.expires_at).toLocaleDateString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -250,26 +252,28 @@ export default async function UserDetailPage({
         {(bankAccounts ?? []).length === 0 ? (
           <p className="mt-2 text-sm text-[var(--foreground)]/60">No bank account linked.</p>
         ) : (
-          <table className="mt-3 w-full text-left text-sm text-[var(--foreground)]">
-            <thead>
-              <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
-                <th className="pb-2 pr-4 font-medium">Bank</th>
-                <th className="pb-2 pr-4 font-medium">Account</th>
-                <th className="pb-2 pr-4 font-medium">Name on account</th>
-                <th className="pb-2 font-medium">Name match verified</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(bankAccounts ?? []).map((b) => (
-                <tr key={b.id} className="border-b border-[var(--border)]/50">
-                  <td className="py-2 pr-4">{b.bank_name ?? '—'}</td>
-                  <td className="py-2 pr-4">•••• {b.account_number_last4 ?? '????'}</td>
-                  <td className="py-2 pr-4">{b.account_name ?? '—'}</td>
-                  <td className="py-2">{b.name_match_verified ? 'Yes' : 'No'}</td>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm text-[var(--foreground)]">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
+                  <th className="pb-2 pr-4 font-medium">Bank</th>
+                  <th className="pb-2 pr-4 font-medium">Account</th>
+                  <th className="pb-2 pr-4 font-medium">Name on account</th>
+                  <th className="pb-2 font-medium">Name match verified</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(bankAccounts ?? []).map((b) => (
+                  <tr key={b.id} className="border-b border-[var(--border)]/50">
+                    <td className="py-2 pr-4">{b.bank_name ?? '—'}</td>
+                    <td className="py-2 pr-4">•••• {b.account_number_last4 ?? '????'}</td>
+                    <td className="py-2 pr-4">{b.account_name ?? '—'}</td>
+                    <td className="py-2">{b.name_match_verified ? 'Yes' : 'No'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -278,28 +282,30 @@ export default async function UserDetailPage({
         {(withdrawals ?? []).length === 0 ? (
           <p className="mt-2 text-sm text-[var(--foreground)]/60">No withdrawals.</p>
         ) : (
-          <table className="mt-3 w-full text-left text-sm text-[var(--foreground)]">
-            <thead>
-              <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
-                <th className="pb-2 pr-4 font-medium">Amount</th>
-                <th className="pb-2 pr-4 font-medium">Fee</th>
-                <th className="pb-2 pr-4 font-medium">Status</th>
-                <th className="pb-2 pr-4 font-medium">Triggered by</th>
-                <th className="pb-2 font-medium">Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(withdrawals ?? []).map((w) => (
-                <tr key={w.id} className="border-b border-[var(--border)]/50">
-                  <td className="py-2 pr-4">{formatKobo(w.amount_kobo)}</td>
-                  <td className="py-2 pr-4">{formatKobo(w.platform_fee_kobo)}</td>
-                  <td className="py-2 pr-4">{w.status}</td>
-                  <td className="py-2 pr-4">{w.triggered_by}</td>
-                  <td className="py-2">{new Date(w.created_at).toLocaleDateString()}</td>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm text-[var(--foreground)]">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
+                  <th className="pb-2 pr-4 font-medium">Amount</th>
+                  <th className="pb-2 pr-4 font-medium">Fee</th>
+                  <th className="pb-2 pr-4 font-medium">Status</th>
+                  <th className="pb-2 pr-4 font-medium">Triggered by</th>
+                  <th className="pb-2 font-medium">Date</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(withdrawals ?? []).map((w) => (
+                  <tr key={w.id} className="border-b border-[var(--border)]/50">
+                    <td className="py-2 pr-4">{formatKobo(w.amount_kobo)}</td>
+                    <td className="py-2 pr-4">{formatKobo(w.platform_fee_kobo)}</td>
+                    <td className="py-2 pr-4">{w.status}</td>
+                    <td className="py-2 pr-4">{w.triggered_by}</td>
+                    <td className="py-2">{new Date(w.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -334,44 +340,46 @@ export default async function UserDetailPage({
           </p>
         )}
 
-        <table className="mt-3 w-full text-left text-sm text-[var(--foreground)]">
-          <thead>
-            <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
-              <th className="pb-2 pr-4 font-medium">Reason</th>
-              <th className="pb-2 pr-4 font-medium">Wallet</th>
-              <th className="pb-2 pr-4 font-medium">Amount</th>
-              <th className="pb-2 pr-4 font-medium">Reference</th>
-              <th className="pb-2 font-medium">Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ledgerRows.map((entry) => {
-              const kind = walletKindById.get(entry.wallet_id) ?? '';
-              return (
-                <tr key={entry.id} className="border-b border-[var(--border)]/50">
-                  <td className="py-2 pr-4">{reasonLabel(entry.reason)}</td>
-                  <td className="py-2 pr-4">{WALLET_KIND_LABELS[kind] ?? kind}</td>
-                  <td className="py-2 pr-4">
-                    {formatWalletAmount(entry.amount, kind, entry.currency)}
-                  </td>
-                  <td className="py-2 pr-4 text-xs text-[var(--foreground)]/60">
-                    {entry.ref_type ? `${entry.ref_type}` : '—'}
-                  </td>
-                  <td className="py-2 text-[var(--foreground)]/60">
-                    {new Date(entry.created_at).toLocaleString()}
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-sm text-[var(--foreground)]">
+            <thead>
+              <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
+                <th className="pb-2 pr-4 font-medium">Reason</th>
+                <th className="pb-2 pr-4 font-medium">Wallet</th>
+                <th className="pb-2 pr-4 font-medium">Amount</th>
+                <th className="pb-2 pr-4 font-medium">Reference</th>
+                <th className="pb-2 font-medium">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledgerRows.map((entry) => {
+                const kind = walletKindById.get(entry.wallet_id) ?? '';
+                return (
+                  <tr key={entry.id} className="border-b border-[var(--border)]/50">
+                    <td className="py-2 pr-4">{reasonLabel(entry.reason)}</td>
+                    <td className="py-2 pr-4">{WALLET_KIND_LABELS[kind] ?? kind}</td>
+                    <td className="py-2 pr-4">
+                      {formatWalletAmount(entry.amount, kind, entry.currency)}
+                    </td>
+                    <td className="py-2 pr-4 text-xs text-[var(--foreground)]/60">
+                      {entry.ref_type ? `${entry.ref_type}` : '—'}
+                    </td>
+                    <td className="py-2 text-[var(--foreground)]/60">
+                      {new Date(entry.created_at).toLocaleString()}
+                    </td>
+                  </tr>
+                );
+              })}
+              {ledgerRows.length === 0 && !ledgerError && (
+                <tr>
+                  <td colSpan={5} className="py-6 text-center text-[var(--foreground)]/60">
+                    No transactions match.
                   </td>
                 </tr>
-              );
-            })}
-            {ledgerRows.length === 0 && !ledgerError && (
-              <tr>
-                <td colSpan={5} className="py-6 text-center text-[var(--foreground)]/60">
-                  No transactions match.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
 
         {nextCursor && (
           <Link
