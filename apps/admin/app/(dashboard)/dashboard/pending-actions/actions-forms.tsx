@@ -108,6 +108,35 @@ export function ApplyForm({
           <input type="hidden" name="note" value={String(payload.note ?? '')} />
         </>
       )}
+      {actionType === 'platform_bank_account_registration' && (
+        <>
+          <input type="hidden" name="currency" value={String(payload.currency ?? '')} />
+          <input type="hidden" name="bank_name" value={String(payload.bank_name ?? '')} />
+          <input
+            type="hidden"
+            name="account_number_last4"
+            value={String(payload.account_number_last4 ?? '')}
+          />
+          <input
+            type="hidden"
+            name="provider_account_id"
+            value={String(payload.provider_account_id ?? '')}
+          />
+          <input type="hidden" name="account_name" value={String(payload.account_name ?? '')} />
+          <input type="hidden" name="label" value={String(payload.label ?? '')} />
+        </>
+      )}
+      {actionType === 'platform_withdrawal' && (
+        <>
+          <input type="hidden" name="currency" value={String(payload.currency ?? '')} />
+          <input type="hidden" name="amount_minor" value={String(payload.amount_minor ?? '')} />
+          <input
+            type="hidden"
+            name="platform_bank_account_id"
+            value={String(payload.platform_bank_account_id ?? '')}
+          />
+        </>
+      )}
       <button
         type="submit"
         disabled={pending}

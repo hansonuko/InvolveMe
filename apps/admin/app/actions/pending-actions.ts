@@ -3,6 +3,8 @@
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/supabase-admin';
 import { getCurrentAdmin } from '@/lib/auth';
+import { loadFlutterwaveConfig } from '@/lib/flutterwave';
+import { createFlutterwaveProvider } from '@involveme/payments';
 
 export type PendingActionState = { error: string } | null;
 
@@ -53,6 +55,27 @@ function friendlyError(message: string): string {
   }
   if (message.includes('pricing_config_key_not_found')) {
     return 'That config key no longer exists.';
+  }
+  if (message.includes('note_required')) {
+    return 'A note explaining the adjustment is required.';
+  }
+  if (message.includes('invalid_amount')) {
+    return 'Amount must be a nonzero whole number.';
+  }
+  if (message.includes('bank_account_inactive')) {
+    return 'That bank account has been deactivated — pick an active one.';
+  }
+  if (message.includes('bank_account_currency_mismatch')) {
+    return "That bank account's currency does not match this withdrawal.";
+  }
+  if (message.includes('bank_account_not_found')) {
+    return 'That bank account no longer exists.';
+  }
+  if (message.includes('insufficient_platform_revenue')) {
+    return 'The platform revenue wallet does not hold enough to cover this withdrawal.';
+  }
+  if (message.includes('insufficient_platform_earnings_balance')) {
+    return 'The platform earnings-cut wallet does not hold enough credits to convert.';
   }
   return 'Could not complete that action.';
 }
@@ -138,8 +161,120 @@ export async function applyPendingActionAction(
       p_note: note,
     });
     if (error) return { error: friendlyError(error.message) };
+  } else if (actionType === 'platform_bank_account_registration') {
+    const currency = String(formData.get('currency') ?? '');
+    const bankName = String(formData.get('bank_name') ?? '');
+    const accountNumberLast4 = String(formData.get('account_number_last4') ?? '');
+    const providerAccountId = String(formData.get('provider_account_id') ?? '');
+    const accountName = String(formData.get('account_name') ?? '');
+    const label = String(formData.get('label') ?? '');
+    if (!currency || !bankName || !accountNumberLast4 || !providerAccountId || !accountName) {
+      return { error: 'Invalid request.' };
+    }
+
+    const { error } = await db().rpc('fn_admin_register_platform_bank_account', {
+      p_actor_admin_id: admin.id,
+      p_pending_action_id: pendingActionId,
+      p_currency: currency,
+      p_bank_name: bankName,
+      p_account_number_last4: accountNumberLast4,
+      p_provider_account_id: providerAccountId,
+      p_account_name: accountName,
+      p_label: label || null,
+    });
+    if (error) return { error: friendlyError(error.message) };
+  } else if (actionType === 'platform_withdrawal') {
+    return applyPlatformWithdrawal(admin.id, pendingActionId, formData);
   } else {
     return { error: 'Unknown action type.' };
+  }
+
+  redirect('/dashboard/pending-actions');
+}
+
+// Separated out from applyPendingActionAction proper (rather than inlined
+// like every other branch) because this is the one branch that actually
+// calls a real payment provider — packages/payments' initiatePayout(),
+// against production Flutterwave — and needs its own multi-step
+// RPC / provider-call / compensating-RPC shape, mirroring
+// supabase/functions/withdraw/index.ts exactly rather than a single RPC
+// call like every sibling branch above. Never scripted/automated-tested
+// end-to-end against a real provider for exactly that reason — reviewed
+// carefully against that proven, live pattern instead.
+async function applyPlatformWithdrawal(
+  adminId: string,
+  pendingActionId: string,
+  formData: FormData,
+): Promise<PendingActionState> {
+  const currency = String(formData.get('currency') ?? '');
+  const rawAmount = String(formData.get('amount_minor') ?? '');
+  const bankAccountId = String(formData.get('platform_bank_account_id') ?? '');
+  if (!currency || !/^\d+$/.test(rawAmount) || !bankAccountId) {
+    return { error: 'Invalid request.' };
+  }
+  const amountMinor = Number(rawAmount);
+
+  // Step 1: the debit. Same shape as fn_initiate_withdrawal — money leaves
+  // the platform's own wallet here, before the provider is ever called.
+  const { data: withdrawalId, error: initiateError } = await db().rpc(
+    'fn_admin_initiate_platform_withdrawal',
+    {
+      p_actor_admin_id: adminId,
+      p_pending_action_id: pendingActionId,
+      p_currency: currency,
+      p_amount_minor: amountMinor,
+      p_platform_bank_account_id: bankAccountId,
+    },
+  );
+  if (initiateError) return { error: friendlyError(initiateError.message) };
+
+  // Step 2: resolve the real payout destination server-side — never trust
+  // a client-passed provider_account_id for the actual money movement,
+  // even though fn_admin_initiate_platform_withdrawal already validated
+  // the bank account's currency/active status above.
+  const { data: bankAccount, error: bankAccountError } = await db()
+    .from('platform_bank_accounts')
+    .select('provider_account_id')
+    .eq('id', bankAccountId)
+    .single();
+
+  if (bankAccountError || !bankAccount) {
+    // The debit already happened and is now stranded exactly like
+    // withdraw/index.ts's own documented "debit succeeded, nothing else
+    // did" case — fail it the same way rather than leaving it processing
+    // forever with no provider call ever attempted.
+    await db().rpc('fn_admin_fail_platform_withdrawal', {
+      p_platform_withdrawal_id: withdrawalId,
+    });
+    return { error: 'Could not resolve the payout destination. The debit has been reversed.' };
+  }
+
+  const provider = createFlutterwaveProvider(loadFlutterwaveConfig());
+
+  try {
+    await provider.initiatePayout({
+      amountKobo: amountMinor,
+      recipientId: bankAccount.provider_account_id,
+      reference: withdrawalId,
+    });
+  } catch (e) {
+    console.error('applyPlatformWithdrawal: provider.initiatePayout failed:', e);
+    const { error: failError } = await db().rpc('fn_admin_fail_platform_withdrawal', {
+      p_platform_withdrawal_id: withdrawalId,
+    });
+    if (failError) {
+      // Same escalate-loudly posture as withdraw/index.ts: no automatic
+      // recovery path exists for a stranded debit, so this is worth a
+      // real log line, not a silently swallowed second failure.
+      console.error(
+        'applyPlatformWithdrawal: fn_admin_fail_platform_withdrawal ALSO failed after a provider error — debit may be stranded:',
+        failError.message,
+      );
+    }
+    return {
+      error:
+        'The withdrawal could not be processed by the payment provider right now. The debit has been reversed.',
+    };
   }
 
   redirect('/dashboard/pending-actions');
@@ -169,6 +304,33 @@ export async function proposeManualAdjustmentAction(
     p_actor_admin_id: admin.id,
     p_action_type: 'manual_ledger_adjustment',
     p_payload: { wallet_id: walletId, amount, note },
+  });
+  if (error) return { error: friendlyError(error.message) };
+
+  redirect('/dashboard/pending-actions');
+}
+
+export async function proposePlatformWithdrawalAction(
+  _prev: PendingActionState,
+  formData: FormData,
+): Promise<PendingActionState> {
+  const admin = await requireAdmin();
+  const currency = String(formData.get('currency') ?? '');
+  const rawAmount = String(formData.get('amount_minor') ?? '').trim();
+  const bankAccountId = String(formData.get('platform_bank_account_id') ?? '');
+
+  if (!currency || !bankAccountId || !/^\d+$/.test(rawAmount)) {
+    return { error: 'Enter a whole positive number of kobo and pick a destination account.' };
+  }
+  const amountMinor = Number(rawAmount);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+    return { error: 'Amount must be a positive whole number.' };
+  }
+
+  const { error } = await db().rpc('fn_admin_propose_pending_action', {
+    p_actor_admin_id: admin.id,
+    p_action_type: 'platform_withdrawal',
+    p_payload: { currency, amount_minor: amountMinor, platform_bank_account_id: bankAccountId },
   });
   if (error) return { error: friendlyError(error.message) };
 
