@@ -1,0 +1,82 @@
+@import 'tailwindcss';
+
+/*
+ * Deep Wine — mirrors docs/04-DESIGN-SYSTEM.md §1 exactly, same token
+ * names/values as apps/admin/app/globals.css and apps/mobile/theme/tokens.ts.
+ * This site has no manual theme toggle (no next-themes) — light/dark is
+ * `prefers-color-scheme` only, so there's no [data-theme] override branch.
+ */
+:root {
+  --background: #fdfff7; /* color.bg.canvas */
+  --surface: #ffffff; /* color.bg.surface */
+  --surface-alt: #ede8e3; /* color.bg.surfaceAlt */
+  --border: #f4f1eb; /* color.border.subtle */
+  --accent: #5f1b31; /* color.brand.primary — theme-invariant */
+  --accent-pressed: #471425; /* color.brand.primaryPressed — theme-invariant */
+  --foreground: #0e0407; /* color.text.primary */
+  --foreground-accent: #5f1b31; /* color.text.secondary — "accent on canvas" role */
+  --muted: #7d696f; /* color.text.tertiary */
+  --on-accent: #fdfff7; /* color.text.inverse — theme-invariant */
+  --success: #0d874e; /* color.semantic.success */
+  --danger: #d63d32; /* color.semantic.danger */
+  --warning: #aa6306; /* color.semantic.warning */
+  --credit: #f5a623; /* color.accent.credit */
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #1a1013; /* color.bg.canvas (dark) */
+    --surface: #241820; /* color.bg.surface (dark) */
+    --surface-alt: #3a2430; /* color.bg.surfaceAlt (dark) */
+    --border: #3a2a30; /* color.border.subtle (dark) */
+    --foreground: #f5ede9; /* color.text.primary (dark) */
+    --foreground-accent: #f5ede9; /* plain white in dark mode, not a lightened wine — docs/04 §1 */
+    --muted: #a8a29e; /* color.text.tertiary (dark) */
+    --success: #32d583; /* color.semantic.success (dark) */
+    --danger: #f97066; /* color.semantic.danger (dark) */
+    --warning: #fdb022; /* color.semantic.warning (dark) */
+    --credit: #ffc24d; /* color.accent.credit (dark) */
+    color-scheme: dark;
+  }
+}
+
+/* Tailwind v4 theme — generates bg-background, text-foreground-accent,
+   rounded-card, text-display, etc. from the tokens above, so components
+   reference semantic utility classes rather than hardcoded hex (CLAUDE.md
+   "Styling" convention: tokens only, never an inline hex/spacing value). */
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-foreground: var(--foreground);
+  --color-foreground-accent: var(--foreground-accent);
+  --color-muted: var(--muted);
+  --color-on-accent: var(--on-accent);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-credit: var(--credit);
+
+  /* docs/04 §3 radius scale */
+  --radius-bubble: 18px;
+  --radius-card: 16px;
+  --radius-sheet: 24px;
+  --radius-pill: 999px;
+
+  /* docs/04 §2 typography scale (sizes relevant to marketing copy) */
+  --text-brand: 30px;
+  --text-display: 28px;
+  --text-title: 22px;
+  --text-body: 17px;
+  --text-caption: 14px;
+  --text-balance: 24px;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
