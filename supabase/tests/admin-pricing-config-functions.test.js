@@ -13,6 +13,16 @@
 // rejected rather than silently no-op-ing. Uses a disposable pricing_
 // config row (key qa_test_config_key, currency QA) so nothing here ever
 // touches a real config value the app actually reads.
+//
+// Updated for Phase E piece 1 (20260923110000_admin_pricing_dual_approval_
+// and_manual_adjustment.sql): fn_admin_update_pricing_config gained a
+// trailing p_pending_action_id parameter and a real behavior change for
+// _bps keys — they now require a matching approved dual-approval row
+// instead of applying immediately. Non-bps assertions below just pass
+// null for the new parameter (unchanged behavior); the _bps assertions
+// were rewritten to reflect the new gate rather than patched around it —
+// see testBpsChangeRequiresDualApproval and the rewritten "exactly 10000"
+// case in testGuardsAndAuthorization.
 
 const { Client } = require('pg');
 const crypto = require('crypto');
@@ -98,11 +108,12 @@ async function testRealAttribution(db) {
   });
 
   try {
-    await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4)', [
+    await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
       admin,
       QA_KEY,
       QA_CURRENCY,
       250,
+      null,
     ]);
 
     const row = await db.query(
@@ -152,11 +163,12 @@ async function testTransactionLocalSettingDoesNotLeak(db) {
   });
 
   try {
-    await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4)', [
+    await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
       admin,
       QA_KEY,
       QA_CURRENCY,
       300,
+      null,
     ]);
 
     // A direct, non-function UPDATE on the same connection, in a fresh
@@ -194,11 +206,12 @@ async function testGuardsAndAuthorization(db) {
 
   try {
     try {
-      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4)', [
+      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
         unauthorized,
         QA_KEY,
         QA_CURRENCY,
         500,
+        null,
       ]);
       log(
         'support_agent cannot edit pricing_config (no edit_pricing_config)',
@@ -214,11 +227,12 @@ async function testGuardsAndAuthorization(db) {
     }
 
     try {
-      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4)', [
+      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
         authorized,
         QA_KEY,
         QA_CURRENCY,
         -5,
+        null,
       ]);
       log('a negative value is rejected', false, 'expected negative_value_not_allowed');
     } catch (e) {
@@ -226,38 +240,33 @@ async function testGuardsAndAuthorization(db) {
     }
 
     try {
-      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4)', [
+      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
         authorized,
         QA_BPS_KEY,
         QA_CURRENCY,
         15000,
+        null,
       ]);
-      log('a _bps key over 10000 is rejected', false, 'expected bps_value_out_of_range');
+      log(
+        'a _bps key over 10000 is rejected before the dual-approval gate is even reached',
+        false,
+        'expected bps_value_out_of_range',
+      );
     } catch (e) {
-      log('a _bps key over 10000 is rejected', /bps_value_out_of_range/.test(e.message), e.message);
+      log(
+        'a _bps key over 10000 is rejected before the dual-approval gate is even reached',
+        /bps_value_out_of_range/.test(e.message),
+        e.message,
+      );
     }
 
-    await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4)', [
-      authorized,
-      QA_BPS_KEY,
-      QA_CURRENCY,
-      10000,
-    ]);
-    const row = await db.query(
-      'select value from pricing_config where key = $1 and currency = $2',
-      [QA_BPS_KEY, QA_CURRENCY],
-    );
-    log(
-      'exactly 10000 (100%) is allowed, not treated as over the limit',
-      Number(row.rows[0].value) === 10000,
-    );
-
     try {
-      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4)', [
+      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
         authorized,
         'not_a_real_key',
         QA_CURRENCY,
         5,
+        null,
       ]);
       log(
         'a nonexistent key is rejected, not a silent no-op',
@@ -277,8 +286,149 @@ async function testGuardsAndAuthorization(db) {
   }
 }
 
+async function testBpsChangeRequiresDualApproval(db) {
+  const requester = await insertTestAdmin(db, {
+    email: `pricing-bps-req-${crypto.randomUUID()}@test.invalid`,
+    roleNames: ['finance_admin'],
+  });
+  const approver = await insertTestAdmin(db, {
+    email: `pricing-bps-appr-${crypto.randomUUID()}@test.invalid`,
+    roleNames: ['finance_admin'],
+  });
+  let pendingId = null;
+  let otherPendingId = null;
+
+  try {
+    try {
+      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
+        requester,
+        QA_BPS_KEY,
+        QA_CURRENCY,
+        10000,
+        null,
+      ]);
+      log(
+        'a _bps key change with no pending_action_id is rejected',
+        false,
+        'expected dual_approval_required',
+      );
+    } catch (e) {
+      log(
+        'a _bps key change with no pending_action_id is rejected',
+        /dual_approval_required/.test(e.message),
+        e.message,
+      );
+    }
+
+    const proposeRes = await db.query('select fn_admin_propose_pending_action($1, $2, $3) as id', [
+      requester,
+      'pricing_config_update',
+      JSON.stringify({ key: QA_BPS_KEY, currency: QA_CURRENCY, new_value: 10000 }),
+    ]);
+    pendingId = proposeRes.rows[0].id;
+
+    try {
+      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
+        requester,
+        QA_BPS_KEY,
+        QA_CURRENCY,
+        10000,
+        pendingId,
+      ]);
+      log(
+        'an unapproved pending action cannot be consumed to apply the change',
+        false,
+        'expected pending_action_not_approved_or_already_executed',
+      );
+    } catch (e) {
+      log(
+        'an unapproved pending action cannot be consumed to apply the change',
+        /pending_action_not_approved_or_already_executed/.test(e.message),
+        e.message,
+      );
+    }
+
+    await db.query('select fn_admin_approve_pending_action($1, $2)', [approver, pendingId]);
+
+    const otherProposeRes = await db.query(
+      'select fn_admin_propose_pending_action($1, $2, $3) as id',
+      [
+        requester,
+        'pricing_config_update',
+        JSON.stringify({ key: QA_BPS_KEY, currency: QA_CURRENCY, new_value: 9000 }),
+      ],
+    );
+    otherPendingId = otherProposeRes.rows[0].id;
+    await db.query('select fn_admin_approve_pending_action($1, $2)', [approver, otherPendingId]);
+
+    try {
+      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
+        requester,
+        QA_BPS_KEY,
+        QA_CURRENCY,
+        10000,
+        otherPendingId,
+      ]);
+      log(
+        'an approval for a different new_value cannot be reused to apply this change (payload must match)',
+        false,
+        'expected pending_action_payload_mismatch',
+      );
+    } catch (e) {
+      log(
+        'an approval for a different new_value cannot be reused to apply this change (payload must match)',
+        /pending_action_payload_mismatch/.test(e.message),
+        e.message,
+      );
+    }
+
+    await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
+      requester,
+      QA_BPS_KEY,
+      QA_CURRENCY,
+      10000,
+      pendingId,
+    ]);
+    const row = await db.query(
+      'select value from pricing_config where key = $1 and currency = $2',
+      [QA_BPS_KEY, QA_CURRENCY],
+    );
+    log(
+      'exactly 10000 (100%) applies once a matching approval is consumed, not treated as over the limit',
+      Number(row.rows[0].value) === 10000,
+    );
+
+    try {
+      await db.query('select fn_admin_update_pricing_config($1, $2, $3, $4, $5)', [
+        requester,
+        QA_BPS_KEY,
+        QA_CURRENCY,
+        10000,
+        pendingId,
+      ]);
+      log(
+        'the same approval cannot be consumed a second time to apply the change again',
+        false,
+        'expected pending_action_not_approved_or_already_executed',
+      );
+    } catch (e) {
+      log(
+        'the same approval cannot be consumed a second time to apply the change again',
+        /pending_action_not_approved_or_already_executed/.test(e.message),
+        e.message,
+      );
+    }
+  } finally {
+    if (pendingId) await db.query('delete from admin_pending_actions where id = $1', [pendingId]);
+    if (otherPendingId)
+      await db.query('delete from admin_pending_actions where id = $1', [otherPendingId]);
+    await deleteTestAdmin(db, requester);
+    await deleteTestAdmin(db, approver);
+  }
+}
+
 async function testExecuteGrantsAreLocked(db) {
-  const fn = 'fn_admin_update_pricing_config(uuid, text, text, bigint)';
+  const fn = 'fn_admin_update_pricing_config(uuid, text, text, bigint, uuid)';
   const anonRes = await db.query('select has_function_privilege($1, $2, $3) as ok', [
     'anon',
     `public.${fn}`,
@@ -311,6 +461,7 @@ async function main() {
     await testRealAttribution(admin);
     await testTransactionLocalSettingDoesNotLeak(admin);
     await testGuardsAndAuthorization(admin);
+    await testBpsChangeRequiresDualApproval(admin);
   } finally {
     await cleanupTestConfig(admin);
     await admin.end();
