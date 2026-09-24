@@ -6,6 +6,7 @@ import { encodeCursor, decodeCursor, cursorFilter } from '@/lib/pagination';
 import { formatWalletAmount, formatKobo, WALLET_KIND_LABELS } from '@/lib/money';
 import { reasonLabel, ALL_REASONS } from '@/lib/ledgerReasons';
 import { setWalletFrozenAction } from '@/app/actions/fraud';
+import { ProposeManualAdjustmentForm } from './actions-forms';
 
 const LEDGER_PAGE_SIZE = 25;
 // Per-user, inherently low-cardinality lists (docs/14 §8's "never offset
@@ -50,6 +51,7 @@ export default async function UserDetailPage({
   if (!allowed) redirect('/dashboard');
 
   const canFreezeWallets = await checkPermission(admin.id, 'resolve_fraud_signal');
+  const canProposeAdjustment = await checkPermission(admin.id, 'post_manual_adjustment');
 
   const { id } = await params;
   const { cursor: cursorParam, reason: reasonFilter } = await searchParams;
@@ -94,6 +96,23 @@ export default async function UserDetailPage({
   const walletRows = (wallets ?? []) as Wallet[];
   const walletKindById = new Map(walletRows.map((w) => [w.id, w.kind]));
   const walletIds = walletRows.map((w) => w.id);
+
+  // Bounded fetch (pending/approved-unexecuted manual adjustments are
+  // never numerous for one user) to show "already proposed" inline
+  // instead of letting a second proposal get made against the same
+  // wallet before the first is decided.
+  const { data: pendingAdjustments } = canProposeAdjustment
+    ? await db()
+        .from('admin_pending_actions')
+        .select('id, payload, status')
+        .eq('action_type', 'manual_ledger_adjustment')
+        .in('status', ['pending', 'approved'])
+    : { data: [] as { id: string; payload: { wallet_id?: string }; status: string }[] };
+  const pendingAdjustmentByWalletId = new Map(
+    (pendingAdjustments ?? [])
+      .filter((p) => walletIds.includes(p.payload?.wallet_id ?? ''))
+      .map((p) => [p.payload.wallet_id as string, p]),
+  );
 
   let ledgerRows: LedgerEntry[] = [];
   let ledgerError: string | null = null;
@@ -166,6 +185,22 @@ export default async function UserDetailPage({
                   </button>
                 </form>
               )}
+              {canProposeAdjustment &&
+                (pendingAdjustmentByWalletId.has(w.id) ? (
+                  <p className="mt-2 text-xs text-[var(--foreground)]/60">
+                    {pendingAdjustmentByWalletId.get(w.id)!.status === 'approved'
+                      ? 'Adjustment approved — ready to apply.'
+                      : 'Adjustment proposed, awaiting approval.'}{' '}
+                    <Link
+                      href="/dashboard/pending-actions"
+                      className="text-[var(--accent)] hover:underline"
+                    >
+                      View in queue →
+                    </Link>
+                  </p>
+                ) : (
+                  <ProposeManualAdjustmentForm walletId={w.id} walletKind={w.kind} />
+                ))}
             </div>
           ))}
           {walletRows.length === 0 && (
