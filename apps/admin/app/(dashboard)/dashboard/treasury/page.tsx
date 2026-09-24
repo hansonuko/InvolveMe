@@ -218,36 +218,38 @@ export default async function TreasuryPage() {
           </p>
         )}
 
-        <table className="mt-3 w-full text-left text-sm text-[var(--foreground)]">
-          <thead>
-            <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
-              <th className="pb-2 pr-4 font-medium">Day</th>
-              <th className="pb-2 pr-4 font-medium">Wallet</th>
-              <th className="pb-2 font-medium">Net change</th>
-            </tr>
-          </thead>
-          <tbody>
-            {dailyRows.map((row) => (
-              <tr
-                key={`${row.wallet_id}-${row.day}`}
-                className="border-b border-[var(--border)]/50"
-              >
-                <td className="py-2 pr-4">{new Date(row.day).toLocaleDateString()}</td>
-                <td className="py-2 pr-4">{WALLET_KIND_LABELS[row.kind] ?? row.kind}</td>
-                <td className="py-2">
-                  {formatWalletAmount(row.net_amount, row.kind, row.currency)}
-                </td>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-sm text-[var(--foreground)]">
+            <thead>
+              <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
+                <th className="pb-2 pr-4 font-medium">Day</th>
+                <th className="pb-2 pr-4 font-medium">Wallet</th>
+                <th className="pb-2 font-medium">Net change</th>
               </tr>
-            ))}
-            {dailyRows.length === 0 && !dailyError && (
-              <tr>
-                <td colSpan={3} className="py-6 text-center text-[var(--foreground)]/60">
-                  No activity in the last {DAILY_TOTALS_WINDOW_DAYS} days.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {dailyRows.map((row) => (
+                <tr
+                  key={`${row.wallet_id}-${row.day}`}
+                  className="border-b border-[var(--border)]/50"
+                >
+                  <td className="py-2 pr-4">{new Date(row.day).toLocaleDateString()}</td>
+                  <td className="py-2 pr-4">{WALLET_KIND_LABELS[row.kind] ?? row.kind}</td>
+                  <td className="py-2">
+                    {formatWalletAmount(row.net_amount, row.kind, row.currency)}
+                  </td>
+                </tr>
+              ))}
+              {dailyRows.length === 0 && !dailyError && (
+                <tr>
+                  <td colSpan={3} className="py-6 text-center text-[var(--foreground)]/60">
+                    No activity in the last {DAILY_TOTALS_WINDOW_DAYS} days.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="mt-8">
@@ -336,46 +338,48 @@ export default async function TreasuryPage() {
           </p>
         )}
 
-        <table className="mt-4 w-full text-left text-sm text-[var(--foreground)]">
-          <thead>
-            <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
-              <th className="pb-2 pr-4 font-medium">Amount</th>
-              <th className="pb-2 pr-4 font-medium">Destination</th>
-              <th className="pb-2 pr-4 font-medium">Status</th>
-              <th className="pb-2 pr-4 font-medium">Initiated by</th>
-              <th className="pb-2 font-medium">Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {withdrawalRows.map((w) => {
-              const bankAccount = bankAccountById.get(w.platform_bank_account_id);
-              return (
-                <tr key={w.id} className="border-b border-[var(--border)]/50">
-                  <td className="py-2 pr-4">{formatKobo(w.amount_minor, w.currency)}</td>
-                  <td className="py-2 pr-4 text-xs text-[var(--foreground)]/60">
-                    {bankAccount
-                      ? `${bankAccount.bank_name} •••• ${bankAccount.account_number_last4}`
-                      : '—'}
-                  </td>
-                  <td className="py-2 pr-4">{w.status}</td>
-                  <td className="py-2 pr-4 text-xs text-[var(--foreground)]/60">
-                    {adminEmailById.get(w.initiated_by_admin_id) ?? w.initiated_by_admin_id}
-                  </td>
-                  <td className="py-2 text-[var(--foreground)]/60">
-                    {new Date(w.created_at).toLocaleString()}
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-left text-sm text-[var(--foreground)]">
+            <thead>
+              <tr className="border-b border-[var(--border)] text-xs text-[var(--foreground)]/60">
+                <th className="pb-2 pr-4 font-medium">Amount</th>
+                <th className="pb-2 pr-4 font-medium">Destination</th>
+                <th className="pb-2 pr-4 font-medium">Status</th>
+                <th className="pb-2 pr-4 font-medium">Initiated by</th>
+                <th className="pb-2 font-medium">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {withdrawalRows.map((w) => {
+                const bankAccount = bankAccountById.get(w.platform_bank_account_id);
+                return (
+                  <tr key={w.id} className="border-b border-[var(--border)]/50">
+                    <td className="py-2 pr-4">{formatKobo(w.amount_minor, w.currency)}</td>
+                    <td className="py-2 pr-4 text-xs text-[var(--foreground)]/60">
+                      {bankAccount
+                        ? `${bankAccount.bank_name} •••• ${bankAccount.account_number_last4}`
+                        : '—'}
+                    </td>
+                    <td className="py-2 pr-4">{w.status}</td>
+                    <td className="py-2 pr-4 text-xs text-[var(--foreground)]/60">
+                      {adminEmailById.get(w.initiated_by_admin_id) ?? w.initiated_by_admin_id}
+                    </td>
+                    <td className="py-2 text-[var(--foreground)]/60">
+                      {new Date(w.created_at).toLocaleString()}
+                    </td>
+                  </tr>
+                );
+              })}
+              {withdrawalRows.length === 0 && !withdrawalsError && (
+                <tr>
+                  <td colSpan={5} className="py-6 text-center text-[var(--foreground)]/60">
+                    No withdrawals yet.
                   </td>
                 </tr>
-              );
-            })}
-            {withdrawalRows.length === 0 && !withdrawalsError && (
-              <tr>
-                <td colSpan={5} className="py-6 text-center text-[var(--foreground)]/60">
-                  No withdrawals yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
   );
