@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentAdmin, checkPermission } from '@/lib/auth';
 import { db } from '@/lib/supabase-admin';
 import { encodeCursor, decodeCursor, cursorFilter, sanitizeSearchTerm } from '@/lib/pagination';
+import { EXPORT_ROW_CAP } from '@/lib/csv';
 
 const PAGE_SIZE = 25;
 
@@ -45,13 +46,23 @@ export default async function UsersListPage({
     query = query.or(cursorFilter(cursor));
   }
 
-  const { data, error } = await query;
+  // Same q filter as the paginated query above, no cursor — this is a
+  // count of everything CSV export would need to fetch, checked before
+  // offering the link at all (docs/14 §8: a hard cap, never a synchronous
+  // "export everything" button that can time out or take the database
+  // with it — see lib/csv.ts's own comment for why this stays synchronous
+  // rather than the doc's literal "async job" wording).
+  let countQuery = db().from('users').select('id', { count: 'exact', head: true });
+  if (q) countQuery = countQuery.or(`phone.ilike.%${q}%,display_name.ilike.%${q}%`);
+
+  const [{ data, error }, { count: matchingCount }] = await Promise.all([query, countQuery]);
   const rows = (data ?? []) as UserRow[];
   const hasNextPage = rows.length > PAGE_SIZE;
   const pageRows = hasNextPage ? rows.slice(0, PAGE_SIZE) : rows;
   const lastRow = pageRows[pageRows.length - 1];
   const nextCursor =
     hasNextPage && lastRow ? encodeCursor({ createdAt: lastRow.created_at, id: lastRow.id }) : null;
+  const canExport = (matchingCount ?? 0) > 0 && (matchingCount ?? 0) <= EXPORT_ROW_CAP;
 
   return (
     <main className="p-8">
@@ -73,6 +84,23 @@ export default async function UsersListPage({
           className="w-full rounded border border-[var(--border)] bg-transparent px-3 py-2 text-sm text-[var(--foreground)]"
         />
       </form>
+
+      <p className="mt-3 text-xs text-[var(--foreground)]/60">
+        {canExport ? (
+          <a
+            href={`/api/export/users${q ? `?q=${encodeURIComponent(q)}` : ''}`}
+            className="text-[var(--accent)] hover:underline"
+          >
+            Export {matchingCount?.toLocaleString()} matching{' '}
+            {matchingCount === 1 ? 'user' : 'users'} to CSV →
+          </a>
+        ) : (matchingCount ?? 0) > EXPORT_ROW_CAP ? (
+          <>
+            {matchingCount?.toLocaleString()} users match — narrow your search to enable CSV export
+            (cap: {EXPORT_ROW_CAP.toLocaleString()}).
+          </>
+        ) : null}
+      </p>
 
       {error && <p className="mt-4 text-sm text-red-400">Could not load users: {error.message}</p>}
 
