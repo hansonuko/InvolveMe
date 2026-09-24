@@ -97,6 +97,12 @@ export default async function PricingPage() {
             Service pricing →
           </Link>
           <Link
+            href="/dashboard/pricing/strategy"
+            className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)] hover:underline"
+          >
+            Message pricing strategy →
+          </Link>
+          <Link
             href="/dashboard/pricing/history"
             className="text-sm text-[var(--foreground)]/70 hover:text-[var(--foreground)] hover:underline"
           >
