@@ -15,10 +15,10 @@ export default async function DashboardHomePage() {
 
       {canManageAdmins && (
         <Link
-          href="/dashboard/admins/new"
+          href="/dashboard/admins"
           className="mt-6 inline-block rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
         >
-          Create admin account
+          Manage admins
         </Link>
       )}
     </main>

@@ -77,6 +77,9 @@ function friendlyError(message: string): string {
   if (message.includes('insufficient_platform_earnings_balance')) {
     return 'The platform earnings-cut wallet does not hold enough credits to convert.';
   }
+  if (message.includes('admin_user_not_found')) {
+    return 'That admin account no longer exists.';
+  }
   return 'Could not complete that action.';
 }
 
@@ -195,6 +198,18 @@ export async function applyPendingActionAction(
       p_pending_action_id: pendingActionId,
       p_currency: currency,
       p_active_strategy: activeStrategy,
+    });
+    if (error) return { error: friendlyError(error.message) };
+  } else if (actionType === 'admin_account_status_change') {
+    const targetAdminId = String(formData.get('target_admin_id') ?? '');
+    const disable = formData.get('disable') === 'true';
+    if (!targetAdminId) return { error: 'Invalid request.' };
+
+    const { error } = await db().rpc('fn_admin_set_admin_account_status', {
+      p_actor_admin_id: admin.id,
+      p_pending_action_id: pendingActionId,
+      p_target_admin_id: targetAdminId,
+      p_disable: disable,
     });
     if (error) return { error: friendlyError(error.message) };
   } else {

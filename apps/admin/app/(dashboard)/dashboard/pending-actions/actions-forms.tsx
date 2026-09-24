@@ -147,6 +147,16 @@ export function ApplyForm({
           />
         </>
       )}
+      {actionType === 'admin_account_status_change' && (
+        <>
+          <input
+            type="hidden"
+            name="target_admin_id"
+            value={String(payload.target_admin_id ?? '')}
+          />
+          <input type="hidden" name="disable" value={payload.disable ? 'true' : 'false'} />
+        </>
+      )}
       <button
         type="submit"
         disabled={pending}

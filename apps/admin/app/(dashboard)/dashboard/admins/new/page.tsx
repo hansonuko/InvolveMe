@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentAdmin, checkPermission } from '@/lib/auth';
 import { db } from '@/lib/supabase-admin';
@@ -17,7 +18,13 @@ export default async function NewAdminPage() {
 
   return (
     <main className="p-8">
-      <h1 className="text-lg font-semibold text-[var(--foreground)]">Create admin account</h1>
+      <Link
+        href="/dashboard/admins"
+        className="text-sm text-[var(--foreground)]/60 hover:underline"
+      >
+        ← Admins
+      </Link>
+      <h1 className="mt-2 text-lg font-semibold text-[var(--foreground)]">Create admin account</h1>
       <CreateAdminForm roles={roles ?? []} />
     </main>
   );

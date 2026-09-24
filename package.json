@@ -30,6 +30,8 @@
     "test:admin-platform-withdrawal:ci": "node supabase/tests/admin-platform-withdrawal-functions.test.js",
     "test:admin-message-pricing-strategy": "node --env-file=.env supabase/tests/admin-message-pricing-strategy-functions.test.js",
     "test:admin-message-pricing-strategy:ci": "node supabase/tests/admin-message-pricing-strategy-functions.test.js",
+    "test:admin-account-management": "node --env-file=.env supabase/tests/admin-account-management-functions.test.js",
+    "test:admin-account-management:ci": "node supabase/tests/admin-account-management-functions.test.js",
     "test:fraud": "node --env-file=.env supabase/tests/fraud-functions.test.js",
     "test:fraud:ci": "node supabase/tests/fraud-functions.test.js",
     "test:chargeback": "node --env-file=.env supabase/tests/chargeback-functions.test.js",
