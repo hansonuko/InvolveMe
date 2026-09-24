@@ -26,6 +26,8 @@
     "test:admin-manual-adjustment:ci": "node supabase/tests/admin-manual-adjustment-functions.test.js",
     "test:admin-platform-bank-accounts": "node --env-file=.env supabase/tests/admin-platform-bank-accounts-functions.test.js",
     "test:admin-platform-bank-accounts:ci": "node supabase/tests/admin-platform-bank-accounts-functions.test.js",
+    "test:admin-platform-withdrawal": "node --env-file=.env supabase/tests/admin-platform-withdrawal-functions.test.js",
+    "test:admin-platform-withdrawal:ci": "node supabase/tests/admin-platform-withdrawal-functions.test.js",
     "test:fraud": "node --env-file=.env supabase/tests/fraud-functions.test.js",
     "test:fraud:ci": "node supabase/tests/fraud-functions.test.js",
     "test:chargeback": "node --env-file=.env supabase/tests/chargeback-functions.test.js",
