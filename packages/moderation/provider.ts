@@ -29,4 +29,18 @@ export interface ModerationResult {
 export interface ContentModerationProvider {
   readonly name: 'openai';
   moderateText(text: string): Promise<ModerationResult>;
+  /** docs/16-CHAT-MEDIA-SCOPING.md §5 — same category → action mapping as
+   * `moderateText`, against `omni-moderation-latest`'s own image-input
+   * support (same model, same endpoint, same vendor call this interface
+   * already wraps for text). `imageBytes` is base64-encoded into a data
+   * URI by the implementation rather than passed as a Storage URL — the
+   * bucket this is called against (`chat-media`) is private, so a plain
+   * URL isn't fetchable by OpenAI's servers without either a public
+   * exposure this app doesn't want or a signed URL round trip this avoids
+   * entirely by just sending the bytes it already has. **Not yet
+   * confirmed against a real live call**, same caveat `openai.ts`'s own
+   * header comment carries for text — whoever wires the real key should
+   * make one real call with a genuinely flagged image and confirm the
+   * response shape before trusting this in production. */
+  moderateImage(imageBytes: Uint8Array, mimeType: string): Promise<ModerationResult>;
 }

@@ -122,7 +122,11 @@ async function testExecuteGrantsAreLocked(db) {
     'fn_price_message_tiered_word_block(integer, text)',
     'fn_price_message_flat(integer, text)',
     'fn_price_message_linear(integer, text)',
-    'fn_send_message(uuid, uuid, text, uuid, uuid, boolean)',
+    // Signature grew two trailing default params for chat media
+    // (docs/16-CHAT-MEDIA-SCOPING.md, 20260925120000_chat_media_pipeline.sql)
+    // — this string has to match the function's real signature exactly,
+    // `has_function_privilege` does not resolve by name alone.
+    'fn_send_message(uuid, uuid, text, uuid, uuid, boolean, text, text)',
   ];
   for (const fn of functions) {
     const anonRes = await db.query('select has_function_privilege($1, $2, $3) as ok', [
