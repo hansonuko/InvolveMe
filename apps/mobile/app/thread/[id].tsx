@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   FlatList,
   Keyboard,
   Modal,
@@ -682,6 +683,23 @@ export default function ThreadScreen() {
     const interval = setInterval(() => setNow(Date.now()), 15000);
     return () => clearInterval(interval);
   }, []);
+
+  // Self-healing fallback for stale presence (lib/supabase.ts's own
+  // AppState handler reconnects the Realtime socket on foreground, but
+  // that alone still depends on the socket successfully redelivering
+  // whatever changed while backgrounded — not guaranteed, e.g. if the
+  // partner's own last_seen_at update landed in the gap between
+  // disconnect and reconnect). A plain refetch needs no such guarantee:
+  // every foreground transition while a thread is open forces one, same
+  // "next foreground event will catch up" posture lib/lastSeen.ts already
+  // documents for the write side of this exact same presence system.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') setHeaderRefetchKey((k) => k + 1);
+    });
+    return () => subscription.remove();
+  }, []);
+
   const lastSeenText = headerInfo ? formatLastSeen(headerInfo.partnerLastSeenAt, now) : null;
 
   // Device-saved contact name wins over the partner's own self-chosen
