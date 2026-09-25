@@ -32,6 +32,14 @@ export function Nav() {
               </Link>
             </li>
           ))}
+          <li>
+            <Link
+              href="/download"
+              className="rounded-pill bg-accent px-5 py-2 text-body font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
+            >
+              Download
+            </Link>
+          </li>
         </ul>
 
         <button
@@ -63,6 +71,15 @@ export function Nav() {
               </Link>
             </li>
           ))}
+          <li>
+            <Link
+              href="/download"
+              onClick={() => setOpen(false)}
+              className="block py-3 text-body font-semibold text-foreground-accent"
+            >
+              Download
+            </Link>
+          </li>
         </ul>
       ) : null}
     </header>
