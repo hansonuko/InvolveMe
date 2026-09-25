@@ -53,6 +53,13 @@ export const palette = {
     // sets Text color="credit", it needs a separate darker text-only
     // variant at that point — don't quietly reuse this value for text.
     accentCredit: '#F5A623',
+    // Read-receipt tick color (docs/18-CHAT-STATUS-REFINEMENT-BATCH-
+    // SCOPING.md §A1) — a deliberate InvolveMe-specific choice, not a
+    // match to WhatsApp's own blue. Own-message ticks only ever render on
+    // a filled `brandPrimary` bubble (theme-invariant wine), so this is
+    // theme-invariant too, same reasoning `textInverse` already uses for
+    // "content that sits on a filled wine surface."
+    tickRead: '#FFD60A',
     // Darkened from the original #12B76A/#F04438/#F79009 to actually pass
     // 4.5:1 against the new brighter bgCanvas — both success and danger
     // are live today as Text colors (error/confirmation messages) and
@@ -98,6 +105,7 @@ export const palette = {
     brandPrimary: '#5F1B31',
     brandPrimaryPressed: '#471425',
     accentCredit: '#FFC24D',
+    tickRead: '#FFD60A',
     success: '#32D583',
     danger: '#F97066',
     warning: '#FDB022',

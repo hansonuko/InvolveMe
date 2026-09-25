@@ -25,8 +25,6 @@ import { StoryViewer } from '@/components/status/StoryViewer';
 import { type DeviceContact, useDeviceContacts, usePhoneContactNames } from '@/lib/contacts';
 import { shareInvite } from '@/lib/invite';
 import { type MatchedContactUser, useFindUsersByPhones } from '@/lib/queries/contacts';
-import { useFindUserByPhone, type FoundUser } from '@/lib/queries/findUserByPhone';
-import { type GroupThread, useCreateGroup, useGroups } from '@/lib/queries/groups';
 import { type StatusFeedGroup, useStatusFeed } from '@/lib/queries/status';
 import { type ThreadWithPartner, useStartThread, useThreads } from '@/lib/queries/threads';
 import { useSession } from '@/lib/hooks/useSession';
@@ -177,18 +175,16 @@ function ThreadRow({
   );
 }
 
-type ChatsSubTab = 'chats' | 'groups' | 'contacts';
+type ChatsSubTab = 'chats' | 'contacts';
 
 const SUB_TABS: { key: ChatsSubTab; label: string }[] = [
   { key: 'chats', label: 'Chats' },
-  { key: 'groups', label: 'Groups' },
   { key: 'contacts', label: 'Contacts' },
 ];
 
-/** Chats/Groups/Contacts segmented row under the header. "Groups" is real
- * as of 2026-09-18 (punch-list item 11) — free messaging only, see
- * GroupsList below; the paid billing model (docs/03-ECONOMY-LEDGER.md
- * §10) stays kill-switched off, unrelated to this UI existing. "Contacts"
+/** Chats/Contacts segmented row under the header. Groups moved to its own
+ * top-level tab (docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §A5,
+ * (tabs)/groups.tsx) — no longer a sub-tab here. "Contacts"
  * is real as of docs/10-UX-REFINEMENT-BACKLOG.md Batch C1 (see
  * ContactsList below).
  *
@@ -236,36 +232,39 @@ function ChatsSubHeader({
  * required — see lib/queries/threads.ts's useStartThread). A plain Modal,
  * not a bottom-sheet library — no such dependency exists in this app yet
  * and one isn't worth adding for this ("stay lite" per CLAUDE.md). */
+/**
+ * docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §A4 — replaces the old
+ * phone-number-only "type the full number, tap Look up" flow with the
+ * same search-as-you-type widget the group member picker already uses
+ * (`MemberSearchList`): search by device-contact name, or a phone number
+ * even when it isn't saved as a device contact at all (its own parallel
+ * exact-match `find-user-by-phone` call, gated on the typed digits
+ * actually looking like a complete number — never a partial/prefix
+ * server search, which would be a real phone-enumeration surface this
+ * app has never had). One shared widget, not a second search
+ * implementation — `ContactsList` below is a different, sectioned
+ * "browse your whole phonebook" surface and stays as-is; this is
+ * specifically "find one person to start a chat with," the same job
+ * `MemberSearchList` already does for "find one person to add to a
+ * group."
+ */
 function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { colors, spacing, radius } = useTheme();
+  const { spacing } = useTheme();
   const router = useRouter();
-  const findUser = useFindUserByPhone();
   const startThread = useStartThread();
-
-  const [phone, setPhone] = useState('');
-  const [found, setFound] = useState<FoundUser | null>(null);
-
-  const reset = () => {
-    setPhone('');
-    setFound(null);
-    findUser.reset();
-    startThread.reset();
-  };
+  // Bumped on close so MemberSearchList clears its own search box/cached
+  // device-contacts read for the next time this modal opens — same
+  // pattern NewGroupModal's own resetToken already establishes.
+  const [resetToken, setResetToken] = useState(0);
 
   const handleClose = () => {
-    reset();
+    setResetToken((k) => k + 1);
+    startThread.reset();
     onClose();
   };
 
-  const handleLookup = () => {
-    findUser.mutate(toE164NigerianPhone(phone), {
-      onSuccess: (user) => setFound(user),
-    });
-  };
-
-  const handleOpenChat = () => {
-    if (!found) return;
-    startThread.mutate(found.id, {
+  const handleSelect = (user: MatchedContactUser) => {
+    startThread.mutate(user.id, {
       onSuccess: (data) => {
         handleClose();
         router.push(`/thread/${data.thread_id}`);
@@ -288,356 +287,23 @@ function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => v
             </Pressable>
           </View>
 
-          <View style={{ gap: spacing.md, marginTop: spacing.xl }}>
-            <Text variant="caption" color="secondary">
-              Their phone number
+          {startThread.isError ? (
+            <Text variant="caption" color="danger" style={{ marginTop: spacing.md }}>
+              {startThread.error.message}
             </Text>
-            <TextInput
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="0801 234 5678"
-              placeholderTextColor={colors.textSecondary}
-              keyboardType="phone-pad"
-              editable={!found}
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.bgSurfaceAlt,
-                  color: colors.textPrimary,
-                  borderRadius: radius.card,
-                  borderColor: colors.borderSubtle,
-                },
-              ]}
-            />
-
-            {findUser.isError ? (
-              <Text variant="caption" color="danger">
-                {findUser.error.message}
-              </Text>
-            ) : null}
-
-            {!found ? (
-              <Button
-                label={findUser.isPending ? 'Looking up…' : 'Find'}
-                onPress={handleLookup}
-                disabled={findUser.isPending || phone.length < 8}
-              />
-            ) : (
-              <>
-                {startThread.isError ? (
-                  <Text variant="caption" color="danger">
-                    {startThread.error.message}
-                  </Text>
-                ) : null}
-                <Pressable
-                  onPress={startThread.isPending ? undefined : handleOpenChat}
-                  disabled={startThread.isPending}
-                  style={({ pressed }) => [
-                    {
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: spacing.md,
-                      paddingVertical: spacing.sm,
-                      borderRadius: radius.card,
-                      backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
-                      opacity: startThread.isPending ? 0.6 : 1,
-                    },
-                  ]}
-                >
-                  <Avatar uri={found.avatar_url} displayName={found.display_name} size={52} />
-                  <View style={{ flex: 1 }}>
-                    <Text variant="bodyMedium">{found.display_name ?? 'Unnamed'}</Text>
-                    <Text variant="caption" color="tertiary">
-                      {startThread.isPending ? 'Opening chat…' : 'Tap to start chatting'}
-                    </Text>
-                  </View>
-                </Pressable>
-              </>
-            )}
-          </View>
-        </KeyboardAvoidingScreen>
-      </Screen>
-    </Modal>
-  );
-}
-
-function GroupRow({ group, onPress }: { group: GroupThread; onPress: () => void }) {
-  const { colors, spacing, radius } = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.row,
-        {
-          paddingVertical: spacing.md,
-          borderRadius: radius.card,
-          backgroundColor: pressed ? colors.bgSurfaceAlt : 'transparent',
-        },
-      ]}
-    >
-      <Avatar uri={group.avatar_url} displayName={group.name} size={AVATAR_SIZE} />
-      <View style={{ flex: 1, marginLeft: spacing.md }}>
-        <Text variant="bodyMedium">{group.name}</Text>
-        <Text variant="caption" color="tertiary" numberOfLines={1}>
-          {group.last_message_body ?? `${group.member_count} members`}
-        </Text>
-      </View>
-      {group.last_message_at ? (
-        <Text variant="caption" color="tertiary" style={{ marginLeft: spacing.sm }}>
-          {formatThreadTimestamp(group.last_message_at)}
-        </Text>
-      ) : null}
-    </Pressable>
-  );
-}
-
-/** Group creation (2026-09-18, punch-list item 11; search-as-you-type
- * rebuild 2026-09-19): name + a search-driven member picker built on the
- * shared MemberSearchList component (components/groups/MemberSearchList.tsx)
- * — see that file's header comment for the full "why search-as-you-type"
- * reasoning (short version: bulk-loading the whole phonebook on open could
- * exceed find-users-by-phones's 2000-entry cap, exactly the "Couldn't
- * check your contacts against InvolveMe" bug that was reported). */
-function NewGroupModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { colors, spacing, radius } = useTheme();
-  const router = useRouter();
-  const createGroup = useCreateGroup();
-
-  const [name, setName] = useState('');
-  const [selectedMembers, setSelectedMembers] = useState<MatchedContactUser[]>([]);
-  // Bumped on close so MemberSearchList clears its own search box/cached
-  // device-contacts read for the next time this modal opens.
-  const [resetToken, setResetToken] = useState(0);
-
-  const reset = () => {
-    setName('');
-    setSelectedMembers([]);
-    setResetToken((k) => k + 1);
-    createGroup.reset();
-  };
-
-  const handleClose = () => {
-    reset();
-    onClose();
-  };
-
-  const removeMember = (userId: string) => {
-    setSelectedMembers((prev) => prev.filter((m) => m.id !== userId));
-  };
-
-  const handleCreate = () => {
-    createGroup.mutate(
-      { name: name.trim(), memberIds: selectedMembers.map((m) => m.id) },
-      {
-        onSuccess: (data) => {
-          handleClose();
-          router.push(`/group-thread/${data.group_thread_id}`);
-        },
-      },
-    );
-  };
-
-  const canCreate = name.trim().length > 0 && selectedMembers.length > 0 && !createGroup.isPending;
-
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
-      <Screen>
-        <KeyboardAvoidingScreen>
-          <View
-            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-          >
-            <Text variant="title">New group</Text>
-            <Pressable onPress={handleClose} hitSlop={12}>
-              <Text variant="body" color="secondary">
-                Close
-              </Text>
-            </Pressable>
-          </View>
+          ) : null}
 
           <View style={{ gap: spacing.md, marginTop: spacing.xl, flex: 1 }}>
-            <Text variant="caption" color="secondary">
-              Group name
-            </Text>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="e.g. Weekend Trip"
-              placeholderTextColor={colors.textSecondary}
-              maxLength={60}
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.bgSurfaceAlt,
-                  color: colors.textPrimary,
-                  borderRadius: radius.card,
-                  borderColor: colors.borderSubtle,
-                },
-              ]}
-            />
-
-            <Text variant="caption" color="secondary" style={{ marginTop: spacing.sm }}>
-              Add members (only people already on InvolveMe can be added)
-            </Text>
-
-            {createGroup.isError ? (
-              <Text variant="caption" color="danger">
-                {createGroup.error.message}
-              </Text>
-            ) : null}
-
-            {selectedMembers.length > 0 ? (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-                {selectedMembers.map((m) => (
-                  <View
-                    key={m.id}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor: colors.bgSurfaceAlt,
-                        borderRadius: radius.pill,
-                        paddingLeft: spacing.xs,
-                        paddingRight: spacing.sm,
-                      },
-                    ]}
-                  >
-                    <Avatar uri={m.avatar_url} displayName={m.display_name} size={28} />
-                    <Text
-                      variant="caption"
-                      style={{ marginLeft: spacing.xs, marginRight: spacing.xs }}
-                    >
-                      {m.display_name ?? 'Unnamed'}
-                    </Text>
-                    <Pressable onPress={() => removeMember(m.id)} hitSlop={8}>
-                      <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-                    </Pressable>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
             <MemberSearchList
               key={resetToken}
               visible={visible}
-              excludeUserIds={new Set(selectedMembers.map((m) => m.id))}
-              onSelect={(user) =>
-                setSelectedMembers((prev) =>
-                  prev.some((m) => m.id === user.id) ? prev : [...prev, user],
-                )
-              }
-            />
-
-            <Button
-              label={
-                createGroup.isPending
-                  ? 'Creating…'
-                  : `Create group${selectedMembers.length ? ` (${selectedMembers.length})` : ''}`
-              }
-              onPress={handleCreate}
-              disabled={!canCreate}
+              excludeUserIds={new Set()}
+              onSelect={handleSelect}
             />
           </View>
         </KeyboardAvoidingScreen>
       </Screen>
     </Modal>
-  );
-}
-
-const GROUP_QUICK_ROW_AVATAR_SIZE = 56;
-const GROUP_QUICK_ROW_ITEM_WIDTH = 68;
-
-/** Horizontal "your groups" strip (punch-list item 3, 2026-09-19) — quick
- * access to every group the user created or belongs to, one tap to open,
- * without scrolling the full vertical list below it. A `FlatList`
- * (`horizontal`) as the vertical group list's own `ListHeaderComponent`,
- * not a separate `ScrollView` wrapping it — the standard RN-safe way to
- * combine a horizontal strip with a vertical list below it; nesting a
- * VirtualizedList inside a plain ScrollView is what actually triggers RN's
- * nested-list warning, and this isn't that. */
-function GroupsQuickRow({
-  groups,
-  onPress,
-}: {
-  groups: GroupThread[];
-  onPress: (id: string) => void;
-}) {
-  const { spacing } = useTheme();
-  return (
-    <FlatList
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      data={groups}
-      keyExtractor={(g) => g.id}
-      contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.lg }}
-      renderItem={({ item }) => (
-        <Pressable
-          onPress={() => onPress(item.id)}
-          style={{ alignItems: 'center', width: GROUP_QUICK_ROW_ITEM_WIDTH }}
-        >
-          <Avatar
-            uri={item.avatar_url}
-            displayName={item.name}
-            size={GROUP_QUICK_ROW_AVATAR_SIZE}
-          />
-          <Text
-            variant="caption"
-            numberOfLines={1}
-            style={{ marginTop: spacing.xs, textAlign: 'center' }}
-          >
-            {item.name}
-          </Text>
-        </Pressable>
-      )}
-    />
-  );
-}
-
-/** Groups the current user belongs to — same list-row shape ThreadRow uses,
- * a dedicated component (not a shared FlatList with threads) because the
- * data source and empty/loading states are different, same reasoning
- * ContactsList already documents for itself. Leads with the horizontal
- * GroupsQuickRow (punch-list item 3) as its own header, only once there's
- * at least one group to show in it. */
-function GroupsList() {
-  const router = useRouter();
-  const { session } = useSession();
-  const { spacing } = useTheme();
-  const { data: groups, isLoading, refetch, isRefetching } = useGroups(session?.user.id);
-
-  const openGroup = (groupId: string) => router.push(`/group-thread/${groupId}`);
-
-  return (
-    <FlatList
-      data={groups ?? []}
-      keyExtractor={(g) => g.id}
-      contentContainerStyle={{ paddingTop: spacing.sm }}
-      renderItem={({ item }) => <GroupRow group={item} onPress={() => openGroup(item.id)} />}
-      ListHeaderComponent={
-        groups && groups.length > 0 ? (
-          <View style={{ marginBottom: spacing.md }}>
-            <Text
-              variant="caption"
-              color="tertiary"
-              style={{
-                paddingHorizontal: spacing.lg,
-                marginBottom: spacing.sm,
-                textTransform: 'uppercase',
-              }}
-            >
-              Your groups
-            </Text>
-            <GroupsQuickRow groups={groups} onPress={openGroup} />
-          </View>
-        ) : null
-      }
-      ListEmptyComponent={
-        <View style={styles.empty}>
-          <Text variant="body" color="tertiary">
-            {isLoading ? 'Loading…' : 'No groups yet — tap + to start one.'}
-          </Text>
-        </View>
-      }
-      refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} />}
-    />
   );
 }
 
@@ -902,7 +568,6 @@ export default function ChatsScreen() {
   const statusGroupByPosterId = new Map((statusFeed ?? []).map((g) => [g.poster.id, g]));
   const [statusViewerGroup, setStatusViewerGroup] = useState<StatusFeedGroup | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [groupModalVisible, setGroupModalVisible] = useState(false);
   const [subTab, setSubTab] = useState<ChatsSubTab>('chats');
   const [search, setSearch] = useState('');
 
@@ -966,12 +631,7 @@ export default function ChatsScreen() {
         title="InvolveMe"
         brand
         rightSlot={
-          <Pressable
-            onPress={() =>
-              subTab === 'groups' ? setGroupModalVisible(true) : setModalVisible(true)
-            }
-            hitSlop={12}
-          >
+          <Pressable onPress={() => setModalVisible(true)} hitSlop={12}>
             <Ionicons name="add" size={layout.headerIconSize} color={colors.textSecondary} />
           </Pressable>
         }
@@ -986,10 +646,6 @@ export default function ChatsScreen() {
         // own loading/permission states — a dedicated component rather
         // than overloading the threads FlatList below, per Batch C1.
         <ContactsList />
-      ) : subTab === 'groups' ? (
-        // Real groups (2026-09-18) — own data source, own component, same
-        // reasoning as ContactsList above.
-        <GroupsList />
       ) : (
         <FlatList
           data={filteredThreads}
@@ -1026,7 +682,6 @@ export default function ChatsScreen() {
       )}
 
       <NewChatModal visible={modalVisible} onClose={() => setModalVisible(false)} />
-      <NewGroupModal visible={groupModalVisible} onClose={() => setGroupModalVisible(false)} />
 
       {statusViewerGroup ? (
         <StoryViewer

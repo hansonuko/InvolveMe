@@ -22,7 +22,12 @@ const TAB_ICONS: Record<
   { active: keyof typeof Ionicons.glyphMap; inactive: keyof typeof Ionicons.glyphMap }
 > = {
   chats: { active: 'chatbubbles', inactive: 'chatbubbles-outline' },
-  calls: { active: 'call', inactive: 'call-outline' },
+  // Calls is disabled for now (docs/18-CHAT-STATUS-REFINEMENT-BATCH-
+  // SCOPING.md §A5 — no monetization model designed yet, same reasoning
+  // docs/08-BUILD-PHASES-ROADMAP.md already gave calls.tsx's own stub).
+  // Groups takes its slot in the bar; calls.tsx itself is untouched on
+  // disk, just no longer routed to from here.
+  groups: { active: 'people', inactive: 'people-outline' },
   wallet: { active: 'wallet', inactive: 'wallet-outline' },
   // Matches the very first Status glyph used (a plain ring, '◎') before a
   // later mockup-driven pass swapped it for a tools icon — reverted back
@@ -54,8 +59,10 @@ function TabIcon({
 }
 
 /**
- * WhatsApp-parity tab shell: Chats / Calls / Wallet (InvolveMe-specific, see
- * docs/04-DESIGN-SYSTEM.md §5) / Status.
+ * Tab shell: Chats / Groups / Wallet (InvolveMe-specific, see
+ * docs/04-DESIGN-SYSTEM.md §5) / Status. Calls is disabled for now
+ * (docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §A5) — see the `calls`
+ * Tabs.Screen below.
  *
  * `headerShown: false` — each screen renders its own `AppHeader`
  * (components/ui/AppHeader.tsx).
@@ -118,7 +125,13 @@ export default function TabsLayout() {
           tabBarBadgeStyle: { backgroundColor: colors.badgeBg, color: colors.badgeText },
         }}
       />
-      <Tabs.Screen name="calls" options={{ title: 'Calls' }} />
+      <Tabs.Screen name="groups" options={{ title: 'Groups' }} />
+      {/* calls.tsx stays on disk (untouched stub) but is excluded from the
+          tab bar via `href: null` — expo-router's documented way to keep a
+          route routable-by-file without auto-generating a tab bar entry
+          for it, rather than relying on simply omitting a Tabs.Screen
+          (which doesn't reliably hide an existing route file). */}
+      <Tabs.Screen name="calls" options={{ href: null }} />
       <Tabs.Screen name="wallet" options={{ title: 'Wallet' }} />
       <Tabs.Screen name="status" options={{ title: 'Status' }} />
     </Tabs>
