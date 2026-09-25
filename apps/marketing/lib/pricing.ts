@@ -14,6 +14,7 @@ export interface PublicPricing {
   message_word_block_size: number;
   message_max_words: number;
   platform_topup_fee_bps: number;
+  platform_earning_take_bps: number;
 }
 
 const FALLBACK: PublicPricing = {
@@ -26,6 +27,7 @@ const FALLBACK: PublicPricing = {
   message_word_block_size: 50,
   message_max_words: 500,
   platform_topup_fee_bps: 200,
+  platform_earning_take_bps: 2000,
 };
 
 export async function getPublicPricing(): Promise<PublicPricing> {
@@ -54,4 +56,15 @@ export function formatNaira(kobo: number): string {
 export function creditsForWords(pricing: PublicPricing, words: number): number {
   const capped = Math.min(words, pricing.message_max_words);
   return pricing.message_base_credits * Math.ceil(capped / pricing.message_word_block_size);
+}
+
+// Net credits the replier actually earns from a message of this length,
+// the sender's cost minus the platform's cut on the escrow release
+// (packages/legal-content/terms.ts §5 — a platform fee is deducted from
+// credit released to a recipient when their reply clears escrow). This is
+// the number the earn-first repositioning shows, not just what a sender
+// pays, which is all creditsForWords() alone tells you.
+export function earningsForWords(pricing: PublicPricing, words: number): number {
+  const cost = creditsForWords(pricing, words);
+  return cost - Math.round((cost * pricing.platform_earning_take_bps) / 10000);
 }

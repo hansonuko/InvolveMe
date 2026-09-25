@@ -2,15 +2,16 @@ import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { CountdownTimer } from '@/components/CountdownTimer';
 import { Card, Eyebrow, Section } from '@/components/Section';
+import { WhoItsFor } from '@/components/WhoItsFor';
 
 const VALUE_PROPS = [
   {
-    title: 'Every message has a price',
-    body: "No ads, no data-harvesting business model. You pay a small, transparent credit cost per message, and the person you're messaging earns from replying.",
+    title: 'Every reply is a paycheck',
+    body: "No ads, no data-harvesting business model. Someone pays a small, transparent credit cost to message you, and the moment you reply, it's yours to keep.",
   },
   {
-    title: 'Money held in escrow, not spent blind',
-    body: 'Your credits are held the moment you send a message and only released to the other person once they reply. Nothing is taken for a message that goes unanswered.',
+    title: 'The money is already waiting for you',
+    body: "The credits are debited from the sender's balance and held safely the second they message you. Reply, and they land in your earnings, no chasing anyone for payment.",
   },
   {
     title: 'Built like a bank, not a chat toy',
@@ -40,14 +41,14 @@ export default function HomePage() {
 
       <Section className="pb-10 pt-8 text-center md:pt-12">
         <AnimatedSection>
-          <Eyebrow>Pay-per-message chat</Eyebrow>
+          <Eyebrow>Earn per message</Eyebrow>
           <h1 className="mx-auto mt-4 max-w-3xl text-display font-extrabold leading-tight text-foreground md:text-[44px]">
-            A chat app where your time, and theirs, has real value
+            Get paid every time someone needs your time
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-body text-muted">
-            InvolveMe looks and feels like the messaging app you already know. The difference: every
-            message costs a small, transparent number of credits, held safely until the person
-            you&apos;re talking to actually replies.
+            InvolveMe looks and feels like the messaging app you already know. The difference:
+            people pay to message you, and every reply you send earns you real money, held safely
+            until the moment you respond.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link
@@ -85,16 +86,20 @@ export default function HomePage() {
         ))}
       </Section>
 
+      <WhoItsFor />
+
       <Section className="rounded-sheet bg-surface-alt text-center">
         <AnimatedSection>
           <Eyebrow>The mechanism</Eyebrow>
           <h2 className="mx-auto mt-3 max-w-2xl text-display font-extrabold text-foreground">
-            Send → escrow → reply → earn
+            They reach out → it&apos;s held for you → you reply → you earn
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-body text-muted">
-            A message you send debits your credit balance into escrow immediately. If the other
-            person replies, escrow releases to their earnings balance. If they never do, your
-            credits are refunded automatically, so you&apos;re never charged for silence.
+            Someone messages you, their credits are debited into escrow immediately, waiting on you.
+            The moment you reply, that escrow releases straight to your earnings. If you never
+            reply, they&apos;re refunded automatically, you only ever earn from conversations you
+            actually show up for. Chat is live at launch; pay-per-minute voice and video calls are
+            next, so every way people need your time becomes income.
           </p>
           <Link
             href="/security"

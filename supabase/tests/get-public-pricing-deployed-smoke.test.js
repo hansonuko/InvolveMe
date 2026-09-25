@@ -27,6 +27,7 @@ const EXPECTED_KEYS = [
   'message_word_block_size',
   'message_max_words',
   'platform_topup_fee_bps',
+  'platform_earning_take_bps',
 ].sort();
 
 let pass = 0;
@@ -49,7 +50,7 @@ async function main() {
 
   const returnedKeys = body ? Object.keys(body).sort() : [];
   log(
-    'response contains exactly the 5 whitelisted keys',
+    'response contains exactly the 6 whitelisted keys',
     JSON.stringify(returnedKeys) === JSON.stringify(EXPECTED_KEYS),
     `keys=${JSON.stringify(returnedKeys)}`,
   );

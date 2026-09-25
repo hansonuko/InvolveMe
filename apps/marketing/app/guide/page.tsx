@@ -46,12 +46,14 @@ const STEPS = [
   },
   {
     step: '3',
-    title: 'How chat credits work',
+    title: 'How you earn',
     body: (
       <>
-        Sending a message costs the sender a small number of credits, calculated from its length.
-        Those credits are held until the other person replies, then released to them as earnings. No
-        reply, no charge: unanswered messages refund automatically. See{' '}
+        Sending you a message costs the other person a small number of credits, calculated from its
+        length. Those credits are held until you reply, then released straight to your earnings. No
+        reply, no charge, and nothing for you to collect: unanswered messages refund to the sender
+        automatically. Chat earns you money today; pay-per-minute voice and video calls are coming
+        next. See{' '}
         <Link href="/how-it-works" className="font-semibold text-foreground-accent hover:underline">
           How it works
         </Link>{' '}
