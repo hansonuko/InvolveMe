@@ -51,6 +51,12 @@ interface SendMessageRequestBody {
   // again below before ever reaching the RPC.
   duration_seconds?: number;
   waveform_samples?: number[];
+  // Free status replies (docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md
+  // §B1) — the status being replied to. fn_send_message is the actual
+  // authority on whether this send turns out free (its own first-message-
+  // in-thread + no-media + real/unexpired/visible-status check) — this is
+  // just carried through, never trusted as "this send is free" on faith.
+  reply_to_status_id?: string;
 }
 
 interface FnSendMessageRow {
@@ -123,6 +129,13 @@ function mapSendMessageError(pgMessage: string): Response {
   }
   if (pgMessage.startsWith('invalid_waveform_samples')) {
     return errorResponse(400, 'invalid_waveform_samples', 'waveform_samples values must be 0-100.');
+  }
+  if (pgMessage.startsWith('invalid_status_reply_target')) {
+    return errorResponse(
+      400,
+      'invalid_status_reply_target',
+      'That status is no longer available to reply to.',
+    );
   }
   if (pgMessage.startsWith('insufficient_credit')) {
     // fn_send_message raises 'insufficient_credit: need % have %'.
@@ -221,6 +234,13 @@ Deno.serve(async (req) => {
     (typeof payload.reply_to_message_id !== 'string' || !UUID_RE.test(payload.reply_to_message_id))
   ) {
     return errorResponse(400, 'invalid_request', 'reply_to_message_id must be a UUID.');
+  }
+
+  if (
+    payload.reply_to_status_id !== undefined &&
+    (typeof payload.reply_to_status_id !== 'string' || !UUID_RE.test(payload.reply_to_status_id))
+  ) {
+    return errorResponse(400, 'invalid_request', 'reply_to_status_id must be a UUID.');
   }
 
   let threadId = payload.thread_id;
@@ -368,6 +388,7 @@ Deno.serve(async (req) => {
       p_media_type: hasMedia ? payload.media_type : null,
       p_duration_seconds: isAudio ? payload.duration_seconds : null,
       p_waveform_samples: isAudio ? (payload.waveform_samples ?? null) : null,
+      p_reply_to_status_id: payload.reply_to_status_id ?? null,
     })
     .single();
 
