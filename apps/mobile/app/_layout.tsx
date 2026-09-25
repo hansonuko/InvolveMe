@@ -4,10 +4,11 @@ import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { AnimatedSplash } from '@/components/AnimatedSplash';
 import { AppLockScreen } from '@/components/AppLockScreen';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { OfflineBanner } from '@/components/OfflineBanner';
@@ -132,11 +133,11 @@ export default function RootLayout() {
   useLastSeenHeartbeat(session?.user.id);
   const { locked, retry } = useAppLock(!!session);
 
-  useEffect(() => {
-    if (!isLoading) {
-      SplashScreen.hideAsync();
-    }
-  }, [isLoading]);
+  // AnimatedSplash now owns hiding the native splash (see its own header
+  // comment) — it calls SplashScreen.hideAsync() itself the instant it
+  // mounts, so the hand-off from native-static to JS-animated is seamless
+  // instead of a hide-then-blank-then-render gap.
+  const [splashDone, setSplashDone] = useState(false);
 
   // Runs once per cold start, unconditional on session state — see
   // lib/otaUpdates.ts's header comment for why this exists (this app's
@@ -192,10 +193,6 @@ export default function RootLayout() {
     }
   }, [session?.user.id]);
 
-  if (isLoading) {
-    return null;
-  }
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>
@@ -241,6 +238,17 @@ export default function RootLayout() {
                 <View style={StyleSheet.absoluteFill}>
                   <AppLockScreen onRetry={retry} />
                 </View>
+              ) : null}
+              {/* Covers the Stack above (and the brief window where it may
+                  mount with the wrong initial route before useAuthGate's
+                  redirect effect fires — the same flash the old `if
+                  (isLoading) return null` guard existed to prevent) until
+                  session/onboarding/two-step state is fully resolved, then
+                  fades out. Stays mounted across the isLoading -> ready
+                  transition rather than swapping components, so its
+                  entrance animation never restarts mid-transition. */}
+              {!splashDone ? (
+                <AnimatedSplash ready={!isLoading} onFinished={() => setSplashDone(true)} />
               ) : null}
             </View>
           </PersistQueryClientProvider>

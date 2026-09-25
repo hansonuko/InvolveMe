@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { logoutAction } from '@/app/actions/auth';
+import { LogoMark } from '@/components/LogoMark';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 // A component TYPE (not yet rendered as an element) can't be handed from
@@ -118,7 +119,10 @@ export function Sidebar({
         >
           <Menu size={22} />
         </button>
-        <span className="text-sm font-medium text-[var(--foreground)]">InvolveMe Admin</span>
+        <span className="flex items-center gap-2 text-sm font-medium text-[var(--foreground)]">
+          <LogoMark size={28} />
+          InvolveMe Admin
+        </span>
         <ThemeToggle />
       </div>
 
@@ -143,8 +147,13 @@ export function Sidebar({
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-3">
-          {!isCollapsed && (
-            <span className="truncate text-sm font-semibold text-[var(--foreground)]">
+          {isCollapsed ? (
+            <div className="text-[var(--foreground)]" role="img" aria-label="InvolveMe Admin">
+              <LogoMark size={28} />
+            </div>
+          ) : (
+            <span className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--foreground)]">
+              <LogoMark size={28} className="shrink-0" />
               InvolveMe Admin
             </span>
           )}
