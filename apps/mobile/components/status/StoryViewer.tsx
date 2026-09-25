@@ -330,7 +330,14 @@ function PosterPage({
     startThread.mutate(group.poster.id, {
       onSuccess: (thread) => {
         sendMessage.mutate(
-          { threadId: thread.thread_id, body: text },
+          // docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §B1 —
+          // replyToStatusId is always passed on a real status reply;
+          // fn_send_message is the actual authority on whether this turns
+          // out free (only the sender's first-ever message in this
+          // thread, no media, a real/unexpired/visible status). This is
+          // just informational context for display, never a client-side
+          // "this send is free" assumption.
+          { threadId: thread.thread_id, body: text, replyToStatusId: status.id },
           {
             onSuccess: () => {
               onClose();
@@ -341,7 +348,9 @@ function PosterPage({
                 'Could not send reply',
                 error.code === 'insufficient_credit'
                   ? 'You need more chat credit to reply to this status.'
-                  : error.message,
+                  : error.code === 'invalid_status_reply_target'
+                    ? 'This status is no longer available to reply to.'
+                    : error.message,
               );
             },
             onSettled: finish,

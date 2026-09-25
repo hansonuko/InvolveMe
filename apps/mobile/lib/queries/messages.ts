@@ -11,7 +11,10 @@ export interface Message {
   body: string;
   word_count: number;
   credits_charged: number;
-  status: 'escrowed' | 'released' | 'refunded';
+  /** `'sent'` (docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §B1) is a
+   * genuinely free message — no escrow ever existed for it, so it never
+   * transitions to 'released'/'refunded' the way an 'escrowed' one does. */
+  status: 'escrowed' | 'released' | 'refunded' | 'sent';
   created_at: string;
   /** Set once by `fn_edit_message` on a successful edit, never cleared —
    * `null` means never edited. A timestamp rather than a plain boolean so
@@ -50,6 +53,11 @@ export interface Message {
   /** Always `'image'` today — the column exists ahead of a future video
    * follow-up (docs/16 §4), not a sign one is imminent. */
   media_type: string | null;
+  /** docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §B1 — the status this
+   * message replied to, if any. Only ever drives display (a "replied to
+   * your status" preview); whether the send was actually free is read off
+   * `credits_charged`/`status` above, never inferred from this being set. */
+  reply_to_status_id: string | null;
 }
 
 /** Messages in a thread, oldest first, kept live via Realtime — per
@@ -75,7 +83,7 @@ export function useThreadMessages(threadId: string | undefined, currentUserId: s
       const { data, error } = await supabase
         .from('messages')
         .select(
-          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, read_at, reply_to_message_id, is_forwarded, media_path, media_type',
+          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, read_at, reply_to_message_id, is_forwarded, media_path, media_type, reply_to_status_id',
         )
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true });
@@ -218,6 +226,11 @@ interface SendMessageRequest {
    * to the caller. */
   mediaPath?: string;
   mediaType?: string;
+  /** docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §B1 — the status
+   * being replied to. fn_send_message is the real authority on whether
+   * this turns out free (first-message-in-thread + no media + a real,
+   * unexpired, visible status) — this is just carried through. */
+  replyToStatusId?: string;
 }
 
 interface SendMessageResponse {
@@ -259,6 +272,7 @@ export function useSendMessage() {
         is_forwarded: request.isForwarded,
         media_path: request.mediaPath,
         media_type: request.mediaType,
+        reply_to_status_id: request.replyToStatusId,
       }),
     onSuccess: () => {
       // Deliberately no `invalidateQueries(['messages', ...])` here — the
