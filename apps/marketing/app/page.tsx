@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
+import { CountdownTimer } from '@/components/CountdownTimer';
 import { Card, Eyebrow, Section } from '@/components/Section';
 
 const VALUE_PROPS = [
@@ -20,7 +21,24 @@ const VALUE_PROPS = [
 export default function HomePage() {
   return (
     <>
-      <Section className="pb-10 pt-20 text-center md:pt-28">
+      <Section className="pb-8 pt-12 text-center">
+        <AnimatedSection>
+          <Eyebrow>Launching December 1, 2026</Eyebrow>
+          <div className="mt-6">
+            <CountdownTimer />
+          </div>
+          <p className="mx-auto mt-6 max-w-md text-caption text-muted">
+            Sign up before launch and get 100 non-withdrawable chat credits to start with, on us.
+            See the{' '}
+            <Link href="/guide" className="font-semibold text-foreground-accent hover:underline">
+              full guide
+            </Link>{' '}
+            for details.
+          </p>
+        </AnimatedSection>
+      </Section>
+
+      <Section className="pb-10 pt-8 text-center md:pt-12">
         <AnimatedSection>
           <Eyebrow>Pay-per-message chat</Eyebrow>
           <h1 className="mx-auto mt-4 max-w-3xl text-display font-extrabold leading-tight text-foreground md:text-[44px]">
