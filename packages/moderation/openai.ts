@@ -48,6 +48,65 @@ interface OpenAiModerationResponse {
   }[];
 }
 
+/** Image content-part shape omni-moderation-latest's multi-modal `input`
+ * accepts — the same `{ type: 'image_url', image_url: { url } }` shape
+ * OpenAI's chat-completions vision API already uses, not a moderation-
+ * specific format. A data URI (not a Storage URL) so OpenAI never needs
+ * to fetch anything from this app's private `chat-media` bucket — see
+ * provider.ts's own comment on `moderateImage` for why. */
+type OpenAiModerationInput = string | { type: 'image_url'; image_url: { url: string } }[];
+
+/** Shared request/response handling for both moderateText and
+ * moderateImage — same endpoint, same model, same category→action
+ * mapping, differing only in the shape of `input`. */
+async function runModeration(
+  config: OpenAiModerationConfig,
+  input: OpenAiModerationInput,
+): Promise<ModerationResult> {
+  const res = await fetch(BASE_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ model: 'omni-moderation-latest', input }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`OpenAI moderation request failed: HTTP ${res.status} — ${body.slice(0, 500)}`);
+  }
+
+  const parsed = (await res.json()) as OpenAiModerationResponse;
+  const result = parsed.results[0];
+  if (!result || !result.flagged) {
+    return { action: 'clean', categories: [] };
+  }
+
+  const flaggedCategories = Object.entries(result.categories)
+    .filter(([, isFlagged]) => isFlagged)
+    .map(([category]) => category);
+
+  const action: ModerationAction = flaggedCategories.some((c) => BLOCK_CATEGORIES.has(c))
+    ? 'blocked'
+    : 'flagged';
+
+  return { action, categories: flaggedCategories };
+}
+
+/** Encodes a byte array to base64 without Node's `Buffer` (Deno's Edge
+ * Function runtime has it too, but this package is shared/imported from
+ * plain TS, not Deno-specific — no assumption either way). Fine for the
+ * image sizes this ever sees (chat-media's own 5 MiB bucket ceiling,
+ * docs/16 §4) — not a hot path warranting a streaming encoder. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 export function createOpenAiModerationProvider(
   config: OpenAiModerationConfig,
 ): ContentModerationProvider {
@@ -63,37 +122,16 @@ export function createOpenAiModerationProvider(
         return { action: 'clean', categories: [] };
       }
 
-      const res = await fetch(BASE_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${config.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ model: 'omni-moderation-latest', input: text }),
-      });
+      return runModeration(config, text);
+    },
 
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(
-          `OpenAI moderation request failed: HTTP ${res.status} — ${body.slice(0, 500)}`,
-        );
-      }
-
-      const parsed = (await res.json()) as OpenAiModerationResponse;
-      const result = parsed.results[0];
-      if (!result || !result.flagged) {
+    async moderateImage(imageBytes: Uint8Array, mimeType: string): Promise<ModerationResult> {
+      if (!imageBytes || imageBytes.length === 0) {
         return { action: 'clean', categories: [] };
       }
 
-      const flaggedCategories = Object.entries(result.categories)
-        .filter(([, isFlagged]) => isFlagged)
-        .map(([category]) => category);
-
-      const action: ModerationAction = flaggedCategories.some((c) => BLOCK_CATEGORIES.has(c))
-        ? 'blocked'
-        : 'flagged';
-
-      return { action, categories: flaggedCategories };
+      const dataUri = `data:${mimeType};base64,${bytesToBase64(imageBytes)}`;
+      return runModeration(config, [{ type: 'image_url', image_url: { url: dataUri } }]);
     },
   };
 }

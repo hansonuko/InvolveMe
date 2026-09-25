@@ -1,11 +1,25 @@
 // POST /functions/v1/delete-message-for-everyone
 //
 // Wraps fn_delete_message_for_everyone (migration 20260919140000_message_
-// delete.sql) — sender-only, within the delete window. No financial logic
-// here (CLAUDE.md rule #1): the credits/escrow/ledger trail is completely
-// untouched either way, this only ever overwrites `messages.body` and
-// flips `deleted_for_everyone`. p_sender_id is always the authenticated
-// caller's own id.
+// delete.sql, extended by 20260925120000_chat_media_pipeline.sql for chat
+// media) — sender-only, within the delete window. No financial logic here
+// (CLAUDE.md rule #1): the credits/escrow/ledger trail is completely
+// untouched either way, this only ever overwrites `messages.body`/
+// media_path/media_type and flips `deleted_for_everyone`. p_sender_id is
+// always the authenticated caller's own id.
+//
+// fn_delete_message_for_everyone now returns the media_path it just
+// cleared (or null) so this function can remove the real Storage object —
+// same "before/instead of relying on RLS afterward" posture
+// useDeleteStatus's own comment documents for the status pipeline, except
+// here it's naturally *after* the DB row is already updated (this runs as
+// service_role, which bypasses chat_media_delete_own's RLS entirely, so
+// there's no ordering hazard the way there is for a client-side delete
+// subject to RLS). A Storage failure here is logged, not surfaced as a
+// user-facing error — the message is genuinely deleted either way; a
+// leftover orphaned blob is the acceptable failure mode, matching this
+// session's own expire-statuses function's posture for the same class of
+// problem.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 
@@ -78,13 +92,22 @@ Deno.serve(async (req) => {
   }
 
   const db = serviceRoleClient();
-  const { error } = await db.rpc('fn_delete_message_for_everyone', {
+  const { data: clearedMediaPath, error } = await db.rpc('fn_delete_message_for_everyone', {
     p_message_id: payload.message_id,
     p_sender_id: user.id,
   });
 
   if (error) {
     return mapError(error.message);
+  }
+
+  if (clearedMediaPath) {
+    const { error: storageError } = await db.storage
+      .from('chat-media')
+      .remove([clearedMediaPath as string]);
+    if (storageError) {
+      console.error('delete-message-for-everyone: storage removal failed:', storageError.message);
+    }
   }
 
   return json(200, { ok: true });

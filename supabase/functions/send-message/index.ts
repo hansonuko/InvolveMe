@@ -35,6 +35,15 @@ interface SendMessageRequestBody {
   // Display-only "Forwarded" tag (see this migration's own header comment
   // for why this never touches pricing). Omit/false for a normal send.
   is_forwarded?: boolean;
+  // Chat media (docs/16-CHAT-MEDIA-SCOPING.md) — the `path` returned by
+  // create-chat-media-upload-url, once the client's own upload to it has
+  // actually succeeded. `body` may be empty/omitted when media_path is
+  // present (a captionless photo is a real message); fn_send_message is
+  // the actual authority on that, and on media_path really having been
+  // issued to this caller (CLAUDE.md rule #1 — never trust a client path
+  // string on faith).
+  media_path?: string;
+  media_type?: string;
 }
 
 interface FnSendMessageRow {
@@ -86,6 +95,15 @@ function mapSendMessageError(pgMessage: string): Response {
   if (pgMessage.startsWith('invalid_reply_target')) {
     return errorResponse(400, 'invalid_reply_target', 'That message cannot be replied to.');
   }
+  if (pgMessage.startsWith('invalid_media_path')) {
+    return errorResponse(400, 'invalid_media_path', 'That media was not uploaded by you.');
+  }
+  if (pgMessage.startsWith('unsupported_media_type')) {
+    return errorResponse(400, 'unsupported_media_type', 'Unsupported media type.');
+  }
+  if (pgMessage.startsWith('media_not_found')) {
+    return errorResponse(400, 'media_not_found', 'That media was not found — try uploading again.');
+  }
   if (pgMessage.startsWith('insufficient_credit')) {
     // fn_send_message raises 'insufficient_credit: need % have %'.
     const match = /need (\d+) have (\d+)/.exec(pgMessage);
@@ -121,8 +139,21 @@ Deno.serve(async (req) => {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.body !== 'string' || payload.body.trim().length === 0) {
+  const hasMedia = typeof payload.media_path === 'string' && payload.media_path.trim().length > 0;
+
+  if (payload.body !== undefined && typeof payload.body !== 'string') {
+    return errorResponse(400, 'invalid_request', 'body must be a string.');
+  }
+  const body = payload.body ?? '';
+  if (body.trim().length === 0 && !hasMedia) {
     return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
+  }
+
+  if (payload.media_path !== undefined && typeof payload.media_path !== 'string') {
+    return errorResponse(400, 'invalid_request', 'media_path must be a string.');
+  }
+  if (hasMedia && payload.media_type !== 'image') {
+    return errorResponse(400, 'unsupported_media_type', 'Unsupported media type.');
   }
 
   if (
@@ -195,16 +226,53 @@ Deno.serve(async (req) => {
   // exists to reference.
   let flaggedCategories: string[] | null = null;
   try {
-    const moderation = await createOpenAiModerationProvider(
-      loadOpenAiModerationConfig(),
-    ).moderateText(payload.body);
+    const moderationProvider = createOpenAiModerationProvider(loadOpenAiModerationConfig());
+    const textModeration = await moderationProvider.moderateText(body);
 
-    if (moderation.action === 'blocked') {
+    // Image moderation (docs/16-CHAT-MEDIA-SCOPING.md §5) — checked
+    // separately from text, both before fn_send_message: either one
+    // blocking is enough to block the whole message, same "never charged
+    // or delivered" posture the text-only path already has. Downloads the
+    // just-uploaded object with the service-role client (chat-media is
+    // private; this bypasses its RLS the same way every other service-
+    // role read in this codebase does) rather than trusting a client-
+    // supplied mime type for what actually gets sent to OpenAI.
+    let imageModeration: { action: string; categories: string[] } = {
+      action: 'clean',
+      categories: [],
+    };
+    if (hasMedia) {
+      const { data: imageBlob, error: downloadError } = await db.storage
+        .from('chat-media')
+        .download(payload.media_path!);
+      if (downloadError) {
+        // The upload itself is verified server-side by fn_send_message's
+        // own path-ownership check below; a download failure here means
+        // moderation can't run, not that the send should be silently
+        // skipped — fail open on the moderation check specifically (same
+        // posture the catch block below already has for a provider
+        // outage), not on the send itself.
+        console.error('send-message: could not download media for moderation:', downloadError);
+      } else {
+        const imageBytes = new Uint8Array(await imageBlob.arrayBuffer());
+        imageModeration = await moderationProvider.moderateImage(
+          imageBytes,
+          imageBlob.type || 'image/jpeg',
+        );
+      }
+    }
+
+    const blocked = textModeration.action === 'blocked' || imageModeration.action === 'blocked';
+    const flagged =
+      !blocked && (textModeration.action === 'flagged' || imageModeration.action === 'flagged');
+    const categories = [...new Set([...textModeration.categories, ...imageModeration.categories])];
+
+    if (blocked) {
       await db.from('moderated_content').insert({
         user_id: user.id,
         content_type: 'message',
         action: 'blocked',
-        categories: moderation.categories,
+        categories,
       });
       return errorResponse(
         400,
@@ -212,8 +280,8 @@ Deno.serve(async (req) => {
         'This message violates our content policy and could not be sent.',
       );
     }
-    if (moderation.action === 'flagged') {
-      flaggedCategories = moderation.categories;
+    if (flagged) {
+      flaggedCategories = categories;
     }
   } catch (e) {
     // A moderation-provider outage must not take down messaging — fail
@@ -227,10 +295,12 @@ Deno.serve(async (req) => {
     .rpc('fn_send_message', {
       p_thread_id: threadId,
       p_sender_id: user.id,
-      p_body: payload.body,
+      p_body: body,
       p_client_message_id: payload.client_message_id ?? null,
       p_reply_to_message_id: payload.reply_to_message_id ?? null,
       p_is_forwarded: payload.is_forwarded ?? false,
+      p_media_path: hasMedia ? payload.media_path : null,
+      p_media_type: hasMedia ? 'image' : null,
     })
     .single();
 
@@ -274,13 +344,20 @@ Deno.serve(async (req) => {
       .eq('id', user.id)
       .maybeSingle();
 
-    await sendPushToUser(
-      db,
-      recipientId,
-      sender?.display_name ?? 'New message',
-      payload.body!.length > 120 ? `${payload.body!.slice(0, 117)}...` : payload.body!,
-      { thread_id: threadId },
-    );
+    // A captionless photo has nothing for the push body to truncate —
+    // "📷 Photo" matches the same convention WhatsApp's own notification
+    // text uses for a media-only message.
+    const pushBody = body.trim().length
+      ? body.length > 120
+        ? `${body.slice(0, 117)}...`
+        : body
+      : hasMedia
+        ? '📷 Photo'
+        : '';
+
+    await sendPushToUser(db, recipientId, sender?.display_name ?? 'New message', pushBody, {
+      thread_id: threadId,
+    });
   });
 
   return json(200, {
