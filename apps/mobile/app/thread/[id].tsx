@@ -5,7 +5,6 @@ import {
   AppState,
   FlatList,
   Image,
-  Keyboard,
   Modal,
   Pressable,
   StyleSheet,
@@ -22,7 +21,6 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { BuyCreditModal } from '@/components/ui/BuyCreditModal';
 import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
-import { EmojiPicker } from '@/components/chat/EmojiPicker';
 import { type ForwardTarget, ForwardMessageModal } from '@/components/chat/ForwardMessageModal';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
@@ -223,6 +221,7 @@ function ThreadOverflowMenu({
   currentUserId,
   onBlockedChange,
   onMutedChange,
+  onBuyCredit,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -237,6 +236,10 @@ function ThreadOverflowMenu({
   onBlockedChange: () => void;
   /** Same reasoning as onBlockedChange, for the mute toggle. */
   onMutedChange: () => void;
+  /** docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §A3 — opens the same
+   * BuyCreditModal the insufficient-credit flow already uses; this menu
+   * only closes itself and hands off, no new modal/state of its own. */
+  onBuyCredit: () => void;
 }) {
   const { colors, spacing, radius } = useTheme();
   const setBlocked = useSetThreadBlocked();
@@ -292,6 +295,17 @@ function ThreadOverflowMenu({
               },
             ]}
           >
+            <Pressable
+              style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
+              onPress={() => {
+                onClose();
+                onBuyCredit();
+              }}
+            >
+              <Text variant="bodyMedium" color="primary">
+                Buy chat credit
+              </Text>
+            </Pressable>
             <Pressable
               style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
               onPress={handleToggleMute}
@@ -605,10 +619,16 @@ function MessageBubble({
             {formatMessageTime(message.created_at)}
           </Text>
           {isOwn && isRead !== undefined ? (
+            // docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §A1 — sized
+            // up from 14 (closer to WhatsApp's own tick-to-text ratio,
+            // approximated — not pixel-verified against a live WhatsApp
+            // build from this environment) and the double-tick turns
+            // `tickRead` (a deliberate yellow, not WhatsApp's blue) once
+            // read, instead of just a subtler opacity of the bubble text.
             <Ionicons
               name={isRead ? 'checkmark-done' : 'checkmark'}
-              size={14}
-              color={withAlpha(colors.textInverse, isRead ? 1 : 0.75)}
+              size={16}
+              color={isRead ? colors.tickRead : withAlpha(colors.textInverse, 0.75)}
             />
           ) : null}
         </View>
@@ -849,8 +869,6 @@ export default function ThreadScreen() {
   const isBlocked = !!headerInfo?.blockedByMe || !!headerInfo?.blockedByPartner;
 
   const [body, setBody] = useState('');
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const composerInputRef = useRef<TextInput>(null);
 
   // Chat media (docs/16-CHAT-MEDIA-SCOPING.md) — a picked-but-not-yet-sent
@@ -957,44 +975,6 @@ export default function ThreadScreen() {
   const scrollToLatest = () => {
     isNearBottomRef.current = true;
     requestAnimationFrame(() => messageListRef.current?.scrollToEnd({ animated: true }));
-  };
-
-  // Insert at the tracked cursor position, not always at the end — a
-  // plain append would silently relocate an emoji away from where the
-  // user was actually typing whenever they'd moved the cursor first.
-  const insertEmoji = (emoji: string) => {
-    setBody((prev) => prev.slice(0, selection.start) + emoji + prev.slice(selection.end));
-    const nextPos = selection.start + emoji.length;
-    setSelection({ start: nextPos, end: nextPos });
-  };
-
-  // The emoji panel's own backspace key — deletes one character (a
-  // single emoji is usually more than one UTF-16 code unit, but Array.from
-  // splits on whole Unicode code points, so this removes exactly one
-  // visible character/emoji, not half of one, the same class of bug a
-  // naive `.slice(0, -1)` would have).
-  const handleEmojiBackspace = () => {
-    setBody((prev) => {
-      if (selection.start === 0 && selection.start === selection.end) return prev;
-      const before = prev.slice(0, selection.end);
-      const chars = Array.from(before);
-      chars.pop();
-      const newBefore = chars.join('');
-      const removed = before.length - newBefore.length;
-      const nextPos = selection.end - removed;
-      setSelection({ start: nextPos, end: nextPos });
-      return newBefore + prev.slice(selection.end);
-    });
-  };
-
-  const toggleEmojiPicker = () => {
-    if (showEmojiPicker) {
-      setShowEmojiPicker(false);
-      composerInputRef.current?.focus();
-    } else {
-      Keyboard.dismiss();
-      setShowEmojiPicker(true);
-    }
   };
 
   // A message that couldn't send for lack of chat credit — held locally
@@ -1370,7 +1350,6 @@ export default function ThreadScreen() {
     setReplyingTo(null);
     setEditingMessage(message);
     setBody(message.body);
-    setSelection({ start: message.body.length, end: message.body.length });
     composerInputRef.current?.focus();
   };
 
@@ -1637,9 +1616,18 @@ export default function ThreadScreen() {
               )
             : () =>
                 headerInfo ? (
-                  <Pressable onPress={() => setMenuVisible(true)} hitSlop={12}>
-                    <Ionicons name="ellipsis-vertical" size={22} color={colors.textSecondary} />
-                  </Pressable>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+                    {/* docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §A3
+                        — same BuyCreditModal the insufficient-credit flow
+                        already uses, just a second, always-available entry
+                        point suggested right in the header. */}
+                    <Pressable onPress={() => setBuyCreditVisible(true)} hitSlop={12}>
+                      <Ionicons name="wallet-outline" size={21} color={colors.textSecondary} />
+                    </Pressable>
+                    <Pressable onPress={() => setMenuVisible(true)} hitSlop={12}>
+                      <Ionicons name="ellipsis-vertical" size={22} color={colors.textSecondary} />
+                    </Pressable>
+                  </View>
                 ) : null,
         }}
       />
@@ -1831,18 +1819,6 @@ export default function ThreadScreen() {
               { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, gap: spacing.sm },
             ]}
           >
-            <Pressable
-              onPress={isBlocked ? undefined : toggleEmojiPicker}
-              disabled={isBlocked}
-              hitSlop={4}
-              style={{ paddingBottom: 6 }}
-            >
-              <Ionicons
-                name={showEmojiPicker ? 'keypad-outline' : 'happy-outline'}
-                size={24}
-                color={colors.textSecondary}
-              />
-            </Pressable>
             {/* Media attach (docs/16-CHAT-MEDIA-SCOPING.md) — hidden while
              * editing (attaching/swapping media on an edit isn't
              * supported, §3) or already carrying a picked photo (remove it
@@ -1862,8 +1838,6 @@ export default function ThreadScreen() {
               ref={composerInputRef}
               value={body}
               onChangeText={setBody}
-              onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
-              onFocus={() => setShowEmojiPicker(false)}
               placeholder={isBlocked ? 'Unblock to send a message' : 'Message…'}
               placeholderTextColor={colors.textSecondary}
               editable={!isBlocked}
@@ -1897,10 +1871,6 @@ export default function ThreadScreen() {
               />
             </Pressable>
           </View>
-
-          {showEmojiPicker ? (
-            <EmojiPicker onSelectEmoji={insertEmoji} onBackspace={handleEmojiBackspace} />
-          ) : null}
         </KeyboardAvoidingScreen>
       </Screen>
 
@@ -1915,6 +1885,7 @@ export default function ThreadScreen() {
           currentUserId={currentUserId}
           onBlockedChange={() => setHeaderRefetchKey((k) => k + 1)}
           onMutedChange={() => setHeaderRefetchKey((k) => k + 1)}
+          onBuyCredit={() => setBuyCreditVisible(true)}
         />
       ) : null}
 

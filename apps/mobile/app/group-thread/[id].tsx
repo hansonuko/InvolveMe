@@ -2,22 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { useRef, useState } from 'react';
-import {
-  Alert,
-  FlatList,
-  Keyboard,
-  Modal,
-  Pressable,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ActionSheet, type ActionSheetAction } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
-import { EmojiPicker } from '@/components/chat/EmojiPicker';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { MemberSearchList } from '@/components/groups/MemberSearchList';
 import { Screen } from '@/components/ui/Screen';
@@ -650,8 +640,6 @@ export default function GroupThreadScreen() {
 
   const [body, setBody] = useState('');
   const [infoVisible, setInfoVisible] = useState(false);
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const composerInputRef = useRef<TextInput>(null);
 
   const memberById = new Map((members ?? []).map((m) => [m.user_id, m]));
@@ -680,42 +668,6 @@ export default function GroupThreadScreen() {
         onSuccess: () => setBody(''),
       },
     );
-  };
-
-  // Same cursor-aware insert/backspace shape as thread/[id].tsx's own
-  // emoji wiring — see that file's comments for the reasoning; kept
-  // duplicated rather than shared since each composer's surrounding state
-  // (credit prompts, blocked state) differs enough that extracting a
-  // shared composer component is a bigger, separate refactor than this
-  // punch-list item asked for.
-  const insertEmoji = (emoji: string) => {
-    setBody((prev) => prev.slice(0, selection.start) + emoji + prev.slice(selection.end));
-    const nextPos = selection.start + emoji.length;
-    setSelection({ start: nextPos, end: nextPos });
-  };
-
-  const handleEmojiBackspace = () => {
-    setBody((prev) => {
-      if (selection.start === 0 && selection.start === selection.end) return prev;
-      const before = prev.slice(0, selection.end);
-      const chars = Array.from(before);
-      chars.pop();
-      const newBefore = chars.join('');
-      const removed = before.length - newBefore.length;
-      const nextPos = selection.end - removed;
-      setSelection({ start: nextPos, end: nextPos });
-      return newBefore + prev.slice(selection.end);
-    });
-  };
-
-  const toggleEmojiPicker = () => {
-    if (showEmojiPicker) {
-      setShowEmojiPicker(false);
-      composerInputRef.current?.focus();
-    } else {
-      Keyboard.dismiss();
-      setShowEmojiPicker(true);
-    }
   };
 
   return (
@@ -792,19 +744,10 @@ export default function GroupThreadScreen() {
               { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, gap: spacing.sm },
             ]}
           >
-            <Pressable onPress={toggleEmojiPicker} hitSlop={4} style={{ paddingBottom: 6 }}>
-              <Ionicons
-                name={showEmojiPicker ? 'keypad-outline' : 'happy-outline'}
-                size={24}
-                color={colors.textSecondary}
-              />
-            </Pressable>
             <TextInput
               ref={composerInputRef}
               value={body}
               onChangeText={setBody}
-              onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
-              onFocus={() => setShowEmojiPicker(false)}
               placeholder="Message…"
               placeholderTextColor={colors.textSecondary}
               multiline
@@ -835,10 +778,6 @@ export default function GroupThreadScreen() {
               <Ionicons name="send" size={20} color={colors.textInverse} />
             </Pressable>
           </View>
-
-          {showEmojiPicker ? (
-            <EmojiPicker onSelectEmoji={insertEmoji} onBackspace={handleEmojiBackspace} />
-          ) : null}
         </KeyboardAvoidingScreen>
       </Screen>
 
