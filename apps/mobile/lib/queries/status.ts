@@ -193,71 +193,86 @@ export function useStatusMediaUrl(mediaPath: string | null) {
   });
 }
 
-export interface StatusLiker {
+export interface StatusViewer {
   id: string;
   display_name: string | null;
   avatar_url: string | null;
-  /** When this person liked the status — status_likes.created_at. */
-  liked_at: string;
+  /** When this person viewed the status. */
+  viewed_at: string;
+  /** When this person also liked it — `null` if they viewed but never
+   * liked. Never populated without `viewed_at` also being set in this
+   * app's actual flow (StoryViewer marks a status viewed the moment it's
+   * displayed, before the like button is even reachable), but a like row
+   * with no matching view row is still included by union rather than
+   * silently dropped, in case that invariant is ever loosened. */
+  liked_at: string | null;
 }
 
-/** Poster-only "who liked this and when" (punch-list item 7, 2026-09-19) —
- * `status_likes_select_as_poster` RLS (20260919110000_status_likes.sql)
- * already exists specifically to support this, per that migration's own
- * comment ("sets up a future 'who liked this' list with no further RLS
- * change needed") — a non-poster's equivalent query just returns their
- * own like row, not everyone's, same "poster sees all, everyone else sees
- * only their own" shape status_views already established. */
-export function useStatusLikers(statusId: string | undefined) {
+/** Poster-only "who viewed this status, and whether they also liked it" —
+ * one combined list, not two separate surfaces, matching WhatsApp: tapping
+ * the eye icon shows every viewer, with a small heart next to whichever
+ * ones also liked, rather than a separate "liked by" entry point. Built
+ * from the union of `status_views` and `status_likes` (both already
+ * poster-readable via `status_views_select_as_poster` /
+ * `status_likes_select_as_poster`) rather than starting from viewers alone
+ * and annotating likes onto them — a like without a matching view row
+ * "shouldn't" happen given the auto-view-on-display flow, but this way it
+ * still shows up instead of being silently dropped if that ever changes.
+ * Sorted most-recent-first by whichever timestamp is later (a like always
+ * happens at or after its own view in practice, so this is effectively
+ * "most recently viewed first" — WhatsApp's own ordering). */
+export function useStatusViewers(statusId: string | undefined) {
   return useQuery({
-    queryKey: ['statusLikers', statusId],
+    queryKey: ['statusViewers', statusId],
     enabled: !!statusId,
-    queryFn: async (): Promise<StatusLiker[]> => {
-      const { data: likes, error } = await supabase
-        .from('status_likes')
-        .select('liker_id, created_at')
-        .eq('status_id', statusId as string)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      if (!likes?.length) return [];
+    queryFn: async (): Promise<StatusViewer[]> => {
+      const [{ data: views, error: viewsError }, { data: likes, error: likesError }] =
+        await Promise.all([
+          supabase
+            .from('status_views')
+            .select('viewer_id, viewed_at')
+            .eq('status_id', statusId as string),
+          supabase
+            .from('status_likes')
+            .select('liker_id, created_at')
+            .eq('status_id', statusId as string),
+        ]);
+      if (viewsError) throw viewsError;
+      if (likesError) throw likesError;
 
-      const { data: likers, error: likersError } = await supabase
+      const likedAtByUserId = new Map((likes ?? []).map((l) => [l.liker_id, l.created_at]));
+      const viewedAtByUserId = new Map((views ?? []).map((v) => [v.viewer_id, v.viewed_at]));
+      const userIds = new Set([...viewedAtByUserId.keys(), ...likedAtByUserId.keys()]);
+      if (!userIds.size) return [];
+
+      const { data: users, error: usersError } = await supabase
         .from('users')
         .select('id, display_name, avatar_url')
-        .in(
-          'id',
-          likes.map((l) => l.liker_id),
-        );
-      if (likersError) throw likersError;
+        .in('id', [...userIds]);
+      if (usersError) throw usersError;
 
-      const likerById = new Map((likers ?? []).map((u) => [u.id, u]));
-      return likes.map((l) => {
-        const user = likerById.get(l.liker_id);
-        return {
-          id: l.liker_id,
-          display_name: user?.display_name ?? null,
-          avatar_url: user?.avatar_url ?? null,
-          liked_at: l.created_at,
-        };
-      });
-    },
-  });
-}
-
-/** Poster-only view count (docs/10 item 4 — "visible to the poster only").
- * `status_views_select_as_poster` RLS is what actually enforces this: a
- * non-poster's equivalent query just returns 0 rows, not an error. */
-export function useStatusViewCount(statusId: string | undefined) {
-  return useQuery({
-    queryKey: ['statusViewCount', statusId],
-    enabled: !!statusId,
-    queryFn: async (): Promise<number> => {
-      const { count, error } = await supabase
-        .from('status_views')
-        .select('*', { count: 'exact', head: true })
-        .eq('status_id', statusId as string);
-      if (error) throw error;
-      return count ?? 0;
+      const userById = new Map((users ?? []).map((u) => [u.id, u]));
+      return [...userIds]
+        .map((id) => {
+          const user = userById.get(id);
+          const viewedAt = viewedAtByUserId.get(id);
+          const likedAt = likedAtByUserId.get(id) ?? null;
+          return {
+            id,
+            display_name: user?.display_name ?? null,
+            avatar_url: user?.avatar_url ?? null,
+            // Falls back to the like's own timestamp on the (shouldn't-
+            // happen) union-only case described above, rather than an
+            // empty string that would sort unpredictably.
+            viewed_at: viewedAt ?? likedAt ?? new Date(0).toISOString(),
+            liked_at: likedAt,
+          };
+        })
+        .sort((a, b) => {
+          const aLatest = a.liked_at && a.liked_at > a.viewed_at ? a.liked_at : a.viewed_at;
+          const bLatest = b.liked_at && b.liked_at > b.viewed_at ? b.liked_at : b.viewed_at;
+          return bLatest.localeCompare(aLatest);
+        });
     },
   });
 }
