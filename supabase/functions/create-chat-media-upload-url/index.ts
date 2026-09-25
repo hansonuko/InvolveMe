@@ -1,24 +1,31 @@
 // POST /functions/v1/create-chat-media-upload-url
 //
-// docs/16-CHAT-MEDIA-SCOPING.md §4 — mints a one-time signed upload URL for
-// the caller's own chat photo, same shape as create-status-upload-url
-// (never a broad client-side credential onto the bucket). The path is
-// always `${user.id}/${uuid}.jpg` — server-derived from the verified JWT,
-// never client-supplied, so nobody can request a signed URL into someone
-// else's folder, AND (unlike status's own pipeline — see this session's
-// migration header comment) this exact prefix is what fn_send_message
+// docs/16-CHAT-MEDIA-SCOPING.md §4 / docs/17-VOICE-NOTES-SCOPING.md §8 —
+// mints a one-time signed upload URL for the caller's own chat attachment
+// (photo or voice note), same shape as create-status-upload-url (never a
+// broad client-side credential onto the bucket). The path is always
+// `${user.id}/${uuid}.<ext>` — server-derived from the verified JWT, never
+// client-supplied, so nobody can request a signed URL into someone else's
+// folder, AND (unlike status's own pipeline — see the chat-media
+// migration's header comment) this exact prefix is what fn_send_message
 // checks p_media_path against before ever charging or inserting a
 // message, so a fabricated path can't reference another user's real
-// upload slot either. `chat-media`'s own bucket
-// (20260925120000_chat_media_pipeline.sql) has no INSERT RLS policy for
-// `authenticated` at all — the signed token itself is what authorizes the
-// eventual upload, not a Postgres row.
+// upload slot either. `chat-media`'s own bucket has no INSERT RLS policy
+// for `authenticated` at all — the signed token itself is what authorizes
+// the eventual upload, not a Postgres row.
+//
+// `kind` (optional body field, defaults to 'image' for backward
+// compatibility with the original photo-only client) selects the file
+// extension and implicitly which media_type the caller is expected to
+// pass to send-message next — this function itself has no opinion on
+// media_type validity beyond the extension choice; fn_send_message is the
+// actual enforcement point (CLAUDE.md rule #1: no financial/authorization
+// logic lives here).
 //
 // The client uploads directly to the returned `signed_url` using the
 // returned `token` (supabase-js's `storage.uploadToSignedUrl`), then calls
 // send-message with the same `path` as `media_path` once the upload
-// succeeds. This function never touches messages or the ledger — no
-// financial logic here (CLAUDE.md rule #1).
+// succeeds. This function never touches messages or the ledger.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 
@@ -32,6 +39,11 @@ function json(status: number, payload: unknown): Response {
 function errorResponse(status: number, code: string, message: string): Response {
   return json(status, { error: code, message });
 }
+
+const EXTENSION_BY_KIND: Record<string, string> = {
+  image: 'jpg',
+  audio: 'm4a',
+};
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
@@ -47,7 +59,28 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  const path = `${user.id}/${crypto.randomUUID()}.jpg`;
+  // Body is optional — an empty/missing body keeps the original photo-only
+  // behavior (`kind` defaults to 'image') rather than requiring every
+  // existing caller to change.
+  let kind = 'image';
+  try {
+    const body = await req.json();
+    if (body && typeof body.kind === 'string') kind = body.kind;
+  } catch {
+    // No body, or not JSON — fall through with the default 'image' kind,
+    // same as before this parameter existed.
+  }
+
+  const extension = EXTENSION_BY_KIND[kind];
+  if (!extension) {
+    return errorResponse(
+      400,
+      'invalid_kind',
+      `kind must be one of: ${Object.keys(EXTENSION_BY_KIND).join(', ')}`,
+    );
+  }
+
+  const path = `${user.id}/${crypto.randomUUID()}.${extension}`;
 
   const db = serviceRoleClient();
   const { data, error } = await db.storage.from('chat-media').createSignedUploadUrl(path);

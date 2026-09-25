@@ -94,6 +94,43 @@ async function runModeration(
   return { action, categories: flaggedCategories };
 }
 
+/** Transcribes audio via OpenAI's `audio/transcriptions` endpoint
+ * (Whisper) — a different endpoint from `runModeration` above (multipart
+ * form upload, not a JSON `input`), so it's its own function rather than
+ * folded into that shared helper. Returns the raw transcript text; an
+ * empty/silent recording legitimately transcribes to an empty string,
+ * which moderateAudio below treats the same way moderateText already
+ * treats empty input — nothing to moderate, 'clean'. */
+async function transcribeAudio(
+  config: OpenAiModerationConfig,
+  audioBytes: Uint8Array,
+  mimeType: string,
+): Promise<string> {
+  const extension = mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a' : 'bin';
+  const form = new FormData();
+  // `Uint8Array<ArrayBufferLike>` vs. `BlobPart`'s `ArrayBuffer<ArrayBuffer>`
+  // expectation is a lib.dom.d.ts generic-strictness mismatch, not a real
+  // runtime incompatibility — Blob has always accepted a Uint8Array.
+  form.append('file', new Blob([audioBytes as BlobPart], { type: mimeType }), `audio.${extension}`);
+  form.append('model', 'whisper-1');
+
+  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.apiKey}` },
+    body: form,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `OpenAI transcription request failed: HTTP ${res.status} — ${body.slice(0, 500)}`,
+    );
+  }
+
+  const parsed = (await res.json()) as { text?: string };
+  return parsed.text ?? '';
+}
+
 /** Encodes a byte array to base64 without Node's `Buffer` (Deno's Edge
  * Function runtime has it too, but this package is shared/imported from
  * plain TS, not Deno-specific — no assumption either way). Fine for the
@@ -132,6 +169,19 @@ export function createOpenAiModerationProvider(
 
       const dataUri = `data:${mimeType};base64,${bytesToBase64(imageBytes)}`;
       return runModeration(config, [{ type: 'image_url', image_url: { url: dataUri } }]);
+    },
+
+    async moderateAudio(audioBytes: Uint8Array, mimeType: string): Promise<ModerationResult> {
+      if (!audioBytes || audioBytes.length === 0) {
+        return { action: 'clean', categories: [] };
+      }
+
+      const transcript = await transcribeAudio(config, audioBytes, mimeType);
+      if (!transcript || transcript.trim().length === 0) {
+        return { action: 'clean', categories: [] };
+      }
+
+      return runModeration(config, transcript);
     },
   };
 }
