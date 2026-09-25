@@ -64,10 +64,27 @@ export const supabase = createClient(
 // the phone-number entry screen, exactly matching the report. This makes
 // every foreground transition explicitly kick the refresh check itself,
 // closing the gap instead of relying on a timer that may never get to run.
+//
+// Second gap of the exact same shape, found investigating a live report of
+// stale presence ("last seen" not updating / not showing "online" even
+// when the other person clearly was) — Realtime's own websocket has the
+// identical background-suspension problem the auth timer had: RN
+// suspends the socket while backgrounded, and unlike the auth client,
+// supabase-js does not automatically redial it on its own. Any
+// `useRealtimeTableChanges` subscription (thread/[id].tsx's live
+// `user-last-seen:*` listener among them, see lib/realtimeChannel.ts) can
+// silently stop receiving `postgres_changes` events after any
+// backgrounding until something explicitly reconnects the socket — this
+// is that explicit reconnect, mirroring the auth fix's own pattern
+// exactly. Disconnecting on background (rather than leaving it to die on
+// its own) is Supabase's own documented React Native guidance and avoids
+// a half-dead socket lingering before the next foreground reconnect.
 AppState.addEventListener('change', (state) => {
   if (state === 'active') {
     void supabase.auth.startAutoRefresh();
+    supabase.realtime.connect();
   } else {
     void supabase.auth.stopAutoRefresh();
+    supabase.realtime.disconnect();
   }
 });
