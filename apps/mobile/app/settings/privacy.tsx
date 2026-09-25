@@ -286,7 +286,7 @@ export default function PrivacySettingsScreen() {
           headerTitleStyle: { color: colors.textPrimary },
         }}
       />
-      <Screen>
+      <Screen edges={['right', 'bottom', 'left']}>
         <SettingsRow
           label="Read receipts"
           right={

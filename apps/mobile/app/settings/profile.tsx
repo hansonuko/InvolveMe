@@ -167,7 +167,7 @@ export default function ProfileSettingsScreen() {
           headerTitleStyle: { color: colors.textPrimary },
         }}
       />
-      <Screen style={{ paddingHorizontal: 0 }}>
+      <Screen style={{ paddingHorizontal: 0 }} edges={['right', 'bottom', 'left']}>
         {isLoading ? (
           <Text variant="body" color="secondary" style={{ paddingHorizontal: spacing.lg }}>
             Loading…

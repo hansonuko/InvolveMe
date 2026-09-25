@@ -734,7 +734,7 @@ export default function GroupThreadScreen() {
           ),
         }}
       />
-      <Screen style={{ paddingHorizontal: 0 }}>
+      <Screen style={{ paddingHorizontal: 0 }} edges={['right', 'bottom', 'left']}>
         <ChatWallpaper />
 
         <KeyboardAvoidingScreen>

@@ -24,7 +24,7 @@ export default function AppearanceSettingsScreen() {
           headerTitleStyle: { color: colors.textPrimary },
         }}
       />
-      <Screen>
+      <Screen edges={['right', 'bottom', 'left']}>
         <View style={{ gap: spacing.xs }}>
           {THEME_PREFERENCE_OPTIONS.map((option) => (
             <Pressable
