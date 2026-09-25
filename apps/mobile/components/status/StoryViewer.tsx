@@ -24,16 +24,15 @@ import Animated, {
 import { ActionSheet } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
 import { useKeyboardHeight } from '@/components/ui/KeyboardAvoidingScreen';
-import { StatusLikersModal } from '@/components/status/StatusLikersModal';
+import { StatusViewersModal } from '@/components/status/StatusViewersModal';
 import { Text } from '@/components/ui/Text';
 import { useSendMessage } from '@/lib/queries/messages';
 import {
   useDeleteStatus,
   useMarkStatusViewed,
   useStatusLiked,
-  useStatusLikers,
   useStatusMediaUrl,
-  useStatusViewCount,
+  useStatusViewers,
   useToggleStatusLike,
   type StatusFeedGroup,
   type StatusUpdate,
@@ -232,10 +231,8 @@ function PosterPage({
   const { colors, spacing } = useTheme();
   const router = useRouter();
   const status = group.statuses[itemIndex];
-  const viewCount = useStatusViewCount(isOwn && isActive ? status?.id : undefined);
-  const likers = useStatusLikers(isOwn && isActive ? status?.id : undefined);
-  const [showViewCount, setShowViewCount] = useState(false);
-  const [likersModalOpen, setLikersModalOpen] = useState(false);
+  const viewers = useStatusViewers(isOwn && isActive ? status?.id : undefined);
+  const [viewersModalOpen, setViewersModalOpen] = useState(false);
   // Overflow menu for delete (punch-list item 7, 2026-09-19) — physically
   // separated from the view/likes controls at the bottom of the screen
   // (lives in the header instead, next to Close) specifically so a tap
@@ -442,26 +439,18 @@ function PosterPage({
 
       {isOwn ? (
         <View style={[styles.ownControls, { paddingHorizontal: spacing.lg, gap: spacing.lg }]}>
+          {/* One combined "who viewed this" entry point (WhatsApp's own
+           * shape) — no separate heart/likers button; a viewer who also
+           * liked shows a small heart inline in the list itself
+           * (StatusViewersModal), not as its own surface. */}
           <Pressable
-            onPress={() => setShowViewCount((v) => !v)}
+            onPress={() => setViewersModalOpen(true)}
             style={styles.ownControlButton}
             hitSlop={8}
           >
             <Ionicons name="eye" size={20} color="#fff" />
-            {showViewCount ? (
-              <Text variant="caption" color="inverse" style={{ marginLeft: 6 }}>
-                {viewCount.data ?? 0} views
-              </Text>
-            ) : null}
-          </Pressable>
-          <Pressable
-            onPress={() => setLikersModalOpen(true)}
-            style={styles.ownControlButton}
-            hitSlop={8}
-          >
-            <Ionicons name="heart" size={20} color="#fff" />
             <Text variant="caption" color="inverse" style={{ marginLeft: 6 }}>
-              {likers.data?.length ?? 0} likes
+              {viewers.data?.length ?? 0} views
             </Text>
           </Pressable>
         </View>
@@ -512,11 +501,11 @@ function PosterPage({
             onClose={() => setOwnMenuOpen(false)}
             actions={[{ label: 'Delete status', destructive: true, onPress: handleDeleteStatus }]}
           />
-          <StatusLikersModal
-            visible={likersModalOpen}
-            onClose={() => setLikersModalOpen(false)}
-            likers={likers.data ?? []}
-            isLoading={likers.isLoading}
+          <StatusViewersModal
+            visible={viewersModalOpen}
+            onClose={() => setViewersModalOpen(false)}
+            viewers={viewers.data ?? []}
+            isLoading={viewers.isLoading}
           />
         </>
       ) : null}

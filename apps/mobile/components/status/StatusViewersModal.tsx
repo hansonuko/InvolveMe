@@ -1,35 +1,33 @@
+import { Ionicons } from '@expo/vector-icons';
 import { FlatList, Modal, Pressable, View } from 'react-native';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { Text } from '@/components/ui/Text';
-import { type StatusLiker } from '@/lib/queries/status';
+import { type StatusViewer } from '@/lib/queries/status';
 import { useTheme } from '@/theme';
 
 /** "3:45 PM" — same bare-clock-time format thread/[id].tsx's own
- * formatMessageTime uses for "what time" asks elsewhere in this app
- * (punch-list item 4's sent/read times), kept local here since it's this
- * component's only call site. */
-function formatLikeTime(iso: string): string {
+ * formatMessageTime uses for "what time" asks elsewhere in this app,
+ * kept local here since it's this component's only call site. */
+function formatViewTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-/** Poster-only "who liked this status and when" (punch-list item 7,
- * 2026-09-19) — a plain full-height Modal, same "no bottom-sheet library"
- * call this app's other simple modals already make (ActionSheet's own
- * header comment). Deliberately its own small component, not inlined into
- * StoryViewer (already 500+ lines) — and deliberately a *separate*
- * trigger/surface from the delete action, which is this same punch-list
- * item's other half: "separate the status view feature from the delete
- * button decently so a user does not mistakenly tap the wrong feature." */
-export function StatusLikersModal({
+/** Poster-only "who viewed this status" — one combined list, WhatsApp's
+ * own shape: tapping the eye icon shows every viewer, with a small heart
+ * next to whichever ones also liked it, rather than a separate "liked by"
+ * button/modal (that used to be `StatusLikersModal`, now folded in here —
+ * a viewer either liked or didn't, shown inline, not as its own surface a
+ * user could tap into by mistake). */
+export function StatusViewersModal({
   visible,
   onClose,
-  likers,
+  viewers,
   isLoading,
 }: {
   visible: boolean;
   onClose: () => void;
-  likers: StatusLiker[];
+  viewers: StatusViewer[];
   isLoading: boolean;
 }) {
   const { colors, spacing } = useTheme();
@@ -46,7 +44,7 @@ export function StatusLikersModal({
             paddingBottom: spacing.md,
           }}
         >
-          <Text variant="title">Liked by</Text>
+          <Text variant="title">Viewed by</Text>
           <Pressable onPress={onClose} hitSlop={12}>
             <Text variant="body" color="secondary">
               Close
@@ -60,16 +58,16 @@ export function StatusLikersModal({
               Loading…
             </Text>
           </View>
-        ) : likers.length === 0 ? (
+        ) : viewers.length === 0 ? (
           <View style={{ paddingTop: 48, alignItems: 'center' }}>
             <Text variant="body" color="tertiary">
-              No likes yet.
+              No views yet.
             </Text>
           </View>
         ) : (
           <FlatList
-            data={likers}
-            keyExtractor={(l) => l.id}
+            data={viewers}
+            keyExtractor={(v) => v.id}
             contentContainerStyle={{ paddingHorizontal: spacing.lg }}
             renderItem={({ item }) => (
               <View
@@ -84,8 +82,11 @@ export function StatusLikersModal({
                 <Text variant="bodyMedium" style={{ flex: 1 }}>
                   {item.display_name ?? 'Unnamed'}
                 </Text>
+                {item.liked_at ? (
+                  <Ionicons name="heart" size={16} color={colors.brandPrimary} />
+                ) : null}
                 <Text variant="caption" color="tertiary">
-                  {formatLikeTime(item.liked_at)}
+                  {formatViewTime(item.viewed_at)}
                 </Text>
               </View>
             )}
