@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { Card, Eyebrow, Section } from '@/components/Section';
+import { SignupForm } from '@/components/SignupForm';
 
 const VALUE_PROPS = [
   {
@@ -31,16 +32,19 @@ export default function HomePage() {
             message costs a small, transparent number of credits, held safely until the person
             you&apos;re talking to actually replies.
           </p>
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+          <div className="mt-10">
+            <SignupForm />
+          </div>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-6">
             <Link
               href="/how-it-works"
-              className="rounded-pill bg-accent px-7 py-3.5 text-body font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
+              className="text-body font-semibold text-foreground-accent hover:underline"
             >
               See how it works
             </Link>
             <Link
               href="/pricing"
-              className="rounded-pill border border-border px-7 py-3.5 text-body font-semibold text-foreground transition-colors hover:border-accent"
+              className="text-body font-semibold text-foreground-accent hover:underline"
             >
               View pricing
             </Link>
