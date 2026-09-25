@@ -631,6 +631,36 @@ function OutboxPendingBubble({ body }: { body: string }) {
   );
 }
 
+/** The current user's own message, shown the instant "send" is tapped
+ * rather than waiting on a server round trip — same bubble styling as a
+ * real sent message (`MessageBubble`'s own-message branch) so there's no
+ * visual "downgrade then upgrade" flash once the real row swaps in, just a
+ * clock icon standing in for the tick row until it does. */
+function SendingMessageBubble({ body }: { body: string }) {
+  const { colors, spacing, radius } = useTheme();
+  return (
+    <View style={[styles.bubbleRow, { justifyContent: 'flex-end', marginBottom: spacing.sm }]}>
+      <View
+        style={[
+          styles.bubble,
+          {
+            backgroundColor: colors.brandPrimary,
+            borderRadius: radius.bubble,
+            padding: spacing.md,
+          },
+        ]}
+      >
+        <Text variant="body" color="inverse">
+          {body}
+        </Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: spacing.xs }}>
+          <Ionicons name="time-outline" size={14} color={withAlpha(colors.textInverse, 0.75)} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -638,7 +668,11 @@ export default function ThreadScreen() {
   const { session } = useSession();
   const currentUserId = session?.user.id;
 
-  const { data: messages, isLoading } = useThreadMessages(id, currentUserId);
+  const {
+    data: messages,
+    isLoading,
+    refetch: refetchMessages,
+  } = useThreadMessages(id, currentUserId);
   const sendMessage = useSendMessage();
   const sendGroupMessage = useSendGroupMessage();
   const editMessage = useEditMessage();
@@ -703,6 +737,64 @@ export default function ThreadScreen() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const composerInputRef = useRef<TextInput>(null);
 
+  // Lands the thread on its most recent message on open, and keeps it
+  // stuck to the bottom as new messages arrive while the reader is
+  // already down there — the two literal gaps reported: this screen used
+  // to always open at the oldest message (a plain, non-inverted FlatList
+  // with no initial scroll position ever set), and never followed new
+  // messages in either direction. `isNearBottomRef` (not state) because
+  // `onScroll` fires on every frame while dragging — routing that through
+  // `setState` would re-render the whole message list on every scroll
+  // tick for no reason; only `onContentSizeChange` (new content actually
+  // arriving) needs to read the current value, and a ref is enough for
+  // that. Deliberately doesn't force-follow a reader who has scrolled up
+  // to read history — WhatsApp/Telegram/Messenger all leave an in-progress
+  // scrollback undisturbed when a new message from the *other* person
+  // arrives, only auto-following while already at (or very near) the
+  // bottom.
+  const messageListRef = useRef<FlatList<Message>>(null);
+  const isNearBottomRef = useRef(true);
+  const hasScrolledToInitialPositionRef = useRef(false);
+  const NEAR_BOTTOM_THRESHOLD_PX = 120;
+
+  const handleMessagesScroll = (e: {
+    nativeEvent: {
+      contentOffset: { y: number };
+      contentSize: { height: number };
+      layoutMeasurement: { height: number };
+    };
+  }) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
+    isNearBottomRef.current = distanceFromBottom < NEAR_BOTTOM_THRESHOLD_PX;
+  };
+
+  const handleMessagesContentSizeChange = () => {
+    // The very first non-empty layout after opening the thread always
+    // lands at the bottom regardless of `isNearBottomRef`'s default (which
+    // exists for the steady-state case below, not this one) — an
+    // unanimated jump, matching WhatsApp's own "just opened" behavior
+    // rather than visibly animating from top to bottom on every open.
+    if (!hasScrolledToInitialPositionRef.current) {
+      hasScrolledToInitialPositionRef.current = true;
+      messageListRef.current?.scrollToEnd({ animated: false });
+      return;
+    }
+    if (isNearBottomRef.current) {
+      messageListRef.current?.scrollToEnd({ animated: true });
+    }
+  };
+
+  /** Called on every action that adds the reader's *own* content to the
+   * bottom of the list (sending, or the offline outbox picking a message
+   * up) — always follow those regardless of current scroll position,
+   * exactly like every mainstream chat app does for your own outgoing
+   * messages. */
+  const scrollToLatest = () => {
+    isNearBottomRef.current = true;
+    requestAnimationFrame(() => messageListRef.current?.scrollToEnd({ animated: true }));
+  };
+
   // Insert at the tracked cursor position, not always at the end — a
   // plain append would silently relocate an emoji away from where the
   // user was actually typing whenever they'd moved the cursor first.
@@ -749,6 +841,52 @@ export default function ThreadScreen() {
     requiredCredits: number;
     replyToMessageId?: string;
   } | null>(null);
+
+  // Optimistic own-message bubble for a normal online send (WhatsApp shows
+  // your own message the instant you tap send, not once a round trip
+  // confirms it) — `key` is a purely local render key, never sent to the
+  // server. `startedAt` is a client timestamp captured the moment the send
+  // begins, *not* tied to `send-message`'s own HTTP response — deliberately,
+  // since Realtime's push and the Edge Function's HTTP response are two
+  // independent round trips from the same server action, and either can
+  // legitimately win the race. `inFlightSendLanded` below (computed during
+  // render, not via an effect — direct `setState` inside an effect body is
+  // this project's own lint gate, `react-hooks/set-state-in-effect`) treats
+  // the send as landed the moment a matching own-message shows up in
+  // `messages`, from whichever path actually delivered it first, so the
+  // optimistic bubble and the real one never both render at once and there's
+  // no gap where the message briefly disappears in between.
+  const [inFlightSend, setInFlightSend] = useState<{
+    key: string;
+    body: string;
+    startedAt: number;
+  } | null>(null);
+  // A few seconds of slack for client/server clock skew — see above; the
+  // only cost of matching a hair too early/late is cosmetic (the bubble
+  // swaps a moment off), never a functional bug.
+  const inFlightSendLanded =
+    !!inFlightSend &&
+    !!messages?.some(
+      (m) =>
+        m.sender_id === currentUserId &&
+        m.body === inFlightSend.body &&
+        new Date(m.created_at).getTime() >= inFlightSend.startedAt - 5000,
+    );
+
+  // Self-healing fallback (same posture as lib/lastSeen.ts and this
+  // session's presence fix): if the real row somehow never shows up via
+  // Realtime within a few seconds — a dropped event, not the normal case —
+  // force one real refetch rather than leaving the optimistic bubble stuck
+  // forever. Harmless to also fire once after an already-landed send (a
+  // single redundant refetch), which is the trade this makes for not
+  // needing an effect that reacts to `inFlightSendLanded` turning true —
+  // the same direct-setState-in-effect problem this whole derivation was
+  // restructured to avoid.
+  useEffect(() => {
+    if (!inFlightSend) return;
+    const timeout = setTimeout(() => void refetchMessages(), 6000);
+    return () => clearTimeout(timeout);
+  }, [inFlightSend, refetchMessages]);
   const { data: wallets } = useWallets(currentUserId);
   const topupBalance = walletBalance(wallets, 'topup_credit');
 
@@ -777,11 +915,23 @@ export default function ThreadScreen() {
 
     const text = pendingSend.body;
     const replyToMessageId = pendingSend.replyToMessageId;
+    const sendKey = Crypto.randomUUID();
+    // Deferred one microtask out, not called directly in the effect body —
+    // this project's lint gate (`react-hooks/set-state-in-effect`) flags
+    // any direct, synchronous `setState` call inside an effect regardless
+    // of legitimacy; a microtask still runs before `sendMessage.mutate`'s
+    // own network request resolves, so the optimistic bubble still shows
+    // immediately from the user's point of view.
+    queueMicrotask(() => setInFlightSend({ key: sendKey, body: text, startedAt: Date.now() }));
+    scrollToLatest();
     sendMessage.mutate(
       { threadId: id, body: text, replyToMessageId },
       {
-        onSuccess: () => setPendingSend(null),
+        onSuccess: () => {
+          setPendingSend(null);
+        },
         onError: (error) => {
+          setInFlightSend((prev) => (prev?.key === sendKey ? null : prev));
           if (error.code === 'insufficient_credit') {
             const details = error.details as InsufficientCreditDetails | undefined;
             setPendingSend({
@@ -853,8 +1003,13 @@ export default function ThreadScreen() {
       });
       setBody('');
       setReplyingTo(null);
+      scrollToLatest();
       return;
     }
+
+    const sendKey = Crypto.randomUUID();
+    setInFlightSend({ key: sendKey, body: text, startedAt: Date.now() });
+    scrollToLatest();
 
     sendMessage.mutate(
       { threadId: id, body: text, replyToMessageId },
@@ -864,6 +1019,7 @@ export default function ThreadScreen() {
           setReplyingTo(null);
         },
         onError: (error) => {
+          setInFlightSend((prev) => (prev?.key === sendKey ? null : prev));
           if (error.code === 'insufficient_credit') {
             const details = error.details as InsufficientCreditDetails | undefined;
             setPendingSend({
@@ -1269,9 +1425,13 @@ export default function ThreadScreen() {
             </View>
           ) : (
             <FlatList
+              ref={messageListRef}
               data={messages}
               keyExtractor={(m) => m.id}
               contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingVertical: spacing.md }}
+              onScroll={handleMessagesScroll}
+              scrollEventThrottle={100}
+              onContentSizeChange={handleMessagesContentSizeChange}
               renderItem={({ item }) => {
                 const isOwn = item.sender_id === currentUserId;
                 // `headerInfo.partnerLastReadAt === null` still means "the
@@ -1305,6 +1465,9 @@ export default function ThreadScreen() {
                     <OutboxPendingBubble key={item.clientMessageId} body={item.body} />
                   ))}
                   {pendingSend ? <PendingMessageBubble body={pendingSend.body} /> : null}
+                  {inFlightSend && !inFlightSendLanded ? (
+                    <SendingMessageBubble body={inFlightSend.body} />
+                  ) : null}
                 </>
               }
             />

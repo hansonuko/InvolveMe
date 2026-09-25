@@ -93,12 +93,38 @@ export function useThreadMessages(threadId: string | undefined, currentUserId: s
   useRealtimeTableChanges(
     threadId ? `messages:${threadId}` : undefined,
     { event: '*', schema: 'public', table: 'messages', filter: `thread_id=eq.${threadId}` },
-    () => {
-      // Re-fetch rather than patch the cache from the payload directly —
-      // an UPDATE (e.g. escrow release flipping status) only carries the
-      // changed row, and refetching keeps this trivially correct at the
-      // cost of one extra read per event, acceptable at this app's scale.
-      queryClient.invalidateQueries({ queryKey });
+    (payload) => {
+      // Patch the already-loaded list in place instead of refetching the
+      // whole thread on every event (an INSERT for a brand-new message, an
+      // UPDATE for a read-receipt flip or escrow release, ...) — a full
+      // network round trip per event is exactly why messages used to lag
+      // noticeably behind WhatsApp's own instant feel. `payload.new`/`.old`
+      // already carry the complete row (Realtime sends every column, not
+      // just the ones this file's own `select()` lists), so no follow-up
+      // fetch is needed for INSERT/UPDATE. Falls back to a plain
+      // `undefined` no-op if the cache hasn't been populated yet (e.g. an
+      // event racing the initial `queryFn` before it's ever run) — the
+      // query itself will pick the row up naturally once it does.
+      if (payload.eventType === 'INSERT') {
+        const row = payload.new as unknown as Message;
+        queryClient.setQueryData<Message[]>(queryKey, (old) => {
+          if (!old) return old;
+          if (old.some((m) => m.id === row.id)) return old;
+          return [...old, row].sort((a, b) => a.created_at.localeCompare(b.created_at));
+        });
+      } else if (payload.eventType === 'UPDATE') {
+        const row = payload.new as unknown as Message;
+        queryClient.setQueryData<Message[]>(queryKey, (old) =>
+          old?.map((m) => (m.id === row.id ? { ...m, ...row } : m)),
+        );
+      } else if (payload.eventType === 'DELETE') {
+        const oldRow = payload.old as { id?: string };
+        if (!oldRow.id) return;
+        const deletedId = oldRow.id;
+        queryClient.setQueryData<Message[]>(queryKey, (old) =>
+          old?.filter((m) => m.id !== deletedId),
+        );
+      }
     },
   );
 
@@ -218,8 +244,16 @@ export function useSendMessage() {
         reply_to_message_id: request.replyToMessageId,
         is_forwarded: request.isForwarded,
       }),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['messages', data.thread_id] });
+    onSuccess: () => {
+      // Deliberately no `invalidateQueries(['messages', ...])` here — the
+      // just-sent row lands in the thread's message cache via the same
+      // Realtime INSERT patch every other participant's client relies on
+      // (see useThreadMessages above), so refetching the whole thread on
+      // top of that would just be a redundant network round trip on every
+      // single send, the opposite of the "feel instant" fix this was
+      // written for. `thread/[id].tsx`'s own optimistic bubble covers the
+      // brief gap before that patch lands, with a self-healing fallback
+      // refetch if it ever doesn't.
       queryClient.invalidateQueries({ queryKey: ['threads'] });
       queryClient.invalidateQueries({ queryKey: ['wallets'] });
     },
