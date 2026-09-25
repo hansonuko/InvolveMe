@@ -1,10 +1,12 @@
 @import 'tailwindcss';
 
 /*
- * Deep Wine — mirrors docs/04-DESIGN-SYSTEM.md §1 exactly, same token
+ * Deep Wine, mirrors docs/04-DESIGN-SYSTEM.md §1 exactly, same token
  * names/values as apps/admin/app/globals.css and apps/mobile/theme/tokens.ts.
- * This site has no manual theme toggle (no next-themes) — light/dark is
- * `prefers-color-scheme` only, so there's no [data-theme] override branch.
+ * Manual toggle via next-themes (components/ThemeToggle.tsx): the
+ * prefers-color-scheme block below covers "system," and the explicit
+ * [data-theme="dark"] block further down is what lets a manual choice
+ * override the OS preference in both directions, same split as admin's.
  */
 :root {
   --background: #fdfff7; /* color.bg.canvas */
@@ -24,14 +26,17 @@
   color-scheme: light;
 }
 
+/* System preference, only when there's no explicit next-themes choice
+   yet (next-themes never adds data-theme="light" for the system-light
+   case, so this guard only matters for the dark branch below). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --background: #1a1013; /* color.bg.canvas (dark) */
     --surface: #241820; /* color.bg.surface (dark) */
     --surface-alt: #3a2430; /* color.bg.surfaceAlt (dark) */
     --border: #3a2a30; /* color.border.subtle (dark) */
     --foreground: #f5ede9; /* color.text.primary (dark) */
-    --foreground-accent: #f5ede9; /* plain white in dark mode, not a lightened wine — docs/04 §1 */
+    --foreground-accent: #f5ede9; /* plain white in dark mode, not a lightened wine, docs/04 §1 */
     --muted: #a8a29e; /* color.text.tertiary (dark) */
     --success: #32d583; /* color.semantic.success (dark) */
     --danger: #f97066; /* color.semantic.danger (dark) */
@@ -39,6 +44,24 @@
     --credit: #ffc24d; /* color.accent.credit (dark) */
     color-scheme: dark;
   }
+}
+
+/* Explicit override always wins in both directions, regardless of OS
+   preference, this is what makes the manual toggle (next-themes,
+   attribute="data-theme") actually override "system." */
+:root[data-theme='dark'] {
+  --background: #1a1013;
+  --surface: #241820;
+  --surface-alt: #3a2430;
+  --border: #3a2a30;
+  --foreground: #f5ede9;
+  --foreground-accent: #f5ede9;
+  --muted: #a8a29e;
+  --success: #32d583;
+  --danger: #f97066;
+  --warning: #fdb022;
+  --credit: #ffc24d;
+  color-scheme: dark;
 }
 
 /* Tailwind v4 theme — generates bg-background, text-foreground-accent,

@@ -32,7 +32,7 @@ export function Footer() {
         <div>
           <p className="text-title font-extrabold text-foreground-accent">InvolveMe</p>
           <p className="mt-3 max-w-xs text-caption text-muted">
-            A chat app where every message has real value — pay only for the conversations worth
+            A chat app where every message has real value: pay only for the conversations worth
             having.
           </p>
         </div>

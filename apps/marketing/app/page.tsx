@@ -1,16 +1,15 @@
 import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { Card, Eyebrow, Section } from '@/components/Section';
-import { SignupForm } from '@/components/SignupForm';
 
 const VALUE_PROPS = [
   {
     title: 'Every message has a price',
-    body: "No ads, no data-harvesting business model. You pay a small, transparent credit cost per message — and the person you're messaging earns from replying.",
+    body: "No ads, no data-harvesting business model. You pay a small, transparent credit cost per message, and the person you're messaging earns from replying.",
   },
   {
     title: 'Money held in escrow, not spent blind',
-    body: 'Your credits are held the moment you send a message and only released to the other person once they reply — never taken for a message that goes unanswered.',
+    body: 'Your credits are held the moment you send a message and only released to the other person once they reply. Nothing is taken for a message that goes unanswered.',
   },
   {
     title: 'Built like a bank, not a chat toy',
@@ -25,23 +24,28 @@ export default function HomePage() {
         <AnimatedSection>
           <Eyebrow>Pay-per-message chat</Eyebrow>
           <h1 className="mx-auto mt-4 max-w-3xl text-display font-extrabold leading-tight text-foreground md:text-[44px]">
-            A chat app where your time — and theirs — has real value
+            A chat app where your time, and theirs, has real value
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-body text-muted">
             InvolveMe looks and feels like the messaging app you already know. The difference: every
             message costs a small, transparent number of credits, held safely until the person
             you&apos;re talking to actually replies.
           </p>
-          <div className="mt-10">
-            <SignupForm />
-          </div>
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-6">
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+            <Link
+              href="/signup"
+              className="rounded-pill bg-accent px-7 py-3.5 text-body font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
+            >
+              Sign up
+            </Link>
             <Link
               href="/how-it-works"
-              className="text-body font-semibold text-foreground-accent hover:underline"
+              className="rounded-pill border border-border px-7 py-3.5 text-body font-semibold text-foreground transition-colors hover:border-accent"
             >
               See how it works
             </Link>
+          </div>
+          <div className="mt-6">
             <Link
               href="/pricing"
               className="text-body font-semibold text-foreground-accent hover:underline"
@@ -72,7 +76,7 @@ export default function HomePage() {
           <p className="mx-auto mt-4 max-w-xl text-body text-muted">
             A message you send debits your credit balance into escrow immediately. If the other
             person replies, escrow releases to their earnings balance. If they never do, your
-            credits are refunded automatically — you&apos;re never charged for silence.
+            credits are refunded automatically, so you&apos;re never charged for silence.
           </p>
           <Link
             href="/security"

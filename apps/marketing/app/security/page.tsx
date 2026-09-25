@@ -10,19 +10,19 @@ export const metadata: Metadata = {
 const PROTECTIONS = [
   {
     title: 'Escrow, not blind spending',
-    body: 'Every credit you send is held, not immediately paid out — it only reaches the other person once they actually reply, and refunds automatically if they never do.',
+    body: 'Every credit you send is held, not immediately paid out. It only reaches the other person once they actually reply, and refunds automatically if they never do.',
   },
   {
     title: 'Double-entry ledger accounting',
-    body: "Every credit that moves is recorded as a matched pair of entries, the same principle real accounting systems use. Balances are never a number someone edited directly — they're the sum of a permanent, auditable history.",
+    body: "Every credit that moves is recorded as a matched pair of entries, the same principle real accounting systems use. Balances are never a number someone edited directly: they're the sum of a permanent, auditable history.",
   },
   {
     title: 'Verified withdrawals only',
-    body: 'Earnings can only be withdrawn to a bank account that has passed identity verification (KYC) and a name-match check against the account holder — money never leaves to an unverified destination, including on the automatic payout schedule.',
+    body: 'Earnings can only be withdrawn to a bank account that has passed identity verification (KYC) and a name-match check against the account holder. Money never leaves to an unverified destination, including on the automatic payout schedule.',
   },
   {
     title: 'Active fraud monitoring',
-    body: 'Automated systems watch for the patterns that matter most in a pay-per-message product — coordinated accounts messaging each other to cycle money, unusual velocity, device-level signals — and flag them for human review rather than acting silently.',
+    body: 'Automated systems watch for the patterns that matter most in a pay-per-message product, coordinated accounts messaging each other to cycle money, unusual velocity, device-level signals, and flag them for human review rather than acting silently.',
   },
   {
     title: 'A reserve buffer, for when things go wrong',
@@ -30,7 +30,7 @@ const PROTECTIONS = [
   },
   {
     title: 'Signed, verified payment webhooks',
-    body: 'Every payment confirmation is cryptographically verified and processed exactly once — replayed or spoofed payment events are rejected before they ever touch a balance.',
+    body: 'Every payment confirmation is cryptographically verified and processed exactly once. Replayed or spoofed payment events are rejected before they ever touch a balance.',
   },
 ];
 
@@ -45,7 +45,7 @@ export default function SecurityPage() {
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-body text-muted">
             InvolveMe moves real money between people based on real conversations. Here&apos;s what
-            actually stands between your balance and something going wrong — every item below is a
+            actually stands between your balance and something going wrong. Every item below is a
             shipped mechanism, not a promise.
           </p>
         </AnimatedSection>
