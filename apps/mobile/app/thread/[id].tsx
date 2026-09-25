@@ -4,6 +4,7 @@ import {
   Alert,
   AppState,
   FlatList,
+  Image,
   Keyboard,
   Modal,
   Pressable,
@@ -13,6 +14,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
 
 import { ActionSheet, type ActionSheetAction } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
@@ -24,16 +27,20 @@ import { type ForwardTarget, ForwardMessageModal } from '@/components/chat/Forwa
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { withAppLockSuppressed } from '@/lib/appLock';
 import { usePhoneContactNames } from '@/lib/contacts';
 import { useSession } from '@/lib/hooks/useSession';
 import {
   type InsufficientCreditDetails,
   type Message,
+  useChatMediaUrl,
+  useCreateChatMediaUploadUrl,
   useDeleteMessageForEveryone,
   useDeleteMessageForMe,
   useEditMessage,
   useSendMessage,
   useThreadMessages,
+  uploadChatMedia,
 } from '@/lib/queries/messages';
 import { useSendGroupMessage } from '@/lib/queries/groups';
 import { useReportUser } from '@/lib/queries/profile';
@@ -409,6 +416,7 @@ function MessageBubble({
   isSelected,
   onOpenActions,
   onToggleSelect,
+  onOpenImage,
 }: {
   message: Message;
   isOwn: boolean;
@@ -432,10 +440,16 @@ function MessageBubble({
   isSelected: boolean;
   onOpenActions: (message: Message) => void;
   onToggleSelect: (messageId: string) => void;
+  /** Opens the full-screen viewer with this already-resolved signed URL —
+   * the parent screen owns that modal's state, this bubble only ever
+   * resolves its own `media_path` (via `useChatMediaUrl`, below) and hands
+   * the ready URL up rather than the modal re-resolving it itself. */
+  onOpenImage: (url: string) => void;
 }) {
   const { colors, spacing, radius } = useTheme();
   const isDeleted = message.deleted_for_everyone;
   const dimInverseText = isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined;
+  const mediaUrl = useChatMediaUrl(!isDeleted ? message.media_path : null);
 
   return (
     <View
@@ -528,9 +542,44 @@ function MessageBubble({
             This message was deleted
           </Text>
         ) : (
-          <Text variant="body" color={isOwn ? 'inverse' : undefined}>
-            {message.body}
-          </Text>
+          <>
+            {message.media_path ? (
+              <Pressable
+                onPress={() => mediaUrl.data && onOpenImage(mediaUrl.data)}
+                style={{ marginBottom: message.body.trim() ? spacing.xs : 0 }}
+              >
+                {mediaUrl.data ? (
+                  <Image
+                    source={{ uri: mediaUrl.data }}
+                    style={{ width: 220, height: 220, borderRadius: radius.card }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View
+                    style={{
+                      width: 220,
+                      height: 220,
+                      borderRadius: radius.card,
+                      backgroundColor: withAlpha(colors.textSecondary, 0.15),
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Ionicons
+                      name={mediaUrl.isError ? 'image-outline' : 'hourglass-outline'}
+                      size={28}
+                      color={isOwn ? withAlpha(colors.textInverse, 0.6) : colors.textTertiary}
+                    />
+                  </View>
+                )}
+              </Pressable>
+            ) : null}
+            {message.body.trim() ? (
+              <Text variant="body" color={isOwn ? 'inverse' : undefined}>
+                {message.body}
+              </Text>
+            ) : null}
+          </>
         )}
         <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
           {!isDeleted ? (
@@ -637,7 +686,7 @@ function OutboxPendingBubble({ body }: { body: string }) {
  * real sent message (`MessageBubble`'s own-message branch) so there's no
  * visual "downgrade then upgrade" flash once the real row swaps in, just a
  * clock icon standing in for the tick row until it does. */
-function SendingMessageBubble({ body }: { body: string }) {
+function SendingMessageBubble({ body, imageUri }: { body: string; imageUri?: string }) {
   const { colors, spacing, radius } = useTheme();
   return (
     <View style={[styles.bubbleRow, { justifyContent: 'flex-end', marginBottom: spacing.sm }]}>
@@ -651,14 +700,62 @@ function SendingMessageBubble({ body }: { body: string }) {
           },
         ]}
       >
-        <Text variant="body" color="inverse">
-          {body}
-        </Text>
+        {imageUri ? (
+          <Image
+            source={{ uri: imageUri }}
+            style={{
+              width: 220,
+              height: 220,
+              borderRadius: radius.card,
+              marginBottom: body.trim() ? spacing.xs : 0,
+            }}
+            resizeMode="cover"
+          />
+        ) : null}
+        {body.trim() ? (
+          <Text variant="body" color="inverse">
+            {body}
+          </Text>
+        ) : null}
         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: spacing.xs }}>
           <Ionicons name="time-outline" size={14} color={withAlpha(colors.textInverse, 0.75)} />
         </View>
       </View>
     </View>
+  );
+}
+
+/** Full-screen tap-to-view for a chat photo — plain contain-mode Image in
+ * a Modal, no pinch-zoom. Deliberately matches StoryViewer's own existing
+ * full-screen photo view exactly (also a plain `resizeMode="contain"`
+ * Image, no gesture handling) rather than introducing new gesture code:
+ * this codebase has a documented bad experience with Reanimated/Gesture-
+ * Handler here (see MessageBubble's own swipe-to-reply removal comment,
+ * "removed entirely rather than patched blind... no way to verify a fix
+ * live") — consistency with the one proven-working pattern beats a
+ * pinch-zoom nobody can verify on-device this session either. */
+function ChatImageViewerModal({
+  visible,
+  imageUrl,
+  onClose,
+}: {
+  visible: boolean;
+  imageUrl: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="fade" onRequestClose={onClose} transparent>
+      <Pressable
+        style={{ flex: 1, backgroundColor: '#000' }}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close photo"
+      >
+        {imageUrl ? (
+          <Image source={{ uri: imageUrl }} style={{ flex: 1 }} resizeMode="contain" />
+        ) : null}
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -675,6 +772,7 @@ export default function ThreadScreen() {
     refetch: refetchMessages,
   } = useThreadMessages(id, currentUserId);
   const sendMessage = useSendMessage();
+  const createChatMediaUploadUrl = useCreateChatMediaUploadUrl();
   const sendGroupMessage = useSendGroupMessage();
   const editMessage = useEditMessage();
   const deleteForMe = useDeleteMessageForMe();
@@ -754,6 +852,54 @@ export default function ThreadScreen() {
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const composerInputRef = useRef<TextInput>(null);
+
+  // Chat media (docs/16-CHAT-MEDIA-SCOPING.md) — a picked-but-not-yet-sent
+  // photo, staged in the composer exactly like `replyingTo`/`editingMessage`
+  // are: a preview bar above the input, cleared on send or on explicit
+  // removal. `attachSheetOpen` is the picker's own camera-vs-gallery
+  // choice, a plain ActionSheet (already used elsewhere in this screen)
+  // rather than a bespoke picker UI.
+  const [pickedImage, setPickedImage] = useState<{ uri: string } | null>(null);
+  const [attachSheetOpen, setAttachSheetOpen] = useState(false);
+  const [isPickingImage, setIsPickingImage] = useState(false);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  // A tapped-open bubble's signed URL — MessageBubble resolves its own
+  // media_path via useChatMediaUrl and hands the ready signed URL up here,
+  // rather than this state holding a media_path the viewer would need to
+  // re-resolve itself.
+  const [viewingImageUrl, setViewingImageUrl] = useState<string | null>(null);
+
+  /** Resize/compress to the docs/01-ARCHITECTURE.md §5 chat-image target
+   * (1600px longest edge) — JPEG, not the architecture doc's aspirational
+   * WebP, matching StatusComposer's own already-proven-working choice:
+   * `ImageManipulator.SaveFormat.WEBP` exists in this SDK version's types,
+   * but its actual cross-platform encode reliability has never been
+   * confirmed live in this codebase (no device available this session
+   * either) — JPEG is the verified-safe choice, not a settled-for one.
+   * Same `withAppLockSuppressed` wrap StatusComposer's own picker uses,
+   * for the same reason: the native camera/gallery Activity backgrounding
+   * this app must not trip useAppLock's re-lock check mid-pick. */
+  const pickImage = async (source: 'camera' | 'library') => {
+    setAttachSheetOpen(false);
+    const launch =
+      source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
+    setIsPickingImage(true);
+    try {
+      const result = await withAppLockSuppressed(() =>
+        launch({ mediaTypes: 'images', quality: 0.8 }),
+      );
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const manipulated = await ImageManipulator.manipulateAsync(
+        result.assets[0].uri,
+        [{ resize: { width: 1600 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG },
+      );
+      setPickedImage({ uri: manipulated.uri });
+    } finally {
+      setIsPickingImage(false);
+    }
+  };
 
   // Lands the thread on its most recent message on open, and keeps it
   // stuck to the bottom as new messages arrive while the reader is
@@ -858,6 +1004,8 @@ export default function ThreadScreen() {
     body: string;
     requiredCredits: number;
     replyToMessageId?: string;
+    mediaPath?: string;
+    mediaType?: string;
   } | null>(null);
 
   // Optimistic own-message bubble for a normal online send (WhatsApp shows
@@ -878,6 +1026,16 @@ export default function ThreadScreen() {
     key: string;
     body: string;
     startedAt: number;
+    /** When set, landed-detection matches on this instead of body text —
+     * a captionless photo's body is empty, which every other captionless
+     * photo from the same sender would also match; media_path is
+     * effectively unique per send, so it's the precise match when
+     * available. */
+    mediaPath?: string;
+    /** The picked image's local file URI, shown by SendingMessageBubble
+     * while the real row hasn't landed yet — never sent anywhere, purely
+     * a render source. */
+    localImageUri?: string;
   } | null>(null);
   // A few seconds of slack for client/server clock skew — see above; the
   // only cost of matching a hair too early/late is cosmetic (the bubble
@@ -887,8 +1045,10 @@ export default function ThreadScreen() {
     !!messages?.some(
       (m) =>
         m.sender_id === currentUserId &&
-        m.body === inFlightSend.body &&
-        new Date(m.created_at).getTime() >= inFlightSend.startedAt - 5000,
+        new Date(m.created_at).getTime() >= inFlightSend.startedAt - 5000 &&
+        (inFlightSend.mediaPath
+          ? m.media_path === inFlightSend.mediaPath
+          : m.body === inFlightSend.body),
     );
 
   // Self-healing fallback (same posture as lib/lastSeen.ts and this
@@ -933,6 +1093,8 @@ export default function ThreadScreen() {
 
     const text = pendingSend.body;
     const replyToMessageId = pendingSend.replyToMessageId;
+    const mediaPath = pendingSend.mediaPath;
+    const mediaType = pendingSend.mediaType;
     const sendKey = Crypto.randomUUID();
     // Deferred one microtask out, not called directly in the effect body —
     // this project's lint gate (`react-hooks/set-state-in-effect`) flags
@@ -940,10 +1102,12 @@ export default function ThreadScreen() {
     // of legitimacy; a microtask still runs before `sendMessage.mutate`'s
     // own network request resolves, so the optimistic bubble still shows
     // immediately from the user's point of view.
-    queueMicrotask(() => setInFlightSend({ key: sendKey, body: text, startedAt: Date.now() }));
+    queueMicrotask(() =>
+      setInFlightSend({ key: sendKey, body: text, startedAt: Date.now(), mediaPath }),
+    );
     scrollToLatest();
     sendMessage.mutate(
-      { threadId: id, body: text, replyToMessageId },
+      { threadId: id, body: text, replyToMessageId, mediaPath, mediaType },
       {
         onSuccess: () => {
           setPendingSend(null);
@@ -956,6 +1120,8 @@ export default function ThreadScreen() {
               body: text,
               requiredCredits: details?.credits_required ?? pendingSend.requiredCredits,
               replyToMessageId,
+              mediaPath,
+              mediaType,
             });
           } else {
             setPendingSend(null); // a different failure — don't keep silently retrying
@@ -978,11 +1144,16 @@ export default function ThreadScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const handleSend = () => {
-    if (!body.trim()) return;
+  const handleSend = async () => {
+    const hasPickedMedia = !!pickedImage;
+    if (!body.trim() && !hasPickedMedia) return;
     const text = body;
 
     if (editingMessage) {
+      // Attaching/swapping media on an edit isn't supported (docs/16 §3) —
+      // the attach button itself is hidden while editing, so hasPickedMedia
+      // can't actually be true here; this is just the same guard other
+      // edit-adjacent code paths in this file already apply defensively.
       editMessage.mutate(
         { threadId: id, messageId: editingMessage.id, body: text },
         {
@@ -1007,10 +1178,17 @@ export default function ThreadScreen() {
 
     // Offline outbox (docs/13-OFFLINE-MODE-SCOPING.md): queue rather than
     // attempt the send — WhatsApp's own behavior is to accept the compose
-    // immediately and show a pending bubble, not block or error. Editing
-    // an existing message (handled above) still requires a live connection
-    // regardless, since it has no queued-offline equivalent in this scope.
+    // immediately and show a pending bubble, not block or error. A photo
+    // can't queue the same way (docs/16 explicitly scoped offline media
+    // out — the outbox has no concept of "upload this local file once
+    // reconnected," and this app's offline mode is itself still a stub
+    // per the comment on `outboxItems` below) — surfaced as a real error
+    // rather than silently dropping the attachment.
     if (!isOnline && currentUserId) {
+      if (hasPickedMedia) {
+        Alert.alert('No connection', "Photos can't be sent while offline yet.");
+        return;
+      }
       useOutboxStore.getState().enqueue({
         clientMessageId: Crypto.randomUUID(),
         body: text,
@@ -1025,16 +1203,43 @@ export default function ThreadScreen() {
       return;
     }
 
+    let mediaPath: string | undefined;
+    let mediaType: string | undefined;
+    if (hasPickedMedia) {
+      setIsUploadingMedia(true);
+      try {
+        const { path, token } = await createChatMediaUploadUrl.mutateAsync();
+        await uploadChatMedia(pickedImage.uri, path, token);
+        mediaPath = path;
+        mediaType = 'image';
+      } catch (e) {
+        Alert.alert(
+          'Could not upload photo',
+          e instanceof Error ? e.message : 'Something went wrong.',
+        );
+        return;
+      } finally {
+        setIsUploadingMedia(false);
+      }
+    }
+
     const sendKey = Crypto.randomUUID();
-    setInFlightSend({ key: sendKey, body: text, startedAt: Date.now() });
+    setInFlightSend({
+      key: sendKey,
+      body: text,
+      startedAt: Date.now(),
+      mediaPath,
+      localImageUri: pickedImage?.uri,
+    });
     scrollToLatest();
 
     sendMessage.mutate(
-      { threadId: id, body: text, replyToMessageId },
+      { threadId: id, body: text, replyToMessageId, mediaPath, mediaType },
       {
         onSuccess: () => {
           setBody('');
           setReplyingTo(null);
+          setPickedImage(null);
         },
         onError: (error) => {
           setInFlightSend((prev) => (prev?.key === sendKey ? null : prev));
@@ -1044,13 +1249,24 @@ export default function ThreadScreen() {
               body: text,
               requiredCredits: details?.credits_required ?? 0,
               replyToMessageId,
+              mediaPath,
+              mediaType,
             });
             setBody('');
             setReplyingTo(null);
+            // The upload already succeeded and pendingSend now owns that
+            // reference for its own auto-retry — nothing left for the
+            // composer's own picked-image preview to hold onto.
+            setPickedImage(null);
           }
-          // other errors: leave `body`/`replyingTo` as they were, the error
-          // banner below shows it — matches the pre-existing "don't lose
-          // what was typed on a real failure" posture.
+          // other errors: leave `body`/`replyingTo`/`pickedImage` as they
+          // were, the error banner below shows it — matches the
+          // pre-existing "don't lose what was typed on a real failure"
+          // posture. A media upload that already succeeded here is
+          // orphaned in Storage (never referenced by any message) — an
+          // acceptable, self-limiting cost (this app's own status pipeline
+          // accepts the same class of orphan on delete failures), not
+          // worth a cleanup call on an already-failing path.
         },
       },
     );
@@ -1255,8 +1471,15 @@ export default function ThreadScreen() {
   // problem).
   const canReplySelected =
     selectedMessages.length === 1 && !selectedMessages[0].deleted_for_everyone;
+  // Media messages are excluded (docs/16-CHAT-MEDIA-SCOPING.md §2 —
+  // forwarding an attachment is explicit out-of-v1-scope, not silently
+  // broken): the underlying forward call only ever carries `body`, so
+  // forwarding a photo today would silently drop it and forward just its
+  // caption — excluding it here is the honest behavior until that's
+  // actually built, not a workaround for a bug.
   const canForwardSelected =
-    selectedMessages.length > 0 && selectedMessages.every((m) => !m.deleted_for_everyone);
+    selectedMessages.length > 0 &&
+    selectedMessages.every((m) => !m.deleted_for_everyone && !m.media_path);
   const canEditSelected =
     selectedMessages.length === 1 &&
     selectedMessages[0].sender_id === currentUserId &&
@@ -1290,10 +1513,19 @@ export default function ThreadScreen() {
     }
     return {
       senderLabel: original.sender_id === currentUserId ? 'You' : (partnerDisplayName ?? 'Them'),
-      body: original.deleted_for_everyone ? 'This message was deleted' : original.body,
+      body: original.deleted_for_everyone
+        ? 'This message was deleted'
+        : original.body || (original.media_path ? '📷 Photo' : ''),
       isDeleted: original.deleted_for_everyone,
     };
   };
+
+  const sendDisabled =
+    sendMessage.isPending ||
+    editMessage.isPending ||
+    isUploadingMedia ||
+    (!body.trim() && !pickedImage) ||
+    isBlocked;
 
   return (
     <>
@@ -1474,6 +1706,7 @@ export default function ThreadScreen() {
                     isSelected={selectedIds.has(item.id)}
                     onOpenActions={(m) => enterSelection(m.id)}
                     onToggleSelect={toggleSelected}
+                    onOpenImage={setViewingImageUrl}
                   />
                 );
               }}
@@ -1484,7 +1717,10 @@ export default function ThreadScreen() {
                   ))}
                   {pendingSend ? <PendingMessageBubble body={pendingSend.body} /> : null}
                   {inFlightSend && !inFlightSendLanded ? (
-                    <SendingMessageBubble body={inFlightSend.body} />
+                    <SendingMessageBubble
+                      body={inFlightSend.body}
+                      imageUri={inFlightSend.localImageUri}
+                    />
                   ) : null}
                 </>
               }
@@ -1564,6 +1800,31 @@ export default function ThreadScreen() {
             </View>
           ) : null}
 
+          {pickedImage ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: spacing.lg,
+                paddingVertical: spacing.sm,
+                gap: spacing.sm,
+                backgroundColor: colors.bgSurfaceAlt,
+              }}
+            >
+              <Image
+                source={{ uri: pickedImage.uri }}
+                style={{ width: 44, height: 44, borderRadius: radius.card }}
+                resizeMode="cover"
+              />
+              <Text variant="caption" color="secondary" style={{ flex: 1 }}>
+                Photo attached
+              </Text>
+              <Pressable onPress={() => setPickedImage(null)} hitSlop={8}>
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          ) : null}
+
           <View
             style={[
               styles.composer,
@@ -1582,6 +1843,21 @@ export default function ThreadScreen() {
                 color={colors.textSecondary}
               />
             </Pressable>
+            {/* Media attach (docs/16-CHAT-MEDIA-SCOPING.md) — hidden while
+             * editing (attaching/swapping media on an edit isn't
+             * supported, §3) or already carrying a picked photo (remove it
+             * via the preview bar's own close button first, matching a
+             * one-photo-per-message v1 scope). */}
+            {!editingMessage && !pickedImage ? (
+              <Pressable
+                onPress={isBlocked || isPickingImage ? undefined : () => setAttachSheetOpen(true)}
+                disabled={isBlocked || isPickingImage}
+                hitSlop={4}
+                style={{ paddingBottom: 6 }}
+              >
+                <Ionicons name="camera-outline" size={24} color={colors.textSecondary} />
+              </Pressable>
+            ) : null}
             <TextInput
               ref={composerInputRef}
               value={body}
@@ -1603,21 +1879,14 @@ export default function ThreadScreen() {
               ]}
             />
             <Pressable
-              onPress={
-                sendMessage.isPending || editMessage.isPending || !body.trim() || isBlocked
-                  ? undefined
-                  : handleSend
-              }
-              disabled={sendMessage.isPending || editMessage.isPending || !body.trim() || isBlocked}
+              onPress={sendDisabled ? undefined : handleSend}
+              disabled={sendDisabled}
               hitSlop={4}
               style={[
                 styles.sendButton,
                 {
                   backgroundColor: colors.brandPrimary,
-                  opacity:
-                    sendMessage.isPending || editMessage.isPending || !body.trim() || isBlocked
-                      ? 0.4
-                      : 1,
+                  opacity: sendDisabled ? 0.4 : 1,
                 },
               ]}
             >
@@ -1664,6 +1933,21 @@ export default function ThreadScreen() {
         messageCount={forwardMessages?.length ?? 0}
         onConfirm={(targets) => void handleConfirmForward(targets)}
         sending={forwarding}
+      />
+
+      <ActionSheet
+        visible={attachSheetOpen}
+        onClose={() => setAttachSheetOpen(false)}
+        actions={[
+          { label: 'Take Photo', onPress: () => void pickImage('camera') },
+          { label: 'Choose from Gallery', onPress: () => void pickImage('library') },
+        ]}
+      />
+
+      <ChatImageViewerModal
+        visible={!!viewingImageUrl}
+        imageUrl={viewingImageUrl}
+        onClose={() => setViewingImageUrl(null)}
       />
     </>
   );

@@ -42,6 +42,14 @@ export interface Message {
   /** Renders a small "Forwarded" tag — display-only, never a pricing
    * signal (see migration 20260920090000's header comment). */
   is_forwarded: boolean;
+  /** docs/16-CHAT-MEDIA-SCOPING.md — a private `chat-media` object path,
+   * never a public URL; resolve via `useChatMediaUrl` before rendering.
+   * `null` for a text-only message. Cleared (along with `media_type`) by
+   * `fn_delete_message_for_everyone` on delete. */
+  media_path: string | null;
+  /** Always `'image'` today — the column exists ahead of a future video
+   * follow-up (docs/16 §4), not a sign one is imminent. */
+  media_type: string | null;
 }
 
 /** Messages in a thread, oldest first, kept live via Realtime — per
@@ -67,7 +75,7 @@ export function useThreadMessages(threadId: string | undefined, currentUserId: s
       const { data, error } = await supabase
         .from('messages')
         .select(
-          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, read_at, reply_to_message_id, is_forwarded',
+          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, read_at, reply_to_message_id, is_forwarded, media_path, media_type',
         )
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true });
@@ -164,13 +172,11 @@ function extractSharedLinks(
   return links;
 }
 
-/** "Shared links" for a thread's contact-info screen — the honest
- * WhatsApp-parity equivalent of its shared-media grid. This app's chat
- * messages are text-only with no photo/video attachment pipeline at all
- * (docs/03-ECONOMY-LEDGER.md: "chat media has no pipeline of any kind
- * yet"), so a faked media grid would have nothing real behind it; links
- * mentioned in message text are real, already-stored data this can surface
- * without inventing anything. A one-shot fetch, not kept live via
+/** "Shared links" for a thread's contact-info screen. Chat now has a real
+ * photo pipeline (docs/16-CHAT-MEDIA-SCOPING.md) — a shared-media grid
+ * equivalent to WhatsApp's own is a natural follow-up this doesn't
+ * attempt; this stays scoped to links only, same as before that shipped.
+ * A one-shot fetch, not kept live via
  * Realtime — this is a secondary contact-info panel, not the active chat
  * view, so it doesn't need `useThreadMessages`' subscription cost. */
 export function useThreadSharedLinks(threadId: string | undefined) {
@@ -204,6 +210,14 @@ interface SendMessageRequest {
   /** Display-only "Forwarded" tag — see the Message interface's own field
    * for why this never affects billing. */
   isForwarded?: boolean;
+  /** docs/16-CHAT-MEDIA-SCOPING.md — the `path` returned by
+   * useCreateChatMediaUploadUrl, once uploadChatMedia has actually
+   * succeeded against it. `body` may be empty when this is set (a
+   * captionless photo is a real message) — fn_send_message is the real
+   * authority on both that and on this path actually having been issued
+   * to the caller. */
+  mediaPath?: string;
+  mediaType?: string;
 }
 
 interface SendMessageResponse {
@@ -243,6 +257,8 @@ export function useSendMessage() {
         client_message_id: request.clientMessageId,
         reply_to_message_id: request.replyToMessageId,
         is_forwarded: request.isForwarded,
+        media_path: request.mediaPath,
+        media_type: request.mediaType,
       }),
     onSuccess: () => {
       // Deliberately no `invalidateQueries(['messages', ...])` here — the
@@ -256,6 +272,60 @@ export function useSendMessage() {
       // refetch if it ever doesn't.
       queryClient.invalidateQueries({ queryKey: ['threads'] });
       queryClient.invalidateQueries({ queryKey: ['wallets'] });
+    },
+  });
+}
+
+interface CreateChatMediaUploadUrlResponse {
+  path: string;
+  token: string;
+  signed_url: string;
+}
+
+/** Wraps POST /functions/v1/create-chat-media-upload-url — mints a
+ * one-time signed upload slot in the private `chat-media` bucket, same
+ * shape as status's own `useCreateStatusUploadUrl`
+ * (lib/queries/status.ts). */
+export function useCreateChatMediaUploadUrl() {
+  return useMutation({
+    mutationFn: () =>
+      callEdgeFunction<CreateChatMediaUploadUrlResponse>('create-chat-media-upload-url'),
+  });
+}
+
+/** Uploads a local file (camera capture or gallery pick, already resized/
+ * compressed by the caller — see components/chat/ChatMediaComposer.tsx) to
+ * the path a signed upload URL was minted for. Identical Blob-rewrapping
+ * approach to status's own `uploadStatusMedia` — see that function's
+ * detailed comment for why this exact construction (`new Blob([original],
+ * { type })`, not `fileOptions.contentType`, not a raw ArrayBuffer) is the
+ * one that actually works on-device, not a stylistic choice. */
+export async function uploadChatMedia(localUri: string, path: string, token: string) {
+  const response = await fetch(localUri);
+  const original = await response.blob();
+  const blob = new Blob([original], { type: 'image/jpeg' });
+  const { error } = await supabase.storage.from('chat-media').uploadToSignedUrl(path, token, blob);
+  if (error) throw error;
+}
+
+/** Signed read URL for a chat-media object — the bucket is private, so
+ * this is the only way to actually display one. Fails (throws) if the
+ * caller isn't a participant in the owning message's thread, per
+ * `chat_media_select_visible` RLS
+ * (20260925120000_chat_media_pipeline.sql). Cached for an hour, same as
+ * status's own `useStatusMediaUrl` — a chat photo doesn't change once
+ * sent, so there's nothing to invalidate this on. */
+export function useChatMediaUrl(mediaPath: string | null) {
+  return useQuery({
+    queryKey: ['chatMediaUrl', mediaPath],
+    enabled: !!mediaPath,
+    staleTime: 60 * 60 * 1000,
+    queryFn: async (): Promise<string> => {
+      const { data, error } = await supabase.storage
+        .from('chat-media')
+        .createSignedUrl(mediaPath as string, 3600);
+      if (error) throw error;
+      return data.signedUrl;
     },
   });
 }
