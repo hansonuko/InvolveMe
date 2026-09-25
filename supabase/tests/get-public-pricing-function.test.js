@@ -3,7 +3,7 @@
 // so it's exempt from CLAUDE.md's ledger-conservation/concurrency test
 // requirement (that requirement is scoped to balance-mutating functions).
 // What matters here: no auth is required (it's a public marketing-site
-// endpoint on purpose), and the response is exactly the 5 whitelisted
+// endpoint on purpose), and the response is exactly the 6 whitelisted
 // pricing_config keys — no more (no accidental full-table leak), no less.
 
 const { Client } = require('pg');
@@ -35,6 +35,7 @@ const EXPECTED_KEYS = [
   'message_word_block_size',
   'message_max_words',
   'platform_topup_fee_bps',
+  'platform_earning_take_bps',
 ].sort();
 
 let pass = 0;
@@ -97,7 +98,7 @@ async function main() {
 
     const returnedKeys = body ? Object.keys(body).sort() : [];
     log(
-      'response contains exactly the 5 whitelisted keys, nothing else',
+      'response contains exactly the 6 whitelisted keys, nothing else',
       JSON.stringify(returnedKeys) === JSON.stringify(EXPECTED_KEYS),
       `keys=${JSON.stringify(returnedKeys)}`,
     );

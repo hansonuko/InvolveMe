@@ -6,8 +6,11 @@
 // public read-only endpoint — never hand-copied numbers that go stale").
 // `pricing_config` itself stays `authenticated`-only per its RLS policy
 // (supabase/migrations/20260912072749_rls_policies.sql) — this function
-// does not loosen that. It reads via service_role and returns only the 5
+// does not loosen that. It reads via service_role and returns only the 6
 // keys below, never the full row set (no withdrawal/KYC-cap internals).
+// platform_earning_take_bps added so the site can show a real "what you
+// earn per reply" figure (the earn-first repositioning), not just what a
+// sender pays — same non-sensitive-numeric-config category as the rest.
 //
 // MUST be deployed with `--no-verify-jwt`, same as webhook-flutterwave and
 // reconcile-topups — see webhook-flutterwave/index.ts's header for the
@@ -22,6 +25,7 @@ const PUBLIC_KEYS = [
   'message_word_block_size',
   'message_max_words',
   'platform_topup_fee_bps',
+  'platform_earning_take_bps',
 ] as const;
 
 function json(status: number, payload: unknown): Response {

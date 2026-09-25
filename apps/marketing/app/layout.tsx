@@ -6,11 +6,11 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: {
-    default: 'InvolveMe | Pay-per-message chat',
+    default: 'InvolveMe | Earn per message',
     template: '%s | InvolveMe',
   },
   description:
-    "InvolveMe is a chat app where messaging is pay-per-message: your time, and everyone else's, has real value.",
+    'InvolveMe is a chat app where you get paid every time someone needs your time: reply to a message and earn, with pay-per-minute calls coming next.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
