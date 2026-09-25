@@ -35,8 +35,11 @@ export default function ContactPage() {
             Talk to us
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-body text-muted">
-            The app isn&apos;t open for public signup yet — this page is for reaching the team, not
-            for creating an account.
+            This page is for reaching the team directly, not for creating an account. Head to{' '}
+            <a href="/signup" className="font-semibold text-foreground-accent hover:underline">
+              Sign up
+            </a>{' '}
+            for that.
           </p>
         </AnimatedSection>
       </Section>

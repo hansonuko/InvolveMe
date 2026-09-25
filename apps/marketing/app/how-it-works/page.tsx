@@ -12,12 +12,12 @@ const STEPS = [
   {
     step: '1',
     title: 'You send a message',
-    body: 'Its cost in credits is calculated from its length and shown to you before you hit send — never a surprise charge after the fact.',
+    body: "Its cost in credits is calculated from its length and shown to you before you hit send, so there's never a surprise charge after the fact.",
   },
   {
     step: '2',
     title: 'Your credits go into escrow',
-    body: "They're debited from your balance right away, but held — not paid out to anyone yet.",
+    body: "They're debited from your balance right away, but held, not paid out to anyone yet.",
   },
   {
     step: '3',
@@ -76,7 +76,7 @@ export default async function HowItWorksPage() {
                 <span className="font-semibold text-foreground">
                   {pricing.message_base_credits} credits
                 </span>{' '}
-                for every {pricing.message_word_block_size} words or part thereof, rounded up — so a
+                for every {pricing.message_word_block_size} words or part thereof, rounded up, so a
                 short message and a long one are priced fairly by length, not a flat fee that
                 rewards padding. Messages are capped at {pricing.message_max_words} words.
               </p>
@@ -91,7 +91,7 @@ export default async function HowItWorksPage() {
             <div>
               <p className="text-body text-muted">
                 If the person you messaged never replies, InvolveMe automatically refunds the held
-                credits back to your balance after a set window — you only ever pay for
+                credits back to your balance after a set window, so you only ever pay for
                 conversations that actually happen.
               </p>
               <p className="mt-4 text-body text-muted">

@@ -2,11 +2,13 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 const LINKS = [
   { href: '/how-it-works', label: 'How it works' },
   { href: '/pricing', label: 'Pricing' },
   { href: '/security', label: 'Security & Trust' },
+  { href: '/download', label: 'Download' },
   { href: '/about', label: 'About' },
   { href: '/contact', label: 'Contact' },
 ];
@@ -32,30 +34,33 @@ export function Nav() {
               </Link>
             </li>
           ))}
-          <li>
-            <Link
-              href="/download"
-              className="rounded-pill bg-accent px-5 py-2 text-body font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
-            >
-              Download
-            </Link>
-          </li>
         </ul>
 
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-label="Toggle menu"
-          className="flex h-11 w-11 items-center justify-center rounded-card border border-border md:hidden"
-        >
-          <span className="sr-only">Menu</span>
-          <div className="flex flex-col gap-1.5">
-            <span className="block h-0.5 w-5 bg-foreground" />
-            <span className="block h-0.5 w-5 bg-foreground" />
-            <span className="block h-0.5 w-5 bg-foreground" />
-          </div>
-        </button>
+        <div className="flex items-center gap-3">
+          <ThemeToggle />
+
+          <Link
+            href="/signup"
+            className="hidden rounded-pill bg-accent px-5 py-2 text-body font-semibold text-on-accent transition-colors hover:bg-accent-pressed md:inline-block"
+          >
+            Sign Up
+          </Link>
+
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            aria-label="Toggle menu"
+            className="flex h-11 w-11 items-center justify-center rounded-card border border-border md:hidden"
+          >
+            <span className="sr-only">Menu</span>
+            <div className="flex flex-col gap-1.5">
+              <span className="block h-0.5 w-5 bg-foreground" />
+              <span className="block h-0.5 w-5 bg-foreground" />
+              <span className="block h-0.5 w-5 bg-foreground" />
+            </div>
+          </button>
+        </div>
       </nav>
 
       {open ? (
@@ -73,11 +78,11 @@ export function Nav() {
           ))}
           <li>
             <Link
-              href="/download"
+              href="/signup"
               onClick={() => setOpen(false)}
               className="block py-3 text-body font-semibold text-foreground-accent"
             >
-              Download
+              Sign Up
             </Link>
           </li>
         </ul>

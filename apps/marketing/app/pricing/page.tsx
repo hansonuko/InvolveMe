@@ -6,7 +6,7 @@ import { creditsForWords, formatNaira, getPublicPricing } from '@/lib/pricing';
 
 export const metadata: Metadata = {
   title: 'Pricing',
-  description: 'InvolveMe credit pricing — transparent, pay-per-message costs, no subscriptions.',
+  description: 'InvolveMe credit pricing: transparent, pay-per-message costs, no subscriptions.',
 };
 
 export default async function PricingPage() {
@@ -41,7 +41,7 @@ export default async function PricingPage() {
               1 credit = {formatNaira(pricing.credit_unit_kobo)}
             </p>
             <p className="mt-4 text-body text-muted">
-              A small platform fee applies on top-ups — enough to cover payment processing and the
+              A small platform fee applies on top-ups, enough to cover payment processing and the
               fraud/escrow infrastructure that keeps your money safe.
             </p>
           </Card>
