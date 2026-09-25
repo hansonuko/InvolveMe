@@ -94,10 +94,15 @@ async function deleteTestUser(admin, id) {
   await admin.query('delete from auth.users where id = $1', [id]);
 }
 
-async function callCreateChatMediaUploadUrl(token) {
+async function callCreateChatMediaUploadUrl(token, kind) {
   const headers = {};
   if (token !== null) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${FUNCTION_URL}/`, { method: 'POST', headers });
+  const init = { method: 'POST', headers };
+  if (kind !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify({ kind });
+  }
+  const res = await fetch(`${FUNCTION_URL}/`, init);
   const json = await res.json().catch(() => null);
   return { status: res.status, json };
 }
@@ -185,6 +190,38 @@ async function main() {
       'the uploaded object exists in the private chat-media bucket',
       objectRow.rows.length === 1,
       JSON.stringify(objectRow.rows[0]),
+    );
+
+    // docs/17-VOICE-NOTES-SCOPING.md §8 — kind: 'audio' mints a .m4a path
+    // into the same bucket, same trust boundary, and the signed URL
+    // actually accepts a real upload with the audio content-type.
+    const audioResult = await callCreateChatMediaUploadUrl(tokenA, 'audio');
+    log(
+      "kind: 'audio' returns 200 with a .m4a path",
+      audioResult.status === 200 && /\.m4a$/.test(audioResult.json?.path ?? ''),
+      audioResult.json?.path,
+    );
+
+    const tinyAudio = Buffer.from('00000018667479704D3441200000000069736F6D', 'hex');
+    const audioUploadRes = await fetch(audioResult.json.signed_url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'audio/m4a', Authorization: `Bearer ${tokenA}` },
+      body: tinyAudio,
+    });
+    log(
+      'the audio signed URL accepts a real upload',
+      audioUploadRes.ok,
+      `status=${audioUploadRes.status} ${await audioUploadRes
+        .clone()
+        .text()
+        .catch(() => '')}`,
+    );
+
+    const invalidKind = await callCreateChatMediaUploadUrl(tokenA, 'video');
+    log(
+      "kind: 'video' (unsupported) -> 400",
+      invalidKind.status === 400 && invalidKind.json?.error === 'invalid_kind',
+      JSON.stringify(invalidKind.json),
     );
   } finally {
     deno.kill();

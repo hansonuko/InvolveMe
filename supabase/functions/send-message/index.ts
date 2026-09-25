@@ -35,15 +35,22 @@ interface SendMessageRequestBody {
   // Display-only "Forwarded" tag (see this migration's own header comment
   // for why this never touches pricing). Omit/false for a normal send.
   is_forwarded?: boolean;
-  // Chat media (docs/16-CHAT-MEDIA-SCOPING.md) — the `path` returned by
-  // create-chat-media-upload-url, once the client's own upload to it has
-  // actually succeeded. `body` may be empty/omitted when media_path is
-  // present (a captionless photo is a real message); fn_send_message is
-  // the actual authority on that, and on media_path really having been
-  // issued to this caller (CLAUDE.md rule #1 — never trust a client path
-  // string on faith).
+  // Chat media (docs/16-CHAT-MEDIA-SCOPING.md, docs/17-VOICE-NOTES-
+  // SCOPING.md) — the `path` returned by create-chat-media-upload-url,
+  // once the client's own upload to it has actually succeeded. `body` may
+  // be empty/omitted when media_path is present (a captionless photo or a
+  // voice note with no caption is a real message); fn_send_message is the
+  // actual authority on that, and on media_path really having been issued
+  // to this caller (CLAUDE.md rule #1 — never trust a client path string
+  // on faith).
   media_path?: string;
   media_type?: string;
+  // Voice notes only (docs/17 §3/§5) — display-only duration (never a
+  // billing input; fn_send_message enforces the real max-duration cap
+  // server-side) and the real recorded-amplitude waveform, bounds-checked
+  // again below before ever reaching the RPC.
+  duration_seconds?: number;
+  waveform_samples?: number[];
 }
 
 interface FnSendMessageRow {
@@ -104,6 +111,19 @@ function mapSendMessageError(pgMessage: string): Response {
   if (pgMessage.startsWith('media_not_found')) {
     return errorResponse(400, 'media_not_found', 'That media was not found — try uploading again.');
   }
+  if (pgMessage.startsWith('invalid_duration')) {
+    return errorResponse(
+      400,
+      'invalid_duration',
+      'duration_seconds must be a non-negative integer.',
+    );
+  }
+  if (pgMessage.startsWith('audio_too_long')) {
+    return errorResponse(400, 'audio_too_long', pgMessage);
+  }
+  if (pgMessage.startsWith('invalid_waveform_samples')) {
+    return errorResponse(400, 'invalid_waveform_samples', 'waveform_samples values must be 0-100.');
+  }
   if (pgMessage.startsWith('insufficient_credit')) {
     // fn_send_message raises 'insufficient_credit: need % have %'.
     const match = /need (\d+) have (\d+)/.exec(pgMessage);
@@ -152,8 +172,41 @@ Deno.serve(async (req) => {
   if (payload.media_path !== undefined && typeof payload.media_path !== 'string') {
     return errorResponse(400, 'invalid_request', 'media_path must be a string.');
   }
-  if (hasMedia && payload.media_type !== 'image') {
+  if (hasMedia && payload.media_type !== 'image' && payload.media_type !== 'audio') {
     return errorResponse(400, 'unsupported_media_type', 'Unsupported media type.');
+  }
+  const isAudio = hasMedia && payload.media_type === 'audio';
+
+  // Redundant with fn_send_message's own checks (CLAUDE.md rule #1 — the
+  // DB function is the actual authority, not this), but rejecting a
+  // malformed request here is a better error than a raw Postgres one for
+  // the same class of mistake.
+  if (isAudio) {
+    if (
+      typeof payload.duration_seconds !== 'number' ||
+      !Number.isFinite(payload.duration_seconds) ||
+      payload.duration_seconds < 0
+    ) {
+      return errorResponse(
+        400,
+        'invalid_duration',
+        'duration_seconds must be a non-negative integer.',
+      );
+    }
+    if (payload.waveform_samples !== undefined) {
+      const samples = payload.waveform_samples;
+      const valid =
+        Array.isArray(samples) &&
+        samples.length <= 64 &&
+        samples.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 100);
+      if (!valid) {
+        return errorResponse(
+          400,
+          'invalid_waveform_samples',
+          'waveform_samples must be at most 64 numbers, each 0-100.',
+        );
+      }
+    }
   }
 
   if (
@@ -237,12 +290,18 @@ Deno.serve(async (req) => {
     // private; this bypasses its RLS the same way every other service-
     // role read in this codebase does) rather than trusting a client-
     // supplied mime type for what actually gets sent to OpenAI.
-    let imageModeration: { action: string; categories: string[] } = {
+    //
+    // Voice notes (docs/17-VOICE-NOTES-SCOPING.md §6) — transcribe first,
+    // then run the transcript through the same moderateText the caller
+    // above already used for the caption. Same "either one blocking is
+    // enough" posture as image moderation; catches spoken-content abuse,
+    // not non-speech audio abuse (a stated gap, not a silent one).
+    let mediaModeration: { action: string; categories: string[] } = {
       action: 'clean',
       categories: [],
     };
-    if (hasMedia) {
-      const { data: imageBlob, error: downloadError } = await db.storage
+    if (hasMedia && (payload.media_type === 'image' || payload.media_type === 'audio')) {
+      const { data: mediaBlob, error: downloadError } = await db.storage
         .from('chat-media')
         .download(payload.media_path!);
       if (downloadError) {
@@ -253,19 +312,25 @@ Deno.serve(async (req) => {
         // posture the catch block below already has for a provider
         // outage), not on the send itself.
         console.error('send-message: could not download media for moderation:', downloadError);
-      } else {
-        const imageBytes = new Uint8Array(await imageBlob.arrayBuffer());
-        imageModeration = await moderationProvider.moderateImage(
+      } else if (payload.media_type === 'image') {
+        const imageBytes = new Uint8Array(await mediaBlob.arrayBuffer());
+        mediaModeration = await moderationProvider.moderateImage(
           imageBytes,
-          imageBlob.type || 'image/jpeg',
+          mediaBlob.type || 'image/jpeg',
+        );
+      } else {
+        const audioBytes = new Uint8Array(await mediaBlob.arrayBuffer());
+        mediaModeration = await moderationProvider.moderateAudio(
+          audioBytes,
+          mediaBlob.type || 'audio/m4a',
         );
       }
     }
 
-    const blocked = textModeration.action === 'blocked' || imageModeration.action === 'blocked';
+    const blocked = textModeration.action === 'blocked' || mediaModeration.action === 'blocked';
     const flagged =
-      !blocked && (textModeration.action === 'flagged' || imageModeration.action === 'flagged');
-    const categories = [...new Set([...textModeration.categories, ...imageModeration.categories])];
+      !blocked && (textModeration.action === 'flagged' || mediaModeration.action === 'flagged');
+    const categories = [...new Set([...textModeration.categories, ...mediaModeration.categories])];
 
     if (blocked) {
       await db.from('moderated_content').insert({
@@ -300,7 +365,9 @@ Deno.serve(async (req) => {
       p_reply_to_message_id: payload.reply_to_message_id ?? null,
       p_is_forwarded: payload.is_forwarded ?? false,
       p_media_path: hasMedia ? payload.media_path : null,
-      p_media_type: hasMedia ? 'image' : null,
+      p_media_type: hasMedia ? payload.media_type : null,
+      p_duration_seconds: isAudio ? payload.duration_seconds : null,
+      p_waveform_samples: isAudio ? (payload.waveform_samples ?? null) : null,
     })
     .single();
 
@@ -344,16 +411,18 @@ Deno.serve(async (req) => {
       .eq('id', user.id)
       .maybeSingle();
 
-    // A captionless photo has nothing for the push body to truncate —
-    // "📷 Photo" matches the same convention WhatsApp's own notification
-    // text uses for a media-only message.
+    // A captionless photo/voice note has nothing for the push body to
+    // truncate — "📷 Photo" / "🎤 Voice message" match the same convention
+    // WhatsApp's own notification text uses for a media-only message.
     const pushBody = body.trim().length
       ? body.length > 120
         ? `${body.slice(0, 117)}...`
         : body
-      : hasMedia
-        ? '📷 Photo'
-        : '';
+      : isAudio
+        ? '🎤 Voice message'
+        : hasMedia
+          ? '📷 Photo'
+          : '';
 
     await sendPushToUser(db, recipientId, sender?.display_name ?? 'New message', pushBody, {
       thread_id: threadId,

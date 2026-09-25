@@ -43,4 +43,17 @@ export interface ContentModerationProvider {
    * make one real call with a genuinely flagged image and confirm the
    * response shape before trusting this in production. */
   moderateImage(imageBytes: Uint8Array, mimeType: string): Promise<ModerationResult>;
+  /** docs/17-VOICE-NOTES-SCOPING.md §6 — no direct audio-input moderation
+   * exists on `omni-moderation-latest` the way it does for images, so this
+   * transcribes first (OpenAI's `audio/transcriptions` endpoint, same
+   * vendor/key, a second real API call) then runs the transcript through
+   * the same `moderateText` category → action mapping. This catches
+   * spoken-content abuse; it does **not** catch non-speech audio abuse
+   * (e.g. harassment via sound alone) — a real, stated gap, not a silent
+   * one (docs/17 §6). **Not yet confirmed against a real live call with
+   * genuinely flagged speech**, same caveat every other provider method
+   * here carries — confirmed only that the transcription endpoint is
+   * reachable with real credentials, not that a truly abusive recording
+   * produces the expected block/flag outcome. */
+  moderateAudio(audioBytes: Uint8Array, mimeType: string): Promise<ModerationResult>;
 }
