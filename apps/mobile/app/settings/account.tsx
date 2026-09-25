@@ -401,7 +401,7 @@ export default function AccountSettingsScreen() {
           headerTitleStyle: { color: colors.textPrimary },
         }}
       />
-      <Screen>
+      <Screen edges={['right', 'bottom', 'left']}>
         <KeyboardAvoidingScreen>
           <ScrollView
             showsVerticalScrollIndicator={false}

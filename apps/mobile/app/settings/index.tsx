@@ -89,7 +89,7 @@ export default function SettingsScreen() {
           headerTitleStyle: { color: colors.textPrimary },
         }}
       />
-      <Screen>
+      <Screen edges={['right', 'bottom', 'left']}>
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: spacing.xl }}

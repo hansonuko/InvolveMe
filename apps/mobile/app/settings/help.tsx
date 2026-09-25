@@ -90,7 +90,7 @@ export default function HelpSettingsScreen() {
           headerTitleStyle: { color: colors.textPrimary },
         }}
       />
-      <Screen>
+      <Screen edges={['right', 'bottom', 'left']}>
         <Row label="Invite a friend" onPress={() => void shareInvite()} />
         <Row label="Terms of Service" onPress={() => router.push('/legal/terms')} />
         <Row label="Privacy Policy" onPress={() => router.push('/legal/privacy')} />

@@ -44,7 +44,7 @@ export default function NotificationsSettingsScreen() {
           headerTitleStyle: { color: colors.textPrimary },
         }}
       />
-      <Screen>
+      <Screen edges={['right', 'bottom', 'left']}>
         <Pressable
           style={{
             flexDirection: 'row',

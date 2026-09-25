@@ -1643,7 +1643,7 @@ export default function ThreadScreen() {
                 ) : null,
         }}
       />
-      <Screen style={{ paddingHorizontal: 0 }}>
+      <Screen style={{ paddingHorizontal: 0 }} edges={['right', 'bottom', 'left']}>
         {/* Absolute, behind everything else in this screen — see
             ChatWallpaper's own header comment for why this exists and why
             it's a tinted vector pattern rather than a WhatsApp/Telegram
