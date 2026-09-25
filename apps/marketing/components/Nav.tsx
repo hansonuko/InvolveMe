@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { LogoMark } from '@/components/LogoMark';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 const GROUPS = [
@@ -107,7 +108,11 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur">
       <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="text-brand font-extrabold tracking-wide text-foreground-accent">
+        <Link
+          href="/"
+          className="flex items-center gap-2.5 text-brand font-extrabold tracking-wide text-foreground-accent"
+        >
+          <LogoMark size={40} />
           InvolveMe
         </Link>
 
