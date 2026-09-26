@@ -116,7 +116,12 @@ async function seedEscrowedMessage(admin, payerId, payeeId, wordCount) {
   const {
     rows: [thread],
   } = await admin.query(
-    'insert into public.threads (participant_a, participant_b) values ($1, $2) returning id',
+    // payer_id must be set explicitly on a direct insert — it has no
+    // column default (docs/18 §C1's fn_start_thread sets it, not the
+    // schema, since a DEFAULT can't reference another column of the same
+    // row) — a thread seeded without it has payer_id null, and
+    // fn_send_message correctly rejects every send against it.
+    'insert into public.threads (participant_a, participant_b, payer_id) values ($1, $2, $1) returning id',
     [payerId, payeeId],
   );
   const {

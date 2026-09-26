@@ -10,8 +10,10 @@
 // caller's own id, never taken from the request body — same posture
 // every other money/message-adjacent function here already uses.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
+import { parseBody } from '../_shared/validate.ts';
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
 
 interface EditMessageRequestBody {
@@ -27,6 +29,14 @@ interface FnEditMessageRow {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// body's own emptiness check keeps its distinct empty_message code (checked
+// manually below, matching send-message's equivalent).
+const EditMessageMessageIdSchema = z.object({
+  message_id: z
+    .string({ invalid_type_error: 'message_id must be a UUID.' })
+    .regex(UUID_RE, 'message_id must be a UUID.'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -94,19 +104,26 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: EditMessageRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
-
-  if (typeof payload.message_id !== 'string' || !UUID_RE.test(payload.message_id)) {
-    return errorResponse(400, 'invalid_request', 'message_id must be a UUID.');
+  if (typeof rawBody !== 'object' || rawBody === null) {
+    return errorResponse(400, 'invalid_request', 'Body must be a JSON object.');
   }
-  if (typeof payload.body !== 'string' || payload.body.trim().length === 0) {
+  const rawPayload = rawBody as EditMessageRequestBody;
+
+  if (typeof rawPayload.body !== 'string' || rawPayload.body.trim().length === 0) {
     return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
   }
+  const body = rawPayload.body;
+
+  const idParsed = parseBody(EditMessageMessageIdSchema, rawBody);
+  if (!idParsed.success) return idParsed.response;
+
+  const payload = { message_id: idParsed.data.message_id, body };
 
   const db = serviceRoleClient();
 

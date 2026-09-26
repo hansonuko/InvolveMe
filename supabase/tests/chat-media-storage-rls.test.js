@@ -139,7 +139,10 @@ async function main() {
     // path they already know) could name it; the predicate itself is
     // what's under test here, exercised with a real row in place.
     const thread = await admin.query(
-      `insert into public.threads (participant_a, participant_b) values ($1, $2) returning id`,
+      // payer_id has no column default (docs/18 §C1) — must be set
+      // explicitly on a direct insert or fn_send_message rejects every
+      // send against this thread with no_active_payer.
+      `insert into public.threads (participant_a, participant_b, payer_id) values ($1, $2, $1) returning id`,
       [A, B],
     );
     threadId = thread.rows[0].id;

@@ -14,9 +14,19 @@
 // p_sender_id is always the authenticated caller's own id, never taken from
 // the request body.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
 import { runInBackground, sendPushToUser } from '../_shared/push.ts';
+import { checkRateLimit } from '../_shared/rateLimit.ts';
+import { parseBody } from '../_shared/validate.ts';
+
+// Defense-in-depth (docs/19-SECURITY-HARDENING-SCOPING.md §3) — the natural
+// cost-based throttle (insufficient_credit) already caps unfunded abuse;
+// this bounds a funded account's raw call rate too, generously above any
+// real chat pace.
+const SEND_MESSAGE_MAX = 60;
+const SEND_MESSAGE_WINDOW_SECONDS = 60;
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
 
 interface SendMessageRequestBody {
@@ -68,6 +78,28 @@ interface FnSendMessageRow {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// This function's request body has a lot of cross-field conditional logic
+// (media_type only matters if media_path is present, duration/waveform only
+// matter if that media is audio, recipient_id needs an async DB lookup) that
+// stays exactly as hand-written procedural code below — that's genuinely
+// what it is, not ad hoc validation Zod would express more clearly. What
+// Zod replaces here is the four independent, unconditional "is this
+// optional field a well-formed UUID if present" checks
+// (docs/19-SECURITY-HARDENING-SCOPING.md §4) — the actual sweet spot for a
+// shape-validation schema, extracted so a future fifth UUID field can't
+// forget the same check the way four hand-copied regex tests risked.
+const uuidField = (name: string) =>
+  z
+    .string({ invalid_type_error: `${name} must be a UUID.` })
+    .regex(UUID_RE, `${name} must be a UUID.`)
+    .optional();
+const SendMessageUuidFieldsSchema = z.object({
+  thread_id: uuidField('thread_id'),
+  client_message_id: uuidField('client_message_id'),
+  reply_to_message_id: uuidField('reply_to_message_id'),
+  reply_to_status_id: uuidField('reply_to_status_id'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -172,12 +204,19 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: SendMessageRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
+  if (typeof rawBody !== 'object' || rawBody === null) {
+    return errorResponse(400, 'invalid_request', 'Body must be a JSON object.');
+  }
+  const payload = rawBody as SendMessageRequestBody;
+
+  const uuidFields = parseBody(SendMessageUuidFieldsSchema, rawBody);
+  if (!uuidFields.success) return uuidFields.response;
 
   const hasMedia = typeof payload.media_path === 'string' && payload.media_path.trim().length > 0;
 
@@ -229,33 +268,22 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (
-    payload.client_message_id !== undefined &&
-    (typeof payload.client_message_id !== 'string' || !UUID_RE.test(payload.client_message_id))
-  ) {
-    return errorResponse(400, 'invalid_request', 'client_message_id must be a UUID.');
-  }
-
-  if (
-    payload.reply_to_message_id !== undefined &&
-    (typeof payload.reply_to_message_id !== 'string' || !UUID_RE.test(payload.reply_to_message_id))
-  ) {
-    return errorResponse(400, 'invalid_request', 'reply_to_message_id must be a UUID.');
-  }
-
-  if (
-    payload.reply_to_status_id !== undefined &&
-    (typeof payload.reply_to_status_id !== 'string' || !UUID_RE.test(payload.reply_to_status_id))
-  ) {
-    return errorResponse(400, 'invalid_request', 'reply_to_status_id must be a UUID.');
-  }
-
+  // client_message_id / reply_to_message_id / reply_to_status_id / thread_id
+  // shape (well-formed UUID if present) is already validated above via
+  // SendMessageUuidFieldsSchema.
   let threadId = payload.thread_id;
-  if (threadId !== undefined && (typeof threadId !== 'string' || !UUID_RE.test(threadId))) {
-    return errorResponse(400, 'invalid_request', 'thread_id must be a UUID.');
-  }
 
   const db = serviceRoleClient();
+
+  const rateAllowed = await checkRateLimit(
+    db,
+    `send-message:user:${user.id}`,
+    SEND_MESSAGE_MAX,
+    SEND_MESSAGE_WINDOW_SECONDS,
+  );
+  if (!rateAllowed) {
+    return errorResponse(429, 'rate_limited', 'Sending too fast — slow down a moment.');
+  }
 
   if (!threadId) {
     const recipientId = payload.recipient_id;

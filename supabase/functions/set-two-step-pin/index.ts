@@ -12,6 +12,7 @@
 // the field has somewhere to live once that infra decision is made, not
 // because anything reads it yet.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadTwoStepPinPepper } from '../_shared/two-step-config.ts';
 import {
@@ -21,12 +22,27 @@ import {
   hashPin,
   isValidPinFormat,
 } from '../_shared/twoStep.ts';
+import { parseBody } from '../_shared/validate.ts';
 
 interface SetTwoStepPinRequestBody {
   pin?: string;
   current_pin?: string;
   recovery_email?: string;
 }
+
+// pin/current_pin deliberately stay validated by isValidPinFormat (the
+// existing shared helper both this file and verify-two-step-pin already
+// use) rather than a parallel Zod pattern — one source of truth for "what
+// counts as a well-formed PIN" beats a second copy of the same regex that
+// could drift. recovery_email has no such existing helper, so it's a real
+// Zod fit.
+const RecoveryEmailSchema = z.object({
+  recovery_email: z
+    .string()
+    .email('recovery_email is not a valid email address.')
+    .optional()
+    .or(z.literal('')),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -38,8 +54,6 @@ function json(status: number, payload: unknown): Response {
 function errorResponse(status: number, code: string, message: string): Response {
   return json(status, { error: code, message });
 }
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
@@ -65,11 +79,8 @@ Deno.serve(async (req) => {
   if (!isValidPinFormat(payload.pin)) {
     return errorResponse(400, 'invalid_pin', 'pin must be exactly 6 digits.');
   }
-  if (payload.recovery_email !== undefined && payload.recovery_email !== '') {
-    if (typeof payload.recovery_email !== 'string' || !EMAIL_RE.test(payload.recovery_email)) {
-      return errorResponse(400, 'invalid_request', 'recovery_email is not a valid email address.');
-    }
-  }
+  const emailParsed = parseBody(RecoveryEmailSchema, { recovery_email: payload.recovery_email });
+  if (!emailParsed.success) return emailParsed.response;
 
   const pepper = loadTwoStepPinPepper();
   if (!pepper) {

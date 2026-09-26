@@ -16,13 +16,29 @@
 // §12). This function surfaces that resolution back to the client so the
 // welcome screen can render the right message.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody } from '../_shared/validate.ts';
 
-interface CompleteOnboardingRequestBody {
-  country?: string;
-  display_name?: string;
-  nickname?: string;
-}
+const CompleteOnboardingRequestSchema = z.object({
+  country: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().toUpperCase())
+    .refine((v): v is string => !!v && v.length === 2, {
+      message: 'country must be a 2-letter ISO country code.',
+    }),
+  display_name: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim())
+    .refine((v): v is string => !!v, { message: 'display_name is required.' }),
+  nickname: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim())
+    .refine((v): v is string => !!v, { message: 'nickname is required.' }),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -49,26 +65,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: CompleteOnboardingRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  const country = payload.country?.trim().toUpperCase();
-  const displayName = payload.display_name?.trim();
-  const nickname = payload.nickname?.trim();
-
-  if (!country || country.length !== 2) {
-    return errorResponse(400, 'invalid_request', 'country must be a 2-letter ISO country code.');
-  }
-  if (!displayName) {
-    return errorResponse(400, 'invalid_request', 'display_name is required.');
-  }
-  if (!nickname) {
-    return errorResponse(400, 'invalid_request', 'nickname is required.');
-  }
+  const parsed = parseBody(CompleteOnboardingRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const { country, display_name: displayName, nickname } = parsed.data;
 
   const db = serviceRoleClient();
   const { data, error } = await db

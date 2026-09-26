@@ -9,12 +9,14 @@
 // No financial logic — the same "identity re-derived from the caller's
 // JWT" posture as every other function here, via _shared/auth.ts.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredBoolean, requiredString } from '../_shared/validate.ts';
 
-interface SetThreadMutedRequestBody {
-  thread_id?: string;
-  muted?: boolean;
-}
+const SetThreadMutedRequestSchema = z.object({
+  thread_id: requiredString('thread_id'),
+  muted: requiredBoolean('muted'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -41,19 +43,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: SetThreadMutedRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.thread_id !== 'string' || payload.thread_id.trim().length === 0) {
-    return errorResponse(400, 'invalid_request', 'thread_id is required.');
-  }
-  if (typeof payload.muted !== 'boolean') {
-    return errorResponse(400, 'invalid_request', 'muted must be a boolean.');
-  }
+  const parsed = parseBody(SetThreadMutedRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { error } = await db.rpc('fn_set_thread_muted', {

@@ -25,9 +25,11 @@
 // topup_id and spend this app's Flutterwave API quota probing other
 // people's payments.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
 import { notifyTopupConfirmed, runInBackground } from '../_shared/push.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
 function json(status: number, payload: unknown): Response {
@@ -41,9 +43,9 @@ function errorResponse(status: number, code: string, message: string): Response 
   return json(status, { error: code, message });
 }
 
-interface CheckTopupStatusRequestBody {
-  topup_id?: string;
-}
+const CheckTopupStatusRequestSchema = z.object({
+  topup_id: requiredString('topup_id'),
+});
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
@@ -59,16 +61,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: CheckTopupStatusRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.topup_id !== 'string' || payload.topup_id.trim().length === 0) {
-    return errorResponse(400, 'invalid_request', 'topup_id is required.');
-  }
+  const parsed = parseBody(CheckTopupStatusRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { data: topup, error: fetchError } = await db

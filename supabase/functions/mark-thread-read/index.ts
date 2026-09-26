@@ -7,11 +7,13 @@
 // caller's JWT, never trusted from the request body" posture every other
 // function here uses, via _shared/auth.ts.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 
-interface MarkThreadReadRequestBody {
-  thread_id?: string;
-}
+const MarkThreadReadRequestSchema = z.object({
+  thread_id: requiredString('thread_id'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -38,16 +40,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: MarkThreadReadRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.thread_id !== 'string' || payload.thread_id.trim().length === 0) {
-    return errorResponse(400, 'invalid_request', 'thread_id is required.');
-  }
+  const parsed = parseBody(MarkThreadReadRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { error } = await db.rpc('fn_mark_thread_read', {

@@ -8,12 +8,28 @@
 // authenticated caller's own id, never taken from the request body — the
 // caller can't create a group "owned by" anyone else.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody } from '../_shared/validate.ts';
 
+// name's own failure keeps its distinct group_name_required code (checked
+// manually below, matching web-send-otp's pattern for the same reason) —
+// member_ids' *shape* (an array of strings) is genuinely just request
+// validation, but an empty array is deliberately let through to
+// fn_create_group_thread so it can raise its own group_needs_members error,
+// not rejected here as invalid_request.
 interface CreateGroupThreadRequestBody {
   name?: string;
   member_ids?: string[];
 }
+
+const MEMBER_IDS_MSG = 'member_ids must be an array of user ids.';
+const CreateGroupThreadMemberIdsSchema = z.object({
+  member_ids: z.array(z.string({ invalid_type_error: MEMBER_IDS_MSG }), {
+    required_error: MEMBER_IDS_MSG,
+    invalid_type_error: MEMBER_IDS_MSG,
+  }),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -67,22 +83,24 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: CreateGroupThreadRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
+  if (typeof rawBody !== 'object' || rawBody === null) {
+    return errorResponse(400, 'invalid_request', 'Body must be a JSON object.');
+  }
+  const rawPayload = rawBody as CreateGroupThreadRequestBody;
 
-  if (typeof payload.name !== 'string' || payload.name.trim().length === 0) {
+  if (typeof rawPayload.name !== 'string' || rawPayload.name.trim().length === 0) {
     return errorResponse(400, 'group_name_required', 'A group needs a name.');
   }
-  if (
-    !Array.isArray(payload.member_ids) ||
-    !payload.member_ids.every((id) => typeof id === 'string')
-  ) {
-    return errorResponse(400, 'invalid_request', 'member_ids must be an array of user ids.');
-  }
+
+  const memberIdsParsed = parseBody(CreateGroupThreadMemberIdsSchema, rawBody);
+  if (!memberIdsParsed.success) return memberIdsParsed.response;
+  const payload = { name: rawPayload.name, member_ids: memberIdsParsed.data.member_ids };
 
   const db = serviceRoleClient();
   const { data, error } = await db.rpc('fn_create_group_thread', {

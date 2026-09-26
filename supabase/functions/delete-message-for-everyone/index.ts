@@ -21,13 +21,13 @@
 // session's own expire-statuses function's posture for the same class of
 // problem.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredUuid } from '../_shared/validate.ts';
 
-interface DeleteMessageForEveryoneRequestBody {
-  message_id?: string;
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DeleteMessageForEveryoneRequestSchema = z.object({
+  message_id: requiredUuid('message_id'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -80,16 +80,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: DeleteMessageForEveryoneRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.message_id !== 'string' || !UUID_RE.test(payload.message_id)) {
-    return errorResponse(400, 'invalid_request', 'message_id must be a UUID.');
-  }
+  const parsed = parseBody(DeleteMessageForEveryoneRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { data: clearedMediaPath, error } = await db.rpc('fn_delete_message_for_everyone', {

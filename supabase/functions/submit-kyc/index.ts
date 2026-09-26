@@ -28,14 +28,20 @@
 // bump) and logged to fraud_signals for review, not surfaced to the user
 // as a generic failure that looks the same as "number not found".
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadKycHashPepper, loadPremblyConfig } from '../_shared/kyc-config.ts';
+import { parseBody } from '../_shared/validate.ts';
 import { createPremblyProvider } from '../../../packages/kyc/prembly.ts';
 
-interface SubmitKycRequestBody {
-  type?: 'bvn' | 'nin';
-  number?: string;
-}
+const TYPE_MSG = 'type must be "bvn" or "nin".';
+const NUMBER_MSG = 'number must be exactly 11 digits.';
+const SubmitKycRequestSchema = z.object({
+  type: z.enum(['bvn', 'nin'], { errorMap: () => ({ message: TYPE_MSG }) }),
+  number: z
+    .string({ required_error: NUMBER_MSG, invalid_type_error: NUMBER_MSG })
+    .regex(/^\d{11}$/, NUMBER_MSG),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -70,21 +76,18 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: SubmitKycRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (payload.type !== 'bvn' && payload.type !== 'nin') {
-    return errorResponse(400, 'invalid_request', 'type must be "bvn" or "nin".');
-  }
   // Both BVN and NIN are 11 digits in Nigeria — a cheap sanity check before
   // spending real money on a call that's guaranteed to fail.
-  if (typeof payload.number !== 'string' || !/^\d{11}$/.test(payload.number)) {
-    return errorResponse(400, 'invalid_request', 'number must be exactly 11 digits.');
-  }
+  const parsed = parseBody(SubmitKycRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const pepper = loadKycHashPepper();
   if (!pepper) {

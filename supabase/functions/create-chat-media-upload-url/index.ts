@@ -29,6 +29,16 @@
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 
+// Deliberately NOT converted to the shared Zod parseBody() pattern
+// (docs/19-SECURITY-HARDENING-SCOPING.md §4): `kind` is already validated
+// against a real allow-list (EXTENSION_BY_KIND's own keys, single source of
+// truth for both the valid-values list and the extension it maps to), and
+// this function's body is intentionally optional — a missing/unparseable
+// body is a valid "use the default" request, not a 400, unlike every other
+// function's stricter convention. Forcing a parallel Zod enum here would
+// just be a second list of the same two strings that could drift out of
+// sync with EXTENSION_BY_KIND, for no real validation improvement.
+
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status,

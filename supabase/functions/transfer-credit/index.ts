@@ -16,14 +16,20 @@
 // uses — Supabase Auth strips the leading "+" before storage), and maps
 // the DB function's exceptions to HTTP responses.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { runInBackground, sendPushToUser } from '../_shared/push.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 
-interface TransferCreditRequestBody {
-  recipient_phone?: string;
-  credits?: number;
-  note?: string;
-}
+const CREDITS_MSG = 'credits must be a positive integer.';
+const TransferCreditRequestSchema = z.object({
+  recipient_phone: requiredString('recipient_phone'),
+  credits: z
+    .number({ required_error: CREDITS_MSG, invalid_type_error: CREDITS_MSG })
+    .int(CREDITS_MSG)
+    .positive(CREDITS_MSG),
+  note: z.string({ invalid_type_error: 'note must be a string.' }).optional(),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -99,26 +105,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: TransferCreditRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.recipient_phone !== 'string' || payload.recipient_phone.trim().length === 0) {
-    return errorResponse(400, 'invalid_request', 'recipient_phone is required.');
-  }
-  if (
-    typeof payload.credits !== 'number' ||
-    !Number.isInteger(payload.credits) ||
-    payload.credits <= 0
-  ) {
-    return errorResponse(400, 'invalid_request', 'credits must be a positive integer.');
-  }
-  if (payload.note !== undefined && typeof payload.note !== 'string') {
-    return errorResponse(400, 'invalid_request', 'note must be a string.');
-  }
+  const parsed = parseBody(TransferCreditRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   // See find-user-by-phone's header comment for why this strip is required.
   const normalizedPhone = payload.recipient_phone.replace(/^\+/, '');

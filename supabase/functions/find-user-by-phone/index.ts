@@ -18,18 +18,26 @@
 // client the same way every other Edge Function's non-money reads/writes
 // already are (e.g. buy-credit's users/topups lookups).
 //
-// Known gap, not addressed here: no rate limiting beyond whatever Supabase
-// applies platform-wide to Edge Functions, so this is a phone-enumeration
-// surface (repeatedly guessing numbers to see which are registered) if
-// someone automates it. Not found called out anywhere in
-// docs/06-SECURITY-FRAUD-LOOPHOLES.md — worth adding there if this becomes
-// a real problem, not solved here.
+// Rate-limited per caller (docs/19-SECURITY-HARDENING-SCOPING.md §3) — this
+// was flagged above as a phone-enumeration surface with no rate limiting
+// beyond Supabase's generic platform-level limits; closed by capping how
+// fast one caller can probe numbers, complementing (not replacing)
+// docs/18 §A4's exact-match-only anti-enumeration property.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { checkRateLimit } from '../_shared/rateLimit.ts';
+import { parseBody } from '../_shared/validate.ts';
 
-interface FindUserByPhoneRequestBody {
-  phone?: string;
-}
+const LOOKUP_MAX = 30;
+const LOOKUP_WINDOW_SECONDS = 60;
+
+const FindUserByPhoneRequestSchema = z.object({
+  phone: z
+    .string({ invalid_type_error: 'phone is required.', required_error: 'phone is required.' })
+    .trim()
+    .min(1, 'phone is required.'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -56,15 +64,27 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: FindUserByPhoneRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.phone !== 'string' || payload.phone.trim().length === 0) {
-    return errorResponse(400, 'invalid_request', 'phone is required.');
+  const parsed = parseBody(FindUserByPhoneRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
+
+  const db = serviceRoleClient();
+
+  const allowed = await checkRateLimit(
+    db,
+    `find-user-by-phone:user:${user.id}`,
+    LOOKUP_MAX,
+    LOOKUP_WINDOW_SECONDS,
+  );
+  if (!allowed) {
+    return errorResponse(429, 'rate_limited', 'Too many lookups, try again in a minute.');
   }
 
   // Supabase Auth strips the leading "+" before storing a phone number
@@ -73,8 +93,6 @@ Deno.serve(async (req) => {
   // so this has to match users.phone's actual on-disk format or every
   // lookup 404s, including a user looking up their own number.
   const normalizedPhone = payload.phone.replace(/^\+/, '');
-
-  const db = serviceRoleClient();
 
   const { data: found, error } = await db
     .from('users')

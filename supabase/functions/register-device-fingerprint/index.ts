@@ -15,11 +15,16 @@
 // hardware identifier, only its SHA-256, same "hash before it reaches the
 // server" posture KYC_HASH_PEPPER already establishes for BVN/NIN.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody } from '../_shared/validate.ts';
 
-interface RegisterDeviceFingerprintRequestBody {
-  fingerprint_hash?: string;
-}
+const FINGERPRINT_MSG = 'fingerprint_hash must be a 64-character hex SHA-256 digest.';
+const RegisterDeviceFingerprintRequestSchema = z.object({
+  fingerprint_hash: z
+    .string({ required_error: FINGERPRINT_MSG, invalid_type_error: FINGERPRINT_MSG })
+    .regex(/^[0-9a-f]{64}$/i, FINGERPRINT_MSG),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -46,27 +51,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: RegisterDeviceFingerprintRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  // A SHA-256 hex digest is always exactly 64 characters — a cheap,
-  // specific sanity check that also happens to reject an accidental raw
-  // (unhashed) identifier being sent, since none of this app's real
-  // identifiers are 64 hex characters long.
-  if (
-    typeof payload.fingerprint_hash !== 'string' ||
-    !/^[0-9a-f]{64}$/i.test(payload.fingerprint_hash)
-  ) {
-    return errorResponse(
-      400,
-      'invalid_request',
-      'fingerprint_hash must be a 64-character hex SHA-256 digest.',
-    );
-  }
+  const parsed = parseBody(RegisterDeviceFingerprintRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { error } = await db.rpc('fn_link_device_fingerprint', {

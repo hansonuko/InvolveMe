@@ -5,14 +5,20 @@
 // omit it (or send null) to leave it unchanged. p_actor_id is always the
 // authenticated caller's own id.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 
-interface UpdateGroupProfileRequestBody {
-  group_thread_id?: string;
-  name?: string | null;
-  description?: string | null;
-  avatar_url?: string | null;
-}
+const OPTIONAL_FIELDS_MSG = 'name, description, and avatar_url must be strings.';
+const optionalNullableString = () =>
+  z.string({ invalid_type_error: OPTIONAL_FIELDS_MSG }).nullable().optional();
+
+const UpdateGroupProfileRequestSchema = z.object({
+  group_thread_id: requiredString('group_thread_id'),
+  name: optionalNullableString(),
+  description: optionalNullableString(),
+  avatar_url: optionalNullableString(),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -67,31 +73,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: UpdateGroupProfileRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.group_thread_id !== 'string') {
-    return errorResponse(400, 'invalid_request', 'group_thread_id is required.');
-  }
-  if (
-    (payload.name !== undefined && payload.name !== null && typeof payload.name !== 'string') ||
-    (payload.description !== undefined &&
-      payload.description !== null &&
-      typeof payload.description !== 'string') ||
-    (payload.avatar_url !== undefined &&
-      payload.avatar_url !== null &&
-      typeof payload.avatar_url !== 'string')
-  ) {
-    return errorResponse(
-      400,
-      'invalid_request',
-      'name, description, and avatar_url must be strings.',
-    );
-  }
+  const parsed = parseBody(UpdateGroupProfileRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { error } = await db.rpc('fn_update_group_profile', {

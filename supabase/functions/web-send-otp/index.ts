@@ -33,9 +33,31 @@
 // browser JS (every other one is called from the RN app, which isn't
 // subject to CORS, or server-side) — see _shared/cors.ts's header comment.
 
+import { z } from 'npm:zod@^3.23';
+import { serviceRoleClient } from '../_shared/auth.ts';
 import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
+import { checkRateLimit } from '../_shared/rateLimit.ts';
+
+// docs/19-SECURITY-HARDENING-SCOPING.md §3 — this function's own header
+// comment already flagged the absence of this as a real gap (OTP-bombing a
+// single number, or hammering the endpoint generally) before it was closed.
+// Two dimensions: per-phone (the actual abuse target) tighter than per-IP
+// (a shared NAT/office network legitimately sends more than one signup).
+const OTP_PER_PHONE_MAX = 3;
+const OTP_PER_PHONE_WINDOW_SECONDS = 10 * 60;
+const OTP_PER_IP_MAX = 10;
+const OTP_PER_IP_WINDOW_SECONDS = 10 * 60;
 
 const E164_PATTERN = /^\+[1-9]\d{6,14}$/;
+
+// Kept as two separately-parsed fields, not one parseBody() call
+// (docs/19-SECURITY-HARDENING-SCOPING.md §4's shared helper), because this
+// function's contract already distinguishes invalid_phone from
+// missing_captcha as separate error codes — a client-visible distinction
+// (see web-send-otp-function.test.js), not an implementation detail to
+// collapse into one generic invalid_request just for consistency.
+const PhoneSchema = z.string().regex(E164_PATTERN);
+const TurnstileTokenSchema = z.string().min(1);
 
 function json(req: Request, status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -88,15 +110,53 @@ Deno.serve(async (req) => {
     return errorResponse(req, 400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  const { phone, turnstileToken } = payload;
-  if (typeof phone !== 'string' || !E164_PATTERN.test(phone)) {
+  const { phone: rawPhone, turnstileToken: rawTurnstileToken } = payload;
+  const phoneParsed = PhoneSchema.safeParse(rawPhone);
+  if (!phoneParsed.success) {
     return errorResponse(req, 400, 'invalid_phone', 'phone must be E.164 (e.g. +2348012345678).');
   }
-  if (typeof turnstileToken !== 'string' || turnstileToken.length === 0) {
+  const phone = phoneParsed.data;
+  const turnstileParsed = TurnstileTokenSchema.safeParse(rawTurnstileToken);
+  if (!turnstileParsed.success) {
     return errorResponse(req, 400, 'missing_captcha', 'turnstileToken is required.');
   }
+  const turnstileToken = turnstileParsed.data;
 
   const remoteIp = req.headers.get('x-forwarded-for');
+
+  let db;
+  try {
+    db = serviceRoleClient();
+  } catch (e) {
+    console.error('web-send-otp: serviceRoleClient() failed:', e);
+    return errorResponse(req, 500, 'server_misconfigured', 'Server misconfigured.');
+  }
+
+  const phoneAllowed = await checkRateLimit(
+    db,
+    `web-send-otp:phone:${phone}`,
+    OTP_PER_PHONE_MAX,
+    OTP_PER_PHONE_WINDOW_SECONDS,
+  );
+  if (!phoneAllowed) {
+    return errorResponse(
+      req,
+      429,
+      'rate_limited',
+      'Too many attempts for this number, try again later.',
+    );
+  }
+  if (remoteIp) {
+    const ipAllowed = await checkRateLimit(
+      db,
+      `web-send-otp:ip:${remoteIp}`,
+      OTP_PER_IP_MAX,
+      OTP_PER_IP_WINDOW_SECONDS,
+    );
+    if (!ipAllowed) {
+      return errorResponse(req, 429, 'rate_limited', 'Too many attempts, try again later.');
+    }
+  }
 
   let captchaOk: boolean;
   try {

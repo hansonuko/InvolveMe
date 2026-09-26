@@ -22,8 +22,10 @@
 // Requires KYC tier >= 1 (submit-kyc) — this is the second half of what
 // docs/03-ECONOMY-LEDGER.md §6 requires before a withdrawal can complete.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 import {
   createFlutterwaveProvider,
   PaymentProviderError,
@@ -48,11 +50,14 @@ function mapProviderError(e: unknown, fallbackMessage: string): Response {
   return errorResponse(503, 'payment_provider_unavailable', fallbackMessage);
 }
 
-interface LinkBankAccountRequestBody {
-  bank_code?: string;
-  bank_name?: string;
-  account_number?: string;
-}
+const ACCOUNT_NUMBER_MSG = 'account_number must be exactly 10 digits.';
+const LinkBankAccountRequestSchema = z.object({
+  bank_code: requiredString('bank_code'),
+  bank_name: z.string().optional(),
+  account_number: z
+    .string({ required_error: ACCOUNT_NUMBER_MSG, invalid_type_error: ACCOUNT_NUMBER_MSG })
+    .regex(/^\d{10}$/, ACCOUNT_NUMBER_MSG),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -103,25 +108,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: LinkBankAccountRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (
-    typeof payload.bank_code !== 'string' ||
-    !payload.bank_code ||
-    typeof payload.account_number !== 'string' ||
-    !/^\d{10}$/.test(payload.account_number)
-  ) {
-    return errorResponse(
-      400,
-      'invalid_request',
-      'bank_code is required and account_number must be exactly 10 digits.',
-    );
-  }
+  const parsed = parseBody(LinkBankAccountRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
 

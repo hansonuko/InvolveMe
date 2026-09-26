@@ -6,12 +6,14 @@
 // function directly. p_actor_id is always the authenticated caller's own
 // id, same identity-from-JWT posture every Edge Function here uses.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 
-interface RemoveGroupMemberRequestBody {
-  group_thread_id?: string;
-  target_user_id?: string;
-}
+const RemoveGroupMemberRequestSchema = z.object({
+  group_thread_id: requiredString('group_thread_id'),
+  target_user_id: requiredString('target_user_id'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -59,20 +61,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: RemoveGroupMemberRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.group_thread_id !== 'string' || typeof payload.target_user_id !== 'string') {
-    return errorResponse(
-      400,
-      'invalid_request',
-      'group_thread_id and target_user_id are required.',
-    );
-  }
+  const parsed = parseBody(RemoveGroupMemberRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { error } = await db.rpc('fn_remove_group_member', {

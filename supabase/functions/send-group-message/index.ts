@@ -11,8 +11,10 @@
 // nothing here for that risk to attach to. p_sender_id is always the
 // authenticated caller's own id, never taken from the request body.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
 
 interface SendGroupMessageRequestBody {
@@ -27,6 +29,17 @@ interface SendGroupMessageRequestBody {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// body's own emptiness check keeps its distinct empty_message code (checked
+// manually below, matching send-message's own equivalent), so this schema
+// only covers group_thread_id and client_message_id.
+const SendGroupMessageUuidFieldsSchema = z.object({
+  group_thread_id: requiredString('group_thread_id'),
+  client_message_id: z
+    .string({ invalid_type_error: 'client_message_id must be a UUID.' })
+    .regex(UUID_RE, 'client_message_id must be a UUID.')
+    .optional(),
+});
 
 interface FnSendGroupMessageFreeRow {
   message_id: string;
@@ -79,26 +92,26 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: SendGroupMessageRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
-
-  if (typeof payload.group_thread_id !== 'string' || payload.group_thread_id.trim().length === 0) {
-    return errorResponse(400, 'invalid_request', 'group_thread_id is required.');
+  if (typeof rawBody !== 'object' || rawBody === null) {
+    return errorResponse(400, 'invalid_request', 'Body must be a JSON object.');
   }
-  if (typeof payload.body !== 'string' || payload.body.trim().length === 0) {
+  const rawPayload = rawBody as SendGroupMessageRequestBody;
+
+  if (typeof rawPayload.body !== 'string' || rawPayload.body.trim().length === 0) {
     return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
   }
+  const body = rawPayload.body;
 
-  if (
-    payload.client_message_id !== undefined &&
-    (typeof payload.client_message_id !== 'string' || !UUID_RE.test(payload.client_message_id))
-  ) {
-    return errorResponse(400, 'invalid_request', 'client_message_id must be a UUID.');
-  }
+  const uuidFields = parseBody(SendGroupMessageUuidFieldsSchema, rawBody);
+  if (!uuidFields.success) return uuidFields.response;
+
+  const payload = { ...rawPayload, body };
 
   const db = serviceRoleClient();
 
