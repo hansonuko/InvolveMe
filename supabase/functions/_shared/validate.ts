@@ -61,3 +61,26 @@ export function requiredBoolean(fieldName: string) {
   const message = `${fieldName} must be a boolean.`;
   return z.boolean({ required_error: message, invalid_type_error: message });
 }
+
+// A base64-encoded key/signature field that must decode to exactly
+// `byteLength` bytes — used for E2EE key material
+// (docs/21-E2EE-TECHNICAL-DESIGN.md), where malformed key material would
+// otherwise fail silently much later (as "crypto doesn't work") rather
+// than with a clear error at the point it was actually submitted.
+export function requiredBase64Key(fieldName: string, byteLength: number) {
+  const message = `${fieldName} must be a base64-encoded ${byteLength}-byte key.`;
+  return z.string({ required_error: message, invalid_type_error: message }).refine(
+    (value) => {
+      // atob() (Web-standard, not Deno's Node-compat Buffer) so this
+      // behaves identically locally and on the deployed edge runtime —
+      // no dependency on which Node-compat globals a given Deno version
+      // happens to expose.
+      try {
+        return atob(value).length === byteLength;
+      } catch {
+        return false;
+      }
+    },
+    { message },
+  );
+}

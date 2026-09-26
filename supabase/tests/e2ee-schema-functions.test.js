@@ -193,6 +193,21 @@ async function testFetchBundlesPolicyAndConsumption(admin) {
       'a one-time prekey was included and claimed (key_id 100 or 101)',
       bundles1[0].one_time_prekey_id === 100 || bundles1[0].one_time_prekey_id === 101,
     );
+    // Real bug this exact check caught live
+    // (20260926162000_e2ee_base64_nowrap_fix.sql): Postgres's plain
+    // encode(bytea, 'base64') line-wraps at 76 characters — a 64-byte
+    // signature is long enough to trigger it, a 32-byte key isn't, which
+    // is exactly why this needs its own explicit assertion rather than
+    // trusting "the shorter fields looked fine" to generalize.
+    for (const [field, value] of [
+      ['identity_key_ed25519', bundles1[0].identity_key_ed25519],
+      ['identity_key_x25519', bundles1[0].identity_key_x25519],
+      ['signed_prekey_public', bundles1[0].signed_prekey_public],
+      ['signed_prekey_signature', bundles1[0].signed_prekey_signature],
+      ['one_time_prekey_public', bundles1[0].one_time_prekey_public],
+    ]) {
+      log(`${field} is unwrapped base64 (no embedded newline)`, !value.includes('\n'), value);
+    }
 
     const claimedKeyId = bundles1[0].one_time_prekey_id;
     const consumedRow = (

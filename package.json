@@ -41,6 +41,8 @@
     "test:thread-payer:ci": "node supabase/tests/thread-payer-functions.test.js",
     "test:e2ee-schema": "node --env-file=.env supabase/tests/e2ee-schema-functions.test.js",
     "test:e2ee-schema:ci": "node supabase/tests/e2ee-schema-functions.test.js",
+    "test:e2ee-functions": "node --env-file=.env supabase/tests/e2ee-functions.test.js",
+    "test:e2ee-functions:ci": "node supabase/tests/e2ee-functions.test.js",
     "test:group-chat": "node --env-file=.env supabase/tests/group-chat-functions.test.js",
     "test:group-admin": "node --env-file=.env supabase/tests/group-admin-actions-function.test.js",
     "test:group-rls": "node --env-file=.env supabase/tests/group-rls-recursion.test.js",
