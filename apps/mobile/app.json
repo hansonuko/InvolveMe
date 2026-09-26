@@ -70,7 +70,14 @@
           }
         }
       ],
-      "./plugins/withCertPinning.js"
+      "./plugins/withCertPinning.js",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "InvolveMe uses your microphone to record voice messages.",
+          "enableBackgroundPlayback": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

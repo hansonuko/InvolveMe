@@ -66,14 +66,28 @@ export interface Message {
    * `null` for a text-only message. Cleared (along with `media_type`) by
    * `fn_delete_message_for_everyone` on delete. */
   media_path: string | null;
-  /** Always `'image'` today — the column exists ahead of a future video
-   * follow-up (docs/16 §4), not a sign one is imminent. */
+  /** `'image'` or `'audio'` (docs/17-VOICE-NOTES-SCOPING.md) — the column
+   * exists ahead of a future video follow-up (docs/16 §4) too, not a sign
+   * one is imminent. */
   media_type: string | null;
   /** docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §B1 — the status this
    * message replied to, if any. Only ever drives display (a "replied to
    * your status" preview); whether the send was actually free is read off
    * `credits_charged`/`status` above, never inferred from this being set. */
   reply_to_status_id: string | null;
+  /** Audio-only, display-only — never read by billing logic
+   * (docs/17 §3). `null` for every non-audio message. */
+  duration_seconds: number | null;
+  /** Real amplitude samples captured while recording (docs/17 §5), 0-100
+   * each, at most 64 elements (server-enforced) — the bubble renders this
+   * directly, never a decorative/random placeholder. `null` for every
+   * non-audio message. */
+  waveform_samples: number[] | null;
+  /** Set once, by `fn_mark_audio_played`, the first time the RECIPIENT's
+   * client actually starts playback — a lightweight read-state signal
+   * parallel to (not replacing) the read-receipt double-tick. `null`
+   * means unplayed (or not audio at all). */
+  audio_played_at: string | null;
 }
 
 /** Messages in a thread, oldest first, kept live via Realtime — per
@@ -103,7 +117,7 @@ export function useThreadMessages(
       const { data, error } = await supabase
         .from('messages')
         .select(
-          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, read_at, reply_to_message_id, is_forwarded, media_path, media_type, reply_to_status_id',
+          'id, thread_id, sender_id, body, word_count, credits_charged, status, created_at, edited_at, deleted_for_everyone, read_at, reply_to_message_id, is_forwarded, media_path, media_type, reply_to_status_id, duration_seconds, waveform_samples, audio_played_at',
         )
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true });
@@ -291,6 +305,13 @@ interface SendMessageRequest {
    * to the caller. */
   mediaPath?: string;
   mediaType?: string;
+  /** docs/17-VOICE-NOTES-SCOPING.md §3/§8 — required alongside `mediaPath`/
+   * `mediaType: 'audio'`; `fn_send_message` enforces both the max-duration
+   * cap and the waveform array's bounds server-side, this is display data
+   * plus the one billing-adjacent number (duration itself is never what's
+   * billed — see docs/17 §3 — only whether it's under the cap). */
+  durationSeconds?: number;
+  waveformSamples?: number[];
   /** docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §B1 — the status
    * being replied to. fn_send_message is the real authority on whether
    * this turns out free (first-message-in-thread + no media + a real,
@@ -354,6 +375,8 @@ export function useSendMessage() {
         is_forwarded: request.isForwarded,
         media_path: request.mediaPath,
         media_type: request.mediaType,
+        duration_seconds: request.durationSeconds,
+        waveform_samples: request.waveformSamples,
         reply_to_status_id: request.replyToStatusId,
         envelopes,
       });
@@ -399,11 +422,17 @@ interface CreateChatMediaUploadUrlResponse {
 /** Wraps POST /functions/v1/create-chat-media-upload-url — mints a
  * one-time signed upload slot in the private `chat-media` bucket, same
  * shape as status's own `useCreateStatusUploadUrl`
- * (lib/queries/status.ts). */
+ * (lib/queries/status.ts). `kind` defaults to `'image'` server-side
+ * (docs/17-VOICE-NOTES-SCOPING.md §8) — omit it for the existing photo
+ * flow, pass `'audio'` for a voice note; it drives the returned path's
+ * file extension and, implicitly, which `media_type` the caller is
+ * expected to send next. */
 export function useCreateChatMediaUploadUrl() {
   return useMutation({
-    mutationFn: () =>
-      callEdgeFunction<CreateChatMediaUploadUrlResponse>('create-chat-media-upload-url'),
+    mutationFn: (kind?: 'image' | 'audio') =>
+      callEdgeFunction<CreateChatMediaUploadUrlResponse>('create-chat-media-upload-url', {
+        kind,
+      }),
   });
 }
 
@@ -418,6 +447,21 @@ export async function uploadChatMedia(localUri: string, path: string, token: str
   const response = await fetch(localUri);
   const original = await response.blob();
   const blob = new Blob([original], { type: 'image/jpeg' });
+  const { error } = await supabase.storage.from('chat-media').uploadToSignedUrl(path, token, blob);
+  if (error) throw error;
+}
+
+/** Same Blob-rewrapping approach as `uploadChatMedia` (docs/17-VOICE-
+ * NOTES-SCOPING.md §10) — `.type` is what the signed-URL upload actually
+ * respects, not `fileOptions.contentType`. `audio/m4a` matches
+ * `create-chat-media-upload-url`'s own `kind: 'audio'` extension choice
+ * and the bucket's widened `allowed_mime_types`
+ * (20260926110000_chat_audio_messages_pipeline.sql) — expo-audio's
+ * default recording preset produces an `.m4a`/AAC container. */
+export async function uploadChatAudio(localUri: string, path: string, token: string) {
+  const response = await fetch(localUri);
+  const original = await response.blob();
+  const blob = new Blob([original], { type: 'audio/m4a' });
   const { error } = await supabase.storage.from('chat-media').uploadToSignedUrl(path, token, blob);
   if (error) throw error;
 }
@@ -556,6 +600,39 @@ export function useDeleteMessageForEveryone() {
       // used to flag).
       await deleteCachedPlaintext(variables.messageId);
       queryClient.invalidateQueries({ queryKey: ['messages', variables.threadId] });
+    },
+  });
+}
+
+/** Wraps POST /functions/v1/mark-audio-played — called once, the first
+ * time the RECIPIENT's client actually starts playing a voice note
+ * (docs/17-VOICE-NOTES-SCOPING.md §8; playbackStore.toggle is the actual
+ * call site). Patches this thread's already-loaded message list directly
+ * rather than invalidating+refetching: the only thing that changed is one
+ * timestamp on one row this device already has in memory, and the other
+ * participant's own view of it updates via the same Realtime `messages`
+ * subscription every other in-place edit here already relies on. Silently
+ * swallows `cannot_mark_own_message_played` (the sender's own device
+ * calling this on its own sent note, e.g. if `toggle` fires client-side
+ * before `isOwn` is checked somewhere) — not a real failure, matching
+ * this mutation's own "best-effort read-state signal" nature. */
+export function useMarkAudioPlayed() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ ok: true }, EdgeFunctionError, DeleteMessageRequest>({
+    mutationFn: (request) =>
+      callEdgeFunction('mark-audio-played', { message_id: request.messageId }),
+    onSuccess: (_data, variables) => {
+      queryClient.setQueryData<Message[]>(['messages', variables.threadId], (old) =>
+        old?.map((m) =>
+          m.id === variables.messageId ? { ...m, audio_played_at: new Date().toISOString() } : m,
+        ),
+      );
+    },
+    onError: (error) => {
+      if (error.code !== 'cannot_mark_own_message_played') {
+        console.error('useMarkAudioPlayed failed:', error.message);
+      }
     },
   });
 }

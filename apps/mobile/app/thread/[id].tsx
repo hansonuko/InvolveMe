@@ -22,6 +22,8 @@ import { Button } from '@/components/ui/Button';
 import { BuyCreditModal } from '@/components/ui/BuyCreditModal';
 import { ChatWallpaper } from '@/components/ui/ChatWallpaper';
 import { type ForwardTarget, ForwardMessageModal } from '@/components/chat/ForwardMessageModal';
+import { VoiceMessageBubble, useVoiceNoteAutoAdvance } from '@/components/chat/VoiceMessageBubble';
+import { VoiceRecorderButton } from '@/components/chat/VoiceRecorderButton';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
@@ -39,6 +41,7 @@ import {
   useEditMessage,
   useSendMessage,
   useThreadMessages,
+  uploadChatAudio,
   uploadChatMedia,
 } from '@/lib/queries/messages';
 import { useSendGroupMessage } from '@/lib/queries/groups';
@@ -794,7 +797,9 @@ function MessageBubble({
           </Text>
         ) : (
           <>
-            {message.media_path ? (
+            {message.media_path && message.media_type === 'audio' ? (
+              <VoiceMessageBubble message={message} isOwn={isOwn} threadId={message.thread_id} />
+            ) : message.media_path ? (
               <Pressable
                 onPress={() => mediaUrl.data && onOpenImage(mediaUrl.data)}
                 style={{ marginBottom: message.body.trim() ? spacing.xs : 0 }}
@@ -1041,6 +1046,7 @@ export default function ThreadScreen() {
     isLoading,
     refetch: refetchMessages,
   } = useThreadMessages(id, currentUserId, headerInfo?.e2eeStatus);
+  useVoiceNoteAutoAdvance(messages);
   const sendMessage = useSendMessage();
   const createChatMediaUploadUrl = useCreateChatMediaUploadUrl();
   const sendGroupMessage = useSendGroupMessage();
@@ -1161,6 +1167,10 @@ export default function ThreadScreen() {
   const [attachSheetOpen, setAttachSheetOpen] = useState(false);
   const [isPickingImage, setIsPickingImage] = useState(false);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  // Whether VoiceRecorderButton has left 'idle' — the composer hides the
+  // text input/camera/send button and gives it the full row once true,
+  // matching WhatsApp's own composer once a recording actually starts.
+  const [recorderActive, setRecorderActive] = useState(false);
   // A tapped-open bubble's signed URL — MessageBubble resolves its own
   // media_path via useChatMediaUrl and hands the ready signed URL up here,
   // rather than this state holding a media_path the viewer would need to
@@ -1552,6 +1562,53 @@ export default function ThreadScreen() {
         },
       },
     );
+  };
+
+  /** VoiceRecorderButton's onSend — a deliberately simpler sibling of
+   * handleSend's own photo-upload branch (docs/17-VOICE-NOTES-SCOPING.md
+   * §10): no insufficient-credit auto-retry-on-topup flow (that state
+   * shape — `pendingSend` — has no room for duration/waveform without a
+   * wider change than this pass scopes), just a direct error surfaced to
+   * retry manually. Offline is rejected outright, matching the photo
+   * pipeline's own decision (no "re-record and re-upload on reconnect"
+   * concept in this app's outbox). */
+  const handleSendVoiceNote = async (
+    uri: string,
+    durationSeconds: number,
+    waveformSamples: number[],
+  ) => {
+    if (!isOnline) {
+      Alert.alert('No connection', "Voice messages can't be sent while offline yet.");
+      return;
+    }
+
+    setIsUploadingMedia(true);
+    try {
+      const { path, token } = await createChatMediaUploadUrl.mutateAsync('audio');
+      await uploadChatAudio(uri, path, token);
+
+      await sendMessage.mutateAsync({
+        threadId: id,
+        body: '',
+        mediaPath: path,
+        mediaType: 'audio',
+        durationSeconds,
+        waveformSamples,
+        e2eeStatus: headerInfo?.e2eeStatus,
+        partnerId: headerInfo?.partnerId,
+      });
+      scrollToLatest();
+    } catch (e) {
+      const message =
+        e instanceof EdgeFunctionError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'Something went wrong.';
+      Alert.alert('Could not send voice message', message);
+    } finally {
+      setIsUploadingMedia(false);
+    }
   };
 
   /** Starts replying to a message — reached via the selection header's
@@ -2168,10 +2225,11 @@ export default function ThreadScreen() {
           >
             {/* Media attach (docs/16-CHAT-MEDIA-SCOPING.md) — hidden while
              * editing (attaching/swapping media on an edit isn't
-             * supported, §3) or already carrying a picked photo (remove it
+             * supported, §3), already carrying a picked photo (remove it
              * via the preview bar's own close button first, matching a
-             * one-photo-per-message v1 scope). */}
-            {!editingMessage && !pickedImage ? (
+             * one-photo-per-message v1 scope), or while a voice note is
+             * actually being recorded (below). */}
+            {!editingMessage && !pickedImage && !recorderActive ? (
               <Pressable
                 onPress={isBlocked || isPickingImage ? undefined : () => setAttachSheetOpen(true)}
                 disabled={isBlocked || isPickingImage}
@@ -2181,42 +2239,61 @@ export default function ThreadScreen() {
                 <Ionicons name="camera-outline" size={24} color={colors.textSecondary} />
               </Pressable>
             ) : null}
-            <TextInput
-              ref={composerInputRef}
-              value={body}
-              onChangeText={setBody}
-              placeholder={isBlocked ? 'Unblock to send a message' : 'Message…'}
-              placeholderTextColor={colors.textSecondary}
-              editable={!isBlocked}
-              multiline
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.bgSurfaceAlt,
-                  color: colors.textPrimary,
-                  borderRadius: radius.card,
-                  borderColor: colors.borderSubtle,
-                },
-              ]}
-            />
-            <Pressable
-              onPress={sendDisabled ? undefined : handleSend}
-              disabled={sendDisabled}
-              hitSlop={4}
-              style={[
-                styles.sendButton,
-                {
-                  backgroundColor: colors.brandPrimary,
-                  opacity: sendDisabled ? 0.4 : 1,
-                },
-              ]}
-            >
-              <Ionicons
-                name={editingMessage ? 'checkmark' : 'send'}
-                size={20}
-                color={colors.textInverse}
+            {!recorderActive ? (
+              <TextInput
+                ref={composerInputRef}
+                value={body}
+                onChangeText={setBody}
+                placeholder={isBlocked ? 'Unblock to send a message' : 'Message…'}
+                placeholderTextColor={colors.textSecondary}
+                editable={!isBlocked}
+                multiline
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: colors.bgSurfaceAlt,
+                    color: colors.textPrimary,
+                    borderRadius: radius.card,
+                    borderColor: colors.borderSubtle,
+                  },
+                ]}
               />
-            </Pressable>
+            ) : null}
+            {/* Contextual mic <-> send (docs/17-VOICE-NOTES-SCOPING.md §1)
+             * — VoiceRecorderButton itself renders as just the small idle
+             * mic icon until a real press-and-hold starts a recording, at
+             * which point it takes over the whole row (the text
+             * input/camera above hide via `recorderActive`) exactly like
+             * WhatsApp's own composer. Never unmounted/remounted across
+             * that transition — same element in the same JSX slot either
+             * way — so an in-progress recording's internal state survives
+             * every phase change. */}
+            {!recorderActive && (body.trim() || pickedImage || editingMessage) ? (
+              <Pressable
+                onPress={sendDisabled ? undefined : handleSend}
+                disabled={sendDisabled}
+                hitSlop={4}
+                style={[
+                  styles.sendButton,
+                  {
+                    backgroundColor: colors.brandPrimary,
+                    opacity: sendDisabled ? 0.4 : 1,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={editingMessage ? 'checkmark' : 'send'}
+                  size={20}
+                  color={colors.textInverse}
+                />
+              </Pressable>
+            ) : (
+              <VoiceRecorderButton
+                onSend={handleSendVoiceNote}
+                onPhaseChange={(phase) => setRecorderActive(phase !== 'idle')}
+                disabled={isBlocked || isUploadingMedia}
+              />
+            )}
           </View>
         </KeyboardAvoidingScreen>
       </Screen>
