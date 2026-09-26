@@ -1,6 +1,6 @@
 # 18 — Chat/Status Refinement Batch: Scoping
 
-Scoping only for the items that need it; nothing in Tier C/D is built yet. Tier A/B are small enough to build directly once you say go — this doc is the "organise, order, scope, and catch mistakes" pass requested before that happens. Read `docs/03-ECONOMY-LEDGER.md` and `docs/06-SECURITY-FRAUD-LOOPHOLES.md` before touching anything in Tier B/C (CLAUDE.md standing rule) — both are cited throughout below with the exact sections that matter.
+**Status (session 34): Tier A and Tier B are built, merged, and shipped — see `docs/00-SESSION-HANDOFF.md` for exactly what and when.** Tier C1 is now fully designed (revised 2026-09-26, see §C1 below) and ready to build on go-ahead; Tier C2 and Tier D remain scoping-only. Read `docs/03-ECONOMY-LEDGER.md` and `docs/06-SECURITY-FRAUD-LOOPHOLES.md` before touching anything in Tier C (CLAUDE.md standing rule) — both are cited throughout below with the exact sections that matter.
 
 Ten items came in as one batch. They sort into four very different risk tiers, not one flat list — bundling a tick-color tweak with a proposal to let money flow in a direction this app's core economic model explicitly forbids would be a mistake in itself. Build order at the bottom follows the tiers.
 
@@ -61,22 +61,55 @@ This is real but bounded — one migration (a `reply_to_status_id` column + the 
 
 ## Tier C — needs its own dedicated scoping/build-authorization pass before any code (same weight as `docs/11`'s calls doc)
 
-### C1. Payer/Earner toggle ("Charge from me")
+### C1. Payer/Earner toggle ("Charge from me") — REVISED DESIGN (2026-09-26, session 34)
+
+**Status: designed, not built.** The first pass at this section (kept below as §C1-superseded, for the record of why the simpler design won) treated the literal brief — a per-message "pending consent, decide on reply" mechanic — at face value, and correctly found it genuinely risky: it breaks the atomic-debit invariant every other message in this app relies on, needs a new message lifecycle state, and has an unresolved "what if their balance changed by the time they replied" failure mode. Going deeper surfaced a materially simpler design that delivers the same real outcome without any of that risk, by re-modeling the actual problem as a **role**, not a **per-message decision**.
+
+**The real problem, restated precisely (not the mechanism the brief sketched):** whoever is structurally `participant_a` (fixed forever at thread creation) gets auto-debited for every message anyone sends in that thread, including one the other person decided to send unprompted, with no way to hand that role off — even when the other person would rather pay this time, or the original payer wants to stop. The brief's own stated goal — _"this way, duplicating chats for the same user will be avoided"_ — doesn't actually match reality (threads are already unique per pair; there's no duplicate-thread bug to fix), so that framing is set aside; the design below fully solves the real gap instead.
+
+**The mechanism:**
+
+- **One new column, `threads.payer_id`** (nullable, defaults to `participant_a` at creation — every thread that predates this feature, and every thread whose participants never touch it, behaves exactly as today, zero migration risk). `payer_id` is resolved **before** a message is ever created — `fn_send_message` debits whoever it names instead of hardcoding `participant_a`. Same atomic transaction, same escrow mechanic, same `fn_release_escrow` flow, same everything downstream — one dynamic wallet lookup instead of a fixed assumption. **No new message status, no pending state, no deferred billing.**
+- **"Charge from me"** does exactly one thing: sets `payer_id` to the caller's own id. Enforced server-side that a caller can only ever appoint _themselves_, never the other participant — nobody can be made to pay against their will. Either participant can do this at any time.
+- **Stepping down**: the current payer can set `payer_id` back to `null`. While null, a send from **either** side is rejected outright (a real, specific error — e.g. `no_active_payer` — not `insufficient_credit`, not a silent free send) until one of the two participants claims the role again. This is what actually answers _"the user may not be willing to pay... at the time"_ — cleanly, and without the ambiguity the original "reply = consent" mechanic had (what does a reply that only says "stop messaging me" count as? This design has no such trap: nothing is ever charged unless someone is _currently and explicitly_ holding the payer role).
+- **Nothing is ever retroactive.** `payer_id`/`payee_id` are resolved and frozen into each message's own escrow row at send time, exactly as today — a later reassignment on the thread never touches history. Editing (`fn_edit_message`) and deletion (`fn_delete_message_for_everyone`) need zero changes; they already operate on rows with fixed payer/payee.
+- **Explicitly out of scope**: group chat (`group_threads`/`group_messages`) — separate, still-kill-switched billing model, unrelated to this.
+
+**UI — reuses an existing surface, not a new screen.** `thread/[id].tsx` already renders a static banner (_"They pay for this conversation — your replies earn, they do not cost you"_) gated on `!headerInfo.isPayer`. Made live and tappable, driven by `payer_id` instead of the fixed `participant_a`/`participant_b` roles:
+
+- Not currently paying: **"They're paying · tap to pay instead"**
+- Currently paying: **"You're paying · tap to stop"**
+- `payer_id is null`: **"No one's paying right now · tap to pay"**
+
+**Fraud angle, addressed directly, not deferred:** a reassignable payer role is a real amplification of the collusion pattern `docs/06` already documents for group chat and `docs/11` §4 flags again for calls (two accounts you control, alternating who "earns," converting `topup_credit` into cash with no real value exchanged) — today's fixed-for-life payment direction is itself the friction limiting that pattern per thread; removing it uncaps it. Two concrete, cheap mitigations, both matching patterns already live elsewhere in this codebase, not a new paradigm:
+
+1. **A cooldown on reassignment** — a new `pricing_config` key (e.g. `thread_payer_reassignment_cooldown_minutes`, a few hours is plenty) bounding how fast a colluding pair can round-trip credit between the two roles, without touching the legitimate "occasionally decide who's paying" case at all.
+2. **A new collusion-detection signal** — rapid payer-flip-then-immediate-reply pairs, feeding into the existing `fn_run_collusion_detection`/fraud-signals pipeline (`docs/06` §2), not a new parallel system. Confirm it actually fires on this pattern before shipping, same "don't assume it generalizes for free" caution `docs/11` §4 already states for calls.
+
+Worth stating plainly: this doesn't reopen anything the withdrawal gate already closes. Actually converting to real cash still requires KYC Tier ≥1 and a verified, name-matched bank account (`docs/03` §6), regardless of how fast credit moves internally between two accounts — so the residual exposure here is _internal velocity_, not a new path to real money. That's exactly what the cooldown targets, sized accordingly rather than as a blanket restriction.
+
+**Auditability — one small addition, matching this codebase's existing standard for anything money-adjacent:** a `thread_payer_history` table (`thread_id, changed_by, new_payer_id, changed_at`), append-only, same posture `pricing_config_history`/`admin_audit_log` already establish. Not load-bearing for the mechanism itself — cheap, and the right level of rigor for a feature that changes who pays.
+
+**Net build size:** one new column, one new `SECURITY DEFINER` function (`fn_set_thread_payer` — self-only target, cooldown-gated, participant-only), one small audit table, one new `pricing_config` key, a `fn_send_message` change to resolve the payer dynamically instead of assuming `participant_a`, and a UI change that's really just making an already-existing banner interactive. No new message lifecycle, no new race condition, no new escrow shape.
+
+**Recommendation:** this is the version to build, once you give the go-ahead — materially smaller and safer than the original brief's literal mechanic, while fully answering the real need behind it.
+
+<details>
+<summary>§C1-superseded — original scoping pass (2026-09-25), kept for why the revised design above was chosen over it</summary>
 
 This is the biggest item in the batch, and it proposes changing something `docs/03` §2 states as a fixed rule, not an implementation detail: _"Every message in a paid thread — from either side — costs credits, debited from **A's** `topup_credit` (A is always the paying party in a given thread; B never pays to participate in a thread A initiated)."_ The toggle asks for exactly the case that sentence rules out: letting B become the payer for a specific exchange, and letting A opt out of being charged for a specific incoming message. That's not a bug fix on top of the current model — it's a different model, and it needs to be designed with the same rigor `docs/11` gave calls' billing shape, not shipped as a UI checkbox on top of `fn_send_message` as it stands today.
 
-**First, a framing correction:** the stated goal — _"this way, duplicating chats for the same user will be avoided"_ — doesn't match what's actually happening today. Threads are already unique per pair regardless of who initiates (there's no way to end up with two separate threads between the same two people). The toggle doesn't prevent duplicate threads; it solves a real, different problem: today, whoever is structurally `participant_a` (fixed at thread creation, forever) gets auto-debited for **every** message anyone sends in that thread, including a message the other person decided to send unprompted, with no per-message opportunity to decline. That's the actual gap worth closing — worth stating precisely so the built feature targets the right problem.
-
-**What building this correctly actually requires:**
+**What building this correctly would require, taken literally:**
 
 1. **A new "pending consent" message state, not just a toggle.** The ask is explicit: _"before it lands the other user an earning, it should give this currently paying user the opportunity to avoid deduction... if they reply... that would mean consent."_ That means a message from B can no longer debit A atomically at send time the way `fn_send_message` does for every message today (CLAUDE.md rule #3: one atomic transaction, never "debit now, credit later in a separate call" — this is the mirror problem, "debit _later_, after the fact," and needs the same rigor). Two ways to do it, and the choice matters:
-   - **(a) Reserve, don't commit, at send time.** Check A's balance and place a hold (same shape an escrow already is) the moment B sends, but don't release it as B's earning until A either replies (implicit consent) or the hold expires/gets explicitly declined. This preserves "the money's presence is guaranteed if consent happens," at the cost of A's balance being encumbered before they've agreed to anything — arguably not "the opportunity to avoid deduction" the ask describes, since the credit is already locked away from other spending.
-   - **(b) Don't touch A's balance at all until consent.** The message delivers, uncharged, in a real "awaiting consent" status. Only on A's reply does `fn_send_message`-equivalent logic run the actual debit — but now it has to handle a failure mode this app has never had: **A's balance may no longer cover it by the time they reply** (spent elsewhere in the meantime), for a message that's already been delivered and read. Needs an explicit, decided answer (retry/prompt a top-up before the reply itself can send is the sane default) — not left implicit.
-     Recommend (a) is the safer default given this app's existing "never let a debit be non-atomic" posture, but say so explicitly rather than pick silently — this is a real trade-off, not a formality.
-2. **`escrows.payer_id`/`payee_id` can no longer be assumed `thread.participant_a`/`participant_b`.** They're hardcoded to those two columns everywhere today (the migration you just watched get built for voice notes does the identical thing for its own escrow row). Supporting "B pays this time" means payer/payee must be resolved **per message**, not per thread — a real schema and query-pattern change that touches every place currently assuming "A pays, B earns" is a thread-level constant (transaction history displays, admin treasury views, anywhere `participant_a` is read as "the payer").
-3. **The collusion angle is the one to take most seriously.** `docs/06` already documents the exact shape of this exploit for group chat and flags it again for calls (`docs/11` §4): two accounts you control, alternating who "earns," converting `topup_credit` into cash with no real value exchanged. A **bidirectional** payer/earner toggle is a more convenient version of the same exploit than either of those — right now, a thread's payment direction is fixed for its whole life, which is itself a friction that limits this pattern. A toggle that flips direction per message removes that friction entirely. `fn_run_collusion_detection` was built against fixed-direction message/thread patterns; **confirm it actually fires on a rapid pay/earn-flip pair before this ships, don't assume it generalizes for free** — the same caution `docs/11` §4 already states for calls, and doubly relevant here since this is easier to trigger than either call abuse or group-chat abuse (no new UI gesture needed beyond a toggle, no call duration to sustain).
+   - **(a) Reserve, don't commit, at send time.** Check A's balance and place a hold (same shape an escrow already is) the moment B sends, but don't release it as B's earning until A either replies (implicit consent) or the hold expires/gets explicitly declined. This preserves "the money's presence is guaranteed if consent happens," at the cost of A's balance being encumbered before they've agreed to anything.
+   - **(b) Don't touch A's balance at all until consent.** The message delivers, uncharged, in a real "awaiting consent" status. Only on A's reply does the actual debit run — but now it has to handle a failure mode this app has never had: A's balance may no longer cover it by the time they reply, for a message that's already been delivered and read.
+2. **`escrows.payer_id`/`payee_id` can no longer be assumed `thread.participant_a`/`participant_b`** — a real schema and query-pattern change touching every place currently assuming "A pays, B earns" is a thread-level constant.
+3. **The collusion angle** — a bidirectional payer/earner toggle is a more convenient version of the exploit `docs/06` already documents for group chat and `docs/11` §4 flags for calls.
 
-**Recommendation:** don't build this from the prompt as given. Scope it as its own real design pass — pick (a) vs (b) above deliberately, decide the schema change for per-message payer/payee, and get a real answer from `fn_run_collusion_detection` on the bidirectional-swap pattern — before any migration gets written. Flagging this the same way `docs/11` flags calls: real, wanted, not small.
+This version is what made the feature look genuinely risky. The revised design above solves the identical real-world need by resolving "who pays" as a standing role before a message is ever created, rather than as a per-message consent race — which is what removes the new-message-state/balance-race problem entirely, not a smaller version of the same risk.
+
+</details>
 
 ### C2. Boosted/"Suggested" status (paid reach)
 
@@ -108,9 +141,10 @@ Telling users _"your messages are safely encrypted"_ in E2EE terms while that is
 
 ## Build order
 
-1. **Tier A, all six pieces** — independently mergeable, no shared risk, buildable in one session the same way the last several punch-list batches shipped (one PR per piece or a couple bundled, your call).
-2. **Tier B (free status replies)** — one migration + one `fn_send_message` branch, gated on confirming the "free = no escrow" reading above.
-3. **Tier C1/C2** — do not start without a dedicated design pass each, the same way `docs/11` (calls) got a full doc before any code. Flag which one (if either) you want scoped first; they don't depend on each other.
-4. **Tier D** — a copy/wording fix (option 1 above), buildable alongside Tier A; real E2EE only if you want it scoped as its own project after seeing the trade-offs above.
+1. **Tier A, all six pieces** — ✅ built, merged, shipped (session 33/34). See `docs/00-SESSION-HANDOFF.md`.
+2. **Tier B (free status replies)** — ✅ built, merged, shipped (session 34). See `docs/00-SESSION-HANDOFF.md`.
+3. **Tier C1 (payer/earner role)** — designed (§C1 above, session 34), not built. Ready to build on explicit go-ahead — no further scoping needed.
+4. **Tier C2 (boosted status)** — still needs its own dedicated design pass (audience-selection algorithm, pre-publish moderation gate, new pricing_config/revenue-table entries, a real compliance look) before a build.
+5. **Tier D** — a copy/wording fix (option 1 in that section), still not built; real E2EE only if wanted as its own scoped project after seeing the trade-offs above.
 
-Nothing here is built yet. Tell me which tiers to proceed on.
+Tiers A and B are live. C1 is designed and awaiting a build go-ahead; C2 and D are still open.
