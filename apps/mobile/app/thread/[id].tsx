@@ -54,6 +54,7 @@ import { hexToBytes } from '@/lib/e2ee/bytes';
 import { getOrCreateIdentity } from '@/lib/e2ee/identity';
 import { ensureDeviceRegistered } from '@/lib/e2ee/prekeys';
 import { computeSafetyNumber } from '@/lib/e2ee/safetyNumber';
+import { getKnownIdentityKey, setKnownIdentityKey } from '@/lib/e2ee/safetyNumberStore';
 import { nativeSodiumProvider as sodium } from '@/lib/e2ee/sodiumProviderNative';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { useIsOnline } from '@/lib/network';
@@ -194,6 +195,79 @@ function useThreadHeaderInfo(
   return info;
 }
 
+/** Safety-number change detection (docs/00-SESSION-HANDOFF.md session 35
+ * "Next session" list, item 2) — safetyNumber.ts's fingerprint only helps
+ * a user who thinks to go re-check it; this is the automatic half.
+ * Compares the partner's currently-registered identity key against the
+ * last one this device ever saw for them (safetyNumberStore.ts's
+ * trust-on-first-use baseline) and flags a mismatch. Informational only —
+ * a rotated key could be a benign re-registration or reinstall just as
+ * easily as a real MITM'd exchange, and there's no way to tell which from
+ * this alone, so this surfaces a dismissible banner rather than blocking
+ * anything (matching Signal/WhatsApp's own "safety number changed"
+ * notice). Only runs once the thread is actually e2ee-active — an 'off'
+ * thread has no identity keys to compare in the first place. */
+function useSafetyNumberChangeAlert(
+  partnerId: string | undefined,
+  e2eeStatus: 'off' | 'active' | undefined,
+) {
+  const [changed, setChanged] = useState(false);
+  const latestKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!partnerId || e2eeStatus !== 'active') return;
+    let cancelled = false;
+
+    (async () => {
+      const { data: partnerDevice } = await supabase
+        .from('e2ee_devices')
+        .select('identity_key_x25519')
+        .eq('user_id', partnerId)
+        .is('revoked_at', null)
+        .limit(1)
+        .maybeSingle();
+      if (cancelled || !partnerDevice) return;
+
+      const currentKey = partnerDevice.identity_key_x25519 as string;
+      latestKeyRef.current = currentKey;
+
+      const knownKey = await getKnownIdentityKey(partnerId);
+      if (cancelled) return;
+
+      if (knownKey === null) {
+        // First sighting for this partner — nothing to compare against yet.
+        await setKnownIdentityKey(partnerId, currentKey);
+        return;
+      }
+
+      setChanged(knownKey !== currentKey);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [partnerId, e2eeStatus]);
+
+  /** Called once the user has seen the banner and (ideally) re-verified —
+   * accepts the new key as the baseline so this stops firing until the
+   * NEXT rotation, without requiring the user to prove they actually
+   * compared the number (same "informational, not a hard gate" posture
+   * the rest of this hook already takes). */
+  const acknowledge = () => {
+    if (partnerId && latestKeyRef.current) {
+      setKnownIdentityKey(partnerId, latestKeyRef.current);
+    }
+    setChanged(false);
+  };
+
+  // Gated at read time rather than reset via a synchronous setState in the
+  // effect above (that pattern trips react-hooks/set-state-in-effect) — an
+  // 'off' thread or a not-yet-loaded partnerId simply never runs the fetch
+  // that would set `changed` true, so masking it here is equivalent, not
+  // just a lint workaround.
+  return { changed: e2eeStatus === 'active' && changed, acknowledge };
+}
+
 /** "online" (within the heartbeat's freshness window), or "last seen
  * today at 3:45 PM" / "last seen Sep 12 at 3:45 PM" — `null` if never
  * seen or the partner has last-seen turned off (already gated to `null`
@@ -253,6 +327,7 @@ function ThreadOverflowMenu({
   onMutedChange,
   onBuyCredit,
   onE2eeStatusChange,
+  openSafetyNumberRequestId,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -275,6 +350,11 @@ function ThreadOverflowMenu({
   onBuyCredit: () => void;
   /** Same reasoning as onBlockedChange/onMutedChange, for enabling E2EE. */
   onE2eeStatusChange: () => void;
+  /** Bumped by the parent's safety-number-changed banner (useSafetyNumberChangeAlert)
+   * to open this menu's own safety-number view from outside it, without
+   * lifting that view's state up — undefined/0 means "no request yet", any
+   * change from the previous value means "open it now". */
+  openSafetyNumberRequestId?: number;
 }) {
   const { colors, spacing, radius } = useTheme();
   const setBlocked = useSetThreadBlocked();
@@ -337,6 +417,21 @@ function ThreadOverflowMenu({
       setSafetyNumber('unavailable');
     }
   };
+
+  // Opens this menu's own safety-number view from outside it (the parent's
+  // safety-number-changed banner) — fires only on an actual increment, not
+  // on mount, so a stale/undefined initial value never auto-opens this.
+  const lastHandledSafetyNumberRequestRef = useRef(0);
+  useEffect(() => {
+    if (
+      openSafetyNumberRequestId &&
+      openSafetyNumberRequestId !== lastHandledSafetyNumberRequestRef.current
+    ) {
+      lastHandledSafetyNumberRequestRef.current = openSafetyNumberRequestId;
+      handleViewSafetyNumber();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSafetyNumberRequestId]);
 
   const handleToggleBlock = () => {
     onClose();
@@ -935,6 +1030,11 @@ export default function ThreadScreen() {
   // just needed to move, not change in any other way.
   const [headerRefetchKey, setHeaderRefetchKey] = useState(0);
   const headerInfo = useThreadHeaderInfo(id, currentUserId, headerRefetchKey);
+  const safetyNumberAlert = useSafetyNumberChangeAlert(
+    headerInfo?.partnerId,
+    headerInfo?.e2eeStatus,
+  );
+  const [safetyNumberRequestId, setSafetyNumberRequestId] = useState(0);
 
   const {
     data: messages,
@@ -1859,6 +1959,21 @@ export default function ThreadScreen() {
             </View>
           ) : null}
 
+          {safetyNumberAlert.changed ? (
+            <Pressable
+              onPress={() => {
+                safetyNumberAlert.acknowledge();
+                setSafetyNumberRequestId((n) => n + 1);
+              }}
+              style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}
+            >
+              <Text variant="caption" color="danger">
+                ⚠️ {headerInfo?.partnerName ?? 'This contact'}&apos;s safety number changed — tap to
+                review
+              </Text>
+            </Pressable>
+          ) : null}
+
           {headerInfo?.blockedByMe ? (
             <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
               <Text variant="caption" color="danger">
@@ -2101,6 +2216,7 @@ export default function ThreadScreen() {
           onMutedChange={() => setHeaderRefetchKey((k) => k + 1)}
           onBuyCredit={() => setBuyCreditVisible(true)}
           onE2eeStatusChange={() => setHeaderRefetchKey((k) => k + 1)}
+          openSafetyNumberRequestId={safetyNumberRequestId}
         />
       ) : null}
 
