@@ -47,33 +47,33 @@ interface AppHeaderProps {
  * explicit size-up ask, and the bar itself is now a fixed
  * `layout.barHeight` (~0.6in) tall instead of content-height.
  */
-// The ask was 0.17in (≈27dp at this app's 160dp/inch baseline). Capped to
-// 8dp instead: `layout.barHeight` was reduced by 0.2in (32dp) in this same
-// batch (96 -> 64), and content here is otherwise vertically centered in
-// that bar — a full 27dp shift on top of the now-shorter bar would push
-// the ~34-36dp-tall title text's top edge above the bar entirely (clipping
-// it, and crowding the header icons the same way), not just move it up
-// within the bar. 8dp keeps a real, visible "shifted up" effect (content
-// center moves from the bar's true middle to noticeably above it) without
-// clipping against the reduced height. Worth a real-device check once both
-// changes land together — if there's more headroom than this estimate
-// assumes, this can go higher; safer to under-shoot than ship a clipped
-// header. Applied to the title+actions content only, via a nested
-// wrapper, not to the outer row: shifting the row itself would drag its
-// border-bottom (the boundary line against the content below) up with it,
-// which isn't the ask.
-const HEADER_CONTENT_SHIFT_UP = 8;
+// A past session shifted the title+icons up 8dp within this bar (see git
+// history) to read as more breathing room below than above — a real,
+// explicit ask at the time, but it's exactly the kind of asymmetric
+// top/bottom padding a later "keep the brand name and icons balanced" ask
+// (this session) is now asking to undo, not compound. Trimming a few dp
+// off the bar's own height instead (below) grows the scrollable list a
+// little without needing any asymmetric content shift — flexbox's own
+// `alignItems: 'center'` already centers the title+icons evenly top/
+// bottom in whatever height this bar ends up, no shift constant needed.
+//
+// Deliberately a LOCAL trim, not a change to the shared `layout.barHeight`
+// token: that token also sizes the bottom tab bar ((tabs)/_layout.tsx),
+// which this ask never touched — shrinking it there too would be an
+// unrelated, unrequested side effect.
+const HEADER_HEIGHT_TRIM = 6;
 
 export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps) {
   const { colors, spacing, radius, layout } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  const barHeight = layout.barHeight - HEADER_HEIGHT_TRIM;
 
   return (
     <View
       style={[
         styles.row,
         {
-          height: layout.barHeight,
+          height: barHeight,
           paddingHorizontal: spacing.lg,
           backgroundColor: colors.bgCanvas,
           borderBottomWidth: 1,
@@ -81,7 +81,7 @@ export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps
         },
       ]}
     >
-      <View style={[styles.content, { transform: [{ translateY: -HEADER_CONTENT_SHIFT_UP }] }]}>
+      <View style={styles.content}>
         {/* color="secondary" (not "brand") even for the wordmark — brandPrimary
             is theme-invariant wine now (see tokens.ts), which would be
             near-invisible against a dark canvas in dark mode. textSecondary
@@ -126,7 +126,7 @@ export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps
                         borderColor: colors.borderSubtle,
                         borderRadius: radius.card,
                         right: spacing.lg,
-                        top: layout.barHeight,
+                        top: barHeight,
                       },
                     ]}
                   >
