@@ -4,7 +4,16 @@
     "strict": true,
     "paths": {
       "@/*": ["./*"]
-    }
+    },
+    // apps/mobile/lib/e2ee/*.ts's own internal imports use explicit .ts
+    // extensions — required by Node's ESM type-stripping loader (no
+    // implicit extension resolution for relative specifiers), which
+    // supabase/tests/e2ee-*.test.ts depends on to run this same
+    // production code directly under `node file.ts`, with zero new test
+    // tooling. Metro (this project's actual RN bundler) already resolves
+    // explicit .ts extensions fine; this flag only tells tsc's own
+    // noEmit/bundler-mode checker to stop rejecting them.
+    "allowImportingTsExtensions": true
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
   "exclude": ["node_modules"]
