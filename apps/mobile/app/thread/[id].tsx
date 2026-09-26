@@ -27,6 +27,7 @@ import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { withAppLockSuppressed } from '@/lib/appLock';
 import { usePhoneContactNames } from '@/lib/contacts';
+import { EdgeFunctionError } from '@/lib/edgeFunctions';
 import { useSession } from '@/lib/hooks/useSession';
 import {
   type InsufficientCreditDetails,
@@ -42,7 +43,12 @@ import {
 } from '@/lib/queries/messages';
 import { useSendGroupMessage } from '@/lib/queries/groups';
 import { useReportUser } from '@/lib/queries/profile';
-import { useMarkThreadRead, useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
+import {
+  useMarkThreadRead,
+  useSetThreadBlocked,
+  useSetThreadMuted,
+  useSetThreadPayer,
+} from '@/lib/queries/threads';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { useIsOnline } from '@/lib/network';
 import { type OutboxItem, useOutboxStore } from '@/lib/outboxStore';
@@ -61,7 +67,12 @@ interface ThreadHeaderInfo {
    * partner has no display_name set, instead of falling back to the
    * literal word "Chat". */
   partnerPhone: string | null;
-  isPayer: boolean;
+  /** Who currently pays for this thread (docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md
+   * §C1, `threads.payer_id`) — `null` means nobody is, and sends are
+   * rejected until someone claims the role. Deliberately NOT the same
+   * thing as "am I participant_a" (see the fetch below): payer_id is a
+   * separate, mutable economic role layered on the fixed participant pair. */
+  payerId: string | null;
   blockedByMe: boolean;
   blockedByPartner: boolean;
   /** The caller's own mute flag on this thread (docs/10-UX-REFINEMENT-BACKLOG.md
@@ -99,15 +110,20 @@ function useThreadHeaderInfo(
       const { data: thread } = await supabase
         .from('threads')
         .select(
-          'participant_a, participant_b, blocked_by, muted_by_a, muted_by_b, participant_a_last_read_at, participant_b_last_read_at',
+          'participant_a, participant_b, payer_id, blocked_by, muted_by_a, muted_by_b, participant_a_last_read_at, participant_b_last_read_at',
         )
         .eq('id', threadId)
         .maybeSingle();
       if (!thread || cancelled) return;
 
-      const isPayer = thread.participant_a === currentUserId;
-      const partnerId = isPayer ? thread.participant_b : thread.participant_a;
-      const partnerLastReadAtRaw = isPayer
+      // Structural only — "am I participant_a" resolves who the other
+      // participant is and whose mute/read-cursor column is whose. This is
+      // NOT the same question as "am I the payer" (payer_id, below), which
+      // is a separate, mutable economic role — see the field's own comment
+      // on ThreadHeaderInfo.
+      const isParticipantA = thread.participant_a === currentUserId;
+      const partnerId = isParticipantA ? thread.participant_b : thread.participant_a;
+      const partnerLastReadAtRaw = isParticipantA
         ? thread.participant_b_last_read_at
         : thread.participant_a_last_read_at;
 
@@ -125,10 +141,10 @@ function useThreadHeaderInfo(
         partnerName: partner?.display_name ?? null,
         partnerAvatarUrl: partner?.avatar_url ?? null,
         partnerPhone: partner?.phone ?? null,
-        isPayer,
+        payerId: thread.payer_id,
         blockedByMe: thread.blocked_by === currentUserId,
         blockedByPartner: !!thread.blocked_by && thread.blocked_by !== currentUserId,
-        mutedByMe: isPayer ? thread.muted_by_a : thread.muted_by_b,
+        mutedByMe: isParticipantA ? thread.muted_by_a : thread.muted_by_b,
         partnerLastReadAt: partner?.read_receipts_enabled ? partnerLastReadAtRaw : null,
         partnerLastSeenAt: partner?.last_seen_enabled ? (partner?.last_seen_at ?? null) : null,
       });
@@ -826,6 +842,38 @@ export default function ThreadScreen() {
   const headerInfo = useThreadHeaderInfo(id, currentUserId, headerRefetchKey);
   const [menuVisible, setMenuVisible] = useState(false);
   const [buyCreditVisible, setBuyCreditVisible] = useState(false);
+  const setThreadPayer = useSetThreadPayer();
+
+  // docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §C1 — the payer banner
+  // below is the only surface for this. Claiming (self) and stepping down
+  // (null) both route through the same mutation; fn_set_thread_payer is
+  // the actual authority on whether either is currently allowed (self-only,
+  // current-payer-only stepdown, the 24h idle gate on taking over) — this
+  // handler just picks which of the two to ask for and surfaces the
+  // server's rejection reason rather than guessing at one client-side.
+  const handleTapPayerBanner = () => {
+    if (!headerInfo || !currentUserId) return;
+    const iAmPayer = headerInfo.payerId === currentUserId;
+    const newPayerId = iAmPayer ? null : currentUserId;
+
+    setThreadPayer.mutate(
+      { threadId: id, newPayerId },
+      {
+        onSuccess: () => setHeaderRefetchKey((k) => k + 1),
+        onError: (error) => {
+          const code = error instanceof EdgeFunctionError ? error.code : null;
+          if (code === 'thread_not_idle_long_enough') {
+            Alert.alert(
+              'Not yet',
+              'This conversation needs to be quiet for a while before you can take over paying.',
+            );
+            return;
+          }
+          Alert.alert('Could not update', error instanceof Error ? error.message : 'Try again.');
+        },
+      },
+    );
+  };
 
   // Ticks every 15s purely so "online" can flip to "last seen ..." from
   // time passing alone — see formatLastSeen's own comment for why this
@@ -1639,12 +1687,20 @@ export default function ThreadScreen() {
         <ChatWallpaper />
 
         <KeyboardAvoidingScreen>
-          {headerInfo && !headerInfo.isPayer ? (
-            <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
+          {headerInfo && currentUserId ? (
+            <Pressable
+              onPress={handleTapPayerBanner}
+              disabled={setThreadPayer.isPending}
+              style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}
+            >
               <Text variant="caption" color="secondary">
-                They pay for this conversation — your replies earn, they do not cost you.
+                {headerInfo.payerId === null
+                  ? "No one's paying right now · tap to pay"
+                  : headerInfo.payerId === currentUserId
+                    ? "You're paying · tap to stop"
+                    : "They're paying · tap to pay instead"}
               </Text>
-            </View>
+            </Pressable>
           ) : null}
 
           {headerInfo?.blockedByMe ? (

@@ -279,6 +279,29 @@ export function useSetThreadMuted() {
   });
 }
 
+interface SetThreadPayerResponse {
+  ok: boolean;
+  payer_id: string | null;
+}
+
+/** Wraps POST /functions/v1/set-thread-payer
+ * (docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §C1,
+ * 20260926140000_thread_payer_role.sql). Passing the caller's own id claims
+ * the payer role (self-only — enforced server-side regardless of what's
+ * passed); passing `null` steps down. `thread/[id].tsx`'s payer banner is
+ * the only caller. Like `useSetThreadMuted`, `useThreadHeaderInfo` is a
+ * one-shot fetch rather than a TanStack Query, so there's no query key to
+ * invalidate — the caller bumps its own refetch key on success. */
+export function useSetThreadPayer() {
+  return useMutation({
+    mutationFn: (params: { threadId: string; newPayerId: string | null }) =>
+      callEdgeFunction<SetThreadPayerResponse>('set-thread-payer', {
+        thread_id: params.threadId,
+        new_payer_id: params.newPayerId,
+      }),
+  });
+}
+
 export interface BlockedThread {
   thread_id: string;
   partner: { id: string; display_name: string | null };

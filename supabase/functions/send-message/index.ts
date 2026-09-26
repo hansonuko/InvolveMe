@@ -96,6 +96,13 @@ function mapSendMessageError(pgMessage: string): Response {
   if (pgMessage.startsWith('thread_blocked')) {
     return errorResponse(403, 'thread_blocked', 'This thread is blocked.');
   }
+  if (pgMessage.startsWith('no_active_payer')) {
+    return errorResponse(
+      409,
+      'no_active_payer',
+      'No one is currently set to pay for this conversation.',
+    );
+  }
   if (pgMessage.startsWith('wallet_frozen')) {
     return errorResponse(403, 'wallet_frozen', 'Your wallet is frozen.');
   }
