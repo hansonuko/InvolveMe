@@ -23,6 +23,7 @@ import { callEdgeFunction } from '@/lib/edgeFunctions';
 import { supabase } from '@/lib/supabase';
 
 import { bytesToBase64, base64ToBytes, hexToBytes } from './bytes';
+import { withDeviceLock } from './deviceLock';
 import {
   initRatchetAsAlice,
   initRatchetAsBob,
@@ -143,16 +144,19 @@ export async function encryptForThread(
     throw new Error('encryptForThread: recipient has no active E2EE device.');
   }
 
-  const existingSessions = new Map<string, Awaited<ReturnType<typeof loadSession>>>();
-  const deviceIdsNeedingBootstrap: string[] = [];
+  // Heuristic only, to decide whether fetch-prekey-bundles is worth
+  // calling at all — NOT the authority on whether a given device still
+  // needs bootstrapping by the time its own locked section below
+  // actually runs (a concurrent call could have already bootstrapped it
+  // in between; that section re-reads fresh, under its own device's
+  // lock, and is what's actually trusted).
+  const deviceIdsLikelyNeedingBootstrap: string[] = [];
   for (const deviceId of deviceIds) {
-    const session = await loadSession(deviceId);
-    if (session) existingSessions.set(deviceId, session);
-    else deviceIdsNeedingBootstrap.push(deviceId);
+    if (!(await loadSession(threadId, deviceId))) deviceIdsLikelyNeedingBootstrap.push(deviceId);
   }
 
   let bundlesByDeviceId = new Map<string, FetchedBundle>();
-  if (deviceIdsNeedingBootstrap.length > 0) {
+  if (deviceIdsLikelyNeedingBootstrap.length > 0) {
     const bundles = await fetchPrekeyBundles(recipientUserId);
     bundlesByDeviceId = new Map(bundles.map((b) => [b.device_id, b]));
   }
@@ -161,50 +165,65 @@ export async function encryptForThread(
   const plaintextBytes = new TextEncoder().encode(plaintext);
   const envelopes: OutgoingEnvelope[] = [];
 
+  // Each device's own read-ratchet-write sequence is serialized against
+  // any OTHER concurrent call (another send, a retry) touching the same
+  // device — see deviceLock.ts's header comment for the real race this
+  // closes. Different devices still proceed independently/concurrently;
+  // this only ever blocks two callers wanting the SAME device.
   for (const deviceId of deviceIds) {
-    let x3dhFields: {
-      x3dhSenderIdentityKey: string | null;
-      x3dhSenderEphemeralKey: string | null;
-      x3dhOneTimePrekeyId: number | null;
-    } = { x3dhSenderIdentityKey: null, x3dhSenderEphemeralKey: null, x3dhOneTimePrekeyId: null };
+    const bundle = bundlesByDeviceId.get(deviceId);
 
-    let session = existingSessions.get(deviceId) ?? null;
+    const outcome = await withDeviceLock(`${threadId}:${deviceId}`, async () => {
+      let x3dhFields: {
+        x3dhSenderIdentityKey: string | null;
+        x3dhSenderEphemeralKey: string | null;
+        x3dhOneTimePrekeyId: number | null;
+      } = { x3dhSenderIdentityKey: null, x3dhSenderEphemeralKey: null, x3dhOneTimePrekeyId: null };
 
-    if (!session) {
-      const bundle = bundlesByDeviceId.get(deviceId);
-      if (!bundle) {
-        // The device existed when we listed active devices a moment ago
-        // but published no usable bundle (e.g. its signed prekey expired
-        // server-side in between) — skip it rather than fail the whole
-        // send; the other devices still get a real envelope.
-        continue;
+      // Fresh read, inside this device's lock — the only read this
+      // function actually trusts for "does a session already exist."
+      let session = await loadSession(threadId, deviceId);
+
+      if (!session) {
+        if (!bundle) {
+          // The device existed when we listed active devices a moment
+          // ago but published no usable bundle (e.g. its signed prekey
+          // expired server-side in between), or a concurrent call
+          // claimed the last one-time prekey and this call's own
+          // pre-fetch heuristic didn't anticipate needing one — skip it
+          // rather than fail the whole send; the other devices still
+          // get a real envelope.
+          return null;
+        }
+        const { sessionInit, oneTimePrekeyId } = await bootstrapOutgoingSession(
+          recipientUserId,
+          bundle,
+        );
+        session = initRatchetAsAlice(
+          sodium,
+          sessionInit.rootKey,
+          base64ToBytes(bundle.signed_prekey_public),
+        );
+        x3dhFields = {
+          x3dhSenderIdentityKey: bytesToBase64(identity.identityX25519.publicKey),
+          x3dhSenderEphemeralKey: bytesToBase64(sessionInit.ephemeralPublicKey),
+          x3dhOneTimePrekeyId: oneTimePrekeyId,
+        };
       }
-      const { sessionInit, oneTimePrekeyId } = await bootstrapOutgoingSession(
-        recipientUserId,
-        bundle,
-      );
-      session = initRatchetAsAlice(
-        sodium,
-        sessionInit.rootKey,
-        base64ToBytes(bundle.signed_prekey_public),
-      );
-      x3dhFields = {
-        x3dhSenderIdentityKey: bytesToBase64(identity.identityX25519.publicKey),
-        x3dhSenderEphemeralKey: bytesToBase64(sessionInit.ephemeralPublicKey),
-        x3dhOneTimePrekeyId: oneTimePrekeyId,
-      };
-    }
 
-    const encrypted = ratchetEncrypt(sodium, session, plaintextBytes, ad);
-    await saveSession(deviceId, encrypted.nextState);
+      const encrypted = ratchetEncrypt(sodium, session, plaintextBytes, ad);
+      await saveSession(threadId, deviceId, encrypted.nextState);
+      return { encrypted, x3dhFields };
+    });
 
+    if (!outcome) continue;
     envelopes.push({
       recipientDeviceId: deviceId,
-      ciphertext: bytesToBase64(encrypted.ciphertext),
-      ratchetPublicKey: bytesToBase64(encrypted.header.ratchetPublicKey),
-      previousChainLength: encrypted.header.previousChainLength,
-      messageNumber: encrypted.header.messageNumber,
-      ...x3dhFields,
+      ciphertext: bytesToBase64(outcome.encrypted.ciphertext),
+      ratchetPublicKey: bytesToBase64(outcome.encrypted.header.ratchetPublicKey),
+      previousChainLength: outcome.encrypted.header.previousChainLength,
+      messageNumber: outcome.encrypted.header.messageNumber,
+      ...outcome.x3dhFields,
     });
   }
 
@@ -224,8 +243,29 @@ export async function encryptForThread(
 /**
  * Decrypts an envelope addressed to this device, from `senderUserId`.
  * Bootstraps the receiving side of a new X3DH session if the envelope
- * carries session-establishing fields (docs/21 §2: present only on the
- * first message of a brand-new session with this device).
+ * carries session-establishing fields AND no session already exists for
+ * that sender device (docs/21 §2: session-establishing fields are meant
+ * to appear only on the first message of a brand-new session — but a
+ * REDELIVERED copy of that same original message, entirely plausible
+ * under normal at-least-once delivery/reconnect behavior, would still
+ * carry them. Without the "no session already exists" guard, re-processing
+ * that redelivery would blindly reset an already-advanced session back to
+ * its pre-conversation state, desyncing it from whatever the sender's
+ * side has actually moved on to since — found by this project's own
+ * adversarial review (docs/21 §7), reproduced live, not theoretical).
+ * If a session already exists, x3dh fields on this envelope are ignored
+ * and decryption proceeds against the existing session — the normal
+ * skipped-key-cache and ratchet-key-comparison logic in doubleRatchet.ts
+ * already handles a genuine redelivery of an already-processed message
+ * safely (fails closed with an AEAD auth error rather than corrupting
+ * state), so this doesn't need its own separate replay-detection.
+ *
+ * This device's whole read-ratchet-write sequence for `senderDeviceId` is
+ * serialized against any other concurrent call touching the same device
+ * (see deviceLock.ts) — the other half of the race the same review found:
+ * two overlapping decrypts for the same sender could otherwise let the
+ * losing call's stale-based state overwrite the winning call's, resurrecting
+ * an already-consumed (and supposedly discarded) message key on disk.
  */
 export async function decryptEnvelope(
   threadId: string,
@@ -248,41 +288,43 @@ export async function decryptEnvelope(
     messageNumber: envelope.messageNumber,
   };
 
-  let session = await loadSession(senderDeviceId);
+  return withDeviceLock(`${threadId}:${senderDeviceId}`, async () => {
+    let session = await loadSession(threadId, senderDeviceId);
 
-  if (envelope.x3dhSenderIdentityKey && envelope.x3dhSenderEphemeralKey) {
-    const identity = await getOrCreateIdentity();
-    const signedPrekey = await getSignedPrekey();
-    if (!signedPrekey) {
-      throw new Error('decryptEnvelope: this device has not completed E2EE setup yet.');
+    if (!session && envelope.x3dhSenderIdentityKey && envelope.x3dhSenderEphemeralKey) {
+      const identity = await getOrCreateIdentity();
+      const signedPrekey = await getSignedPrekey();
+      if (!signedPrekey) {
+        throw new Error('decryptEnvelope: this device has not completed E2EE setup yet.');
+      }
+
+      const oneTimePrekeyPrivate = envelope.x3dhOneTimePrekeyId
+        ? await takeLocalOneTimePrekey(envelope.x3dhOneTimePrekeyId)
+        : null;
+
+      const rootKey = x3dhRespond(sodium, {
+        ownIdentityPrivateKeyX25519: identity.identityX25519.privateKey,
+        ownSignedPrekeyPrivateKey: signedPrekey.privateKey,
+        ownOneTimePrekeyPrivateKey: oneTimePrekeyPrivate,
+        peerIdentityPublicKeyX25519: base64ToBytes(envelope.x3dhSenderIdentityKey),
+        peerEphemeralPublicKey: base64ToBytes(envelope.x3dhSenderEphemeralKey),
+      });
+
+      session = initRatchetAsBob(sodium, rootKey, {
+        publicKey: signedPrekey.publicKey,
+        privateKey: signedPrekey.privateKey,
+      });
     }
 
-    const oneTimePrekeyPrivate = envelope.x3dhOneTimePrekeyId
-      ? await takeLocalOneTimePrekey(envelope.x3dhOneTimePrekeyId)
-      : null;
+    if (!session) {
+      throw new Error('decryptEnvelope: no session and no X3DH bootstrap fields on this envelope.');
+    }
 
-    const rootKey = x3dhRespond(sodium, {
-      ownIdentityPrivateKeyX25519: identity.identityX25519.privateKey,
-      ownSignedPrekeyPrivateKey: signedPrekey.privateKey,
-      ownOneTimePrekeyPrivateKey: oneTimePrekeyPrivate,
-      peerIdentityPublicKeyX25519: base64ToBytes(envelope.x3dhSenderIdentityKey),
-      peerEphemeralPublicKey: base64ToBytes(envelope.x3dhSenderEphemeralKey),
-    });
+    const decrypted = ratchetDecrypt(sodium, session, header, ciphertext, ad);
+    await saveSession(threadId, senderDeviceId, decrypted.nextState);
 
-    session = initRatchetAsBob(sodium, rootKey, {
-      publicKey: signedPrekey.publicKey,
-      privateKey: signedPrekey.privateKey,
-    });
-  }
-
-  if (!session) {
-    throw new Error('decryptEnvelope: no session and no X3DH bootstrap fields on this envelope.');
-  }
-
-  const decrypted = ratchetDecrypt(sodium, session, header, ciphertext, ad);
-  await saveSession(senderDeviceId, decrypted.nextState);
-
-  return new TextDecoder().decode(decrypted.plaintext);
+    return new TextDecoder().decode(decrypted.plaintext);
+  });
 }
 
 interface ThreadMessageRef {
@@ -381,7 +423,7 @@ export async function decryptThreadMessages(
   return result;
 }
 
-/** Drops a peer device's ratchet session — used when a device is revoked/replaced, so the next message to/from it starts a fresh X3DH handshake instead of trying (and failing) to continue a session whose keys no longer correspond to anything real. */
-export async function resetSessionWithDevice(deviceId: string): Promise<void> {
-  await deleteSession(deviceId);
+/** Drops a peer device's ratchet session for one thread — used when a device is revoked/replaced, so the next message to/from it starts a fresh X3DH handshake instead of trying (and failing) to continue a session whose keys no longer correspond to anything real. */
+export async function resetSessionWithDevice(threadId: string, deviceId: string): Promise<void> {
+  await deleteSession(threadId, deviceId);
 }
