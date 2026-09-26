@@ -558,6 +558,7 @@ Deno.serve(async (req) => {
             : '';
 
     await sendPushToUser(db, recipientId, sender?.display_name ?? 'New message', pushBody, {
+      type: 'new_message',
       thread_id: threadId,
     });
   });

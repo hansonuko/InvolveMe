@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
@@ -8,11 +9,16 @@ import { supabase } from '@/lib/supabase';
 
 // Android requires a notification channel to be registered before any
 // notification can show with custom sound/importance — a no-op on iOS.
-// Done once, at module load, rather than per-registration.
+// Done once, at module load, rather than per-registration. MAX (not
+// DEFAULT) is what actually earns a heads-up banner + sound while the
+// phone is unlocked elsewhere — WhatsApp's own message notifications are
+// heads-up by default, and a chat app whose notifications don't interrupt
+// is the "isn't working" complaint in practice even when delivery itself
+// is fine.
 if (Platform.OS === 'android') {
   void Notifications.setNotificationChannelAsync('default', {
     name: 'default',
-    importance: Notifications.AndroidImportance.DEFAULT,
+    importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
   });
 }
@@ -28,6 +34,29 @@ Notifications.setNotificationHandler({
     shouldSetBadge: false,
   }),
 });
+
+/** Persisted separately from "is there a push_tokens row" (the actual on/
+ * off source of truth — see this file's other header comments) because
+ * that alone can't distinguish "never asked" from "the user explicitly
+ * turned this off in Settings." Without this flag, `syncPushTokenOnLaunch`
+ * would silently re-register a token on the very next app open after an
+ * explicit opt-out, the moment OS permission (still granted — turning off
+ * the in-app toggle can't revoke that) came back into view. Local-only,
+ * AsyncStorage — same "cheap boolean flag, no need for a full store"
+ * posture as this app's other single-value local preferences. */
+const PUSH_OPT_OUT_KEY = 'push_notifications_opted_out';
+
+async function getPushOptedOut(): Promise<boolean> {
+  return (await AsyncStorage.getItem(PUSH_OPT_OUT_KEY)) === 'true';
+}
+
+async function setPushOptedOut(optedOut: boolean): Promise<void> {
+  if (optedOut) {
+    await AsyncStorage.setItem(PUSH_OPT_OUT_KEY, 'true');
+  } else {
+    await AsyncStorage.removeItem(PUSH_OPT_OUT_KEY);
+  }
+}
 
 /** "Off" has no dedicated column anywhere (see
  * supabase/functions/_shared/push.ts's header comment) — it's modeled
@@ -66,7 +95,7 @@ export async function registerPushToken(
     // this project's own unregisterPushToken/hasRegisteredPushToken both
     // already guard the identical call; this one, called automatically
     // and silently on every app session restore (see
-    // resyncPushTokenIfPermitted / app/_layout.tsx), did not — the
+    // syncPushTokenOnLaunch / app/_layout.tsx), did not — the
     // strongest concrete lead found for a real "app goes blank and
     // unresponsive" bug report, since an uncaught throw here is an
     // unhandled rejection on a fire-and-forget `void` call with no
@@ -93,6 +122,11 @@ export async function registerPushToken(
   });
   if (error) {
     console.error('registerPushToken: failed to save token:', error.message);
+  } else {
+    // A real registration (whether the very first one, or the user
+    // flipping the Settings toggle back on after opting out) always wins
+    // over a stale opt-out flag.
+    await setPushOptedOut(false);
   }
 
   return 'granted';
@@ -103,8 +137,20 @@ export async function registerPushToken(
  * pushes addressed to whoever's device this is, for the *previous*
  * account). Best-effort: if this device never had a token (permission
  * was never granted), there's nothing to delete and Supabase's delete
- * is a no-op either way. */
-export async function unregisterPushToken(): Promise<void> {
+ * is a no-op either way.
+ *
+ * `alsoOptOut` defaults true (the Settings-toggle call site) — marks this
+ * as an explicit user choice so `syncPushTokenOnLaunch` won't silently
+ * re-register on the next app open. Sign-out passes `false`: that's not
+ * an opt-out, just cleanup of a token that would otherwise outlive the
+ * session it was registered for — the *next* person to sign into this
+ * device should still get the normal launch-time prompt/resync, not
+ * inherit a stranger's earlier "no thanks." */
+export async function unregisterPushToken(alsoOptOut = true): Promise<void> {
+  if (alsoOptOut) {
+    await setPushOptedOut(true);
+  }
+
   if (!Device.isDevice) return;
 
   const { status } = await Notifications.getPermissionsAsync();
@@ -121,16 +167,23 @@ export async function unregisterPushToken(): Promise<void> {
   }
 }
 
-/** Called on login/app start — re-registers this device's token *only if
- * permission was already granted* (e.g. from a previous session), never
- * prompting. Prompting only ever happens from the explicit Settings
- * toggle (registerPushToken above); this just keeps an already-consented
- * token fresh across app updates/reinstalls without surprising anyone
- * with a permission dialog on launch. */
-export async function resyncPushTokenIfPermitted(userId: string): Promise<void> {
+/** Called on every app launch/session-restore. Unlike the old "silent
+ * resync only" behavior, this now *does* prompt — once, automatically —
+ * the same way WhatsApp asks for notification permission as part of
+ * initial setup rather than waiting for someone to go dig it out of
+ * Settings. Safe to call unconditionally on every launch: `undetermined`
+ * only shows the real OS dialog the first time (both iOS and Android
+ * cache a real answer after that and just return it silently), `denied`
+ * is left alone rather than nagging, and an explicit in-app opt-out
+ * (`unregisterPushToken`) is respected so this can never re-enable
+ * something the user deliberately turned off. */
+export async function syncPushTokenOnLaunch(userId: string): Promise<void> {
   if (!Device.isDevice) return;
+  if (await getPushOptedOut()) return;
+
   const { status } = await Notifications.getPermissionsAsync();
-  if (status !== 'granted') return;
+  if (status === 'denied') return;
+
   await registerPushToken(userId);
 }
 
@@ -157,5 +210,44 @@ export async function hasRegisteredPushToken(userId: string): Promise<boolean> {
     return !!data;
   } catch {
     return false;
+  }
+}
+
+/** The `data` payload every server-side `sendPushToUser` call site
+ * attaches (supabase/functions/_shared/push.ts and its callers) — kept in
+ * sync by hand on both ends, same as every other Edge-Function request/
+ * response shape in this app (no shared-types package between the two
+ * runtimes). Every field optional: a notification only ever carries the
+ * one or two fields relevant to its own `type`. */
+export interface PushNotificationData {
+  type?: string;
+  thread_id?: string;
+  group_thread_id?: string;
+}
+
+/** Resolves a tapped notification to the in-app screen WhatsApp's own
+ * equivalent notification would open: a message notification (1:1 or
+ * group) opens straight into that conversation; every wallet-adjacent
+ * notification (a top-up landing, a withdrawal completing, credit someone
+ * sent you, the no-bank-account reminder) opens the Wallet tab, which is
+ * the one screen that already surfaces all of those. `null` means "just
+ * open the app" — the safe default for a `data` shape this client
+ * doesn't recognize (e.g. shipped by a newer server build before the
+ * client that understands its new `type` value). */
+export function resolvePushNotificationRoute(
+  data: PushNotificationData | undefined,
+): string | null {
+  if (!data) return null;
+  if (data.thread_id) return `/thread/${data.thread_id}`;
+  if (data.group_thread_id) return `/group-thread/${data.group_thread_id}`;
+
+  switch (data.type) {
+    case 'topup_confirmed':
+    case 'withdrawal_completed':
+    case 'credit_transfer_received':
+    case 'no_bank_account_reminder':
+      return '/wallet';
+    default:
+      return null;
   }
 }

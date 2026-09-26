@@ -32,7 +32,7 @@ async function getRawDeviceIdentifier(): Promise<string | null> {
 }
 
 /** Called once per session, same place/pattern as
- * lib/push.ts's resyncPushTokenIfPermitted — see app/_layout.tsx. Every
+ * lib/push.ts's syncPushTokenOnLaunch — see app/_layout.tsx. Every
  * external call in here is guarded: this app's own blank-screen crash
  * investigation this session found an unguarded native-module call on
  * exactly this kind of automatic, silent startup path already once. */
