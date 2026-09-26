@@ -164,7 +164,12 @@ export const radius = {
 export const layout = {
   barHeight: 64,
   tabIconSize: 28,
-  headerIconSize: 26,
+  // Was 26 — read noticeably bigger than WhatsApp's own header icons
+  // (the "+" new-chat button, the "⋮" overflow) once responsive scaling
+  // (below) pushed it up further on most real screens. 22 lands the
+  // scaled result close to WhatsApp's ~24dp on a typical device instead
+  // of ~28-30dp.
+  headerIconSize: 22,
 } as const;
 
 // 375 is the iPhone SE/8/X-class logical width — the most common RN
