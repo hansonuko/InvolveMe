@@ -12,6 +12,7 @@
 
 import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { E2eeEnvelopesArraySchema } from '../_shared/e2eeEnvelope.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
 import { parseBody } from '../_shared/validate.ts';
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
@@ -19,6 +20,11 @@ import { createOpenAiModerationProvider } from '../../../packages/moderation/ope
 interface EditMessageRequestBody {
   message_id?: string;
   body?: string;
+  // Real end-to-end encryption (docs/21-E2EE-TECHNICAL-DESIGN.md §3, §4) —
+  // required instead of `body` when editing a message in an e2ee-active
+  // thread. Double Ratchet has no "edit in place": this is a freshly
+  // re-encrypted envelope per recipient device, same shape as a new send.
+  envelopes?: unknown;
 }
 
 interface FnEditMessageRow {
@@ -85,6 +91,20 @@ function mapEditMessageError(pgMessage: string): Response {
       'This edit would make the message cost more credits than were already charged — send it as a new message instead.',
     );
   }
+  if (pgMessage.startsWith('e2ee_envelopes_required')) {
+    return errorResponse(
+      400,
+      'e2ee_envelopes_required',
+      'This conversation is end-to-end encrypted — provide envelopes instead of a plaintext body.',
+    );
+  }
+  if (pgMessage.startsWith('invalid_envelope_recipient_device')) {
+    return errorResponse(
+      400,
+      'invalid_envelope_recipient_device',
+      'One of the envelopes was addressed to a device that does not belong to the other person in this thread.',
+    );
+  }
 
   console.error('edit-message: unmapped DB error:', pgMessage);
   return errorResponse(500, 'internal_error', 'Something went wrong.');
@@ -115,54 +135,87 @@ Deno.serve(async (req) => {
   }
   const rawPayload = rawBody as EditMessageRequestBody;
 
-  if (typeof rawPayload.body !== 'string' || rawPayload.body.trim().length === 0) {
-    return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
-  }
-  const body = rawPayload.body;
-
   const idParsed = parseBody(EditMessageMessageIdSchema, rawBody);
   if (!idParsed.success) return idParsed.response;
-
-  const payload = { message_id: idParsed.data.message_id, body };
+  const messageId = idParsed.data.message_id;
 
   const db = serviceRoleClient();
+
+  // Real end-to-end encryption (docs/21-E2EE-TECHNICAL-DESIGN.md §3) —
+  // whether this edit must carry envelopes (like a send) or a plaintext
+  // body, and whether moderation runs at all, depends on the target
+  // message's thread, not on which field the client happened to send
+  // (a client-controlled signal here would let a malicious caller dodge
+  // moderation on an 'off' thread just by sending `envelopes` instead of
+  // `body`). If the message doesn't exist this read finds nothing and
+  // falls through to fn_edit_message's own 'message_not_found', same as
+  // before this lookup existed.
+  const { data: messageThreadRow, error: messageThreadError } = await db
+    .from('messages')
+    .select('thread_id, threads(e2ee_status)')
+    .eq('id', messageId)
+    .maybeSingle();
+  if (messageThreadError) {
+    console.error('edit-message: thread e2ee_status lookup failed:', messageThreadError.message);
+    return errorResponse(500, 'internal_error', 'Something went wrong.');
+  }
+  const isE2eeActive =
+    (messageThreadRow?.threads as { e2ee_status?: string } | null)?.e2ee_status === 'active';
+
+  let body: string | null = null;
+  let envelopes: z.infer<typeof E2eeEnvelopesArraySchema> | null = null;
+  if (isE2eeActive) {
+    const envelopesParsed = parseBody(E2eeEnvelopesArraySchema, rawPayload.envelopes);
+    if (!envelopesParsed.success) return envelopesParsed.response;
+    envelopes = envelopesParsed.data;
+  } else {
+    if (typeof rawPayload.body !== 'string' || rawPayload.body.trim().length === 0) {
+      return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
+    }
+    body = rawPayload.body;
+  }
 
   // Same moderation posture as send-message: a hard block never reaches
   // fn_edit_message, a flagged-but-allowed result is logged once the
   // call below succeeds. A moderation-provider outage fails open (allows
-  // the edit) rather than blocking every edit in the app.
+  // the edit) rather than blocking every edit in the app. Skipped
+  // entirely for an e2ee-active thread (docs/21 §3) — there is no
+  // plaintext here to read.
   let flaggedCategories: string[] | null = null;
-  try {
-    const moderation = await createOpenAiModerationProvider(
-      loadOpenAiModerationConfig(),
-    ).moderateText(payload.body);
+  if (!isE2eeActive) {
+    try {
+      const moderation = await createOpenAiModerationProvider(
+        loadOpenAiModerationConfig(),
+      ).moderateText(body!);
 
-    if (moderation.action === 'blocked') {
-      await db.from('moderated_content').insert({
-        user_id: user.id,
-        content_type: 'message',
-        ref_id: payload.message_id,
-        action: 'blocked',
-        categories: moderation.categories,
-      });
-      return errorResponse(
-        400,
-        'content_blocked',
-        'This message violates our content policy and could not be saved.',
-      );
+      if (moderation.action === 'blocked') {
+        await db.from('moderated_content').insert({
+          user_id: user.id,
+          content_type: 'message',
+          ref_id: messageId,
+          action: 'blocked',
+          categories: moderation.categories,
+        });
+        return errorResponse(
+          400,
+          'content_blocked',
+          'This message violates our content policy and could not be saved.',
+        );
+      }
+      if (moderation.action === 'flagged') {
+        flaggedCategories = moderation.categories;
+      }
+    } catch (e) {
+      console.error('edit-message: content moderation check failed, allowing edit:', e);
     }
-    if (moderation.action === 'flagged') {
-      flaggedCategories = moderation.categories;
-    }
-  } catch (e) {
-    console.error('edit-message: content moderation check failed, allowing edit:', e);
   }
 
   const { data: rawData, error } = await db
     .rpc('fn_edit_message', {
-      p_message_id: payload.message_id,
+      p_message_id: messageId,
       p_sender_id: user.id,
-      p_new_body: payload.body,
+      p_new_body: body,
+      p_envelopes: envelopes,
     })
     .single();
 

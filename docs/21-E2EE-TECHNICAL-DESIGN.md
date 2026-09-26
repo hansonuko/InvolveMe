@@ -4,7 +4,7 @@ Follows `docs/20-E2EE-SCOPING.md`'s decisions: no pre-send moderation on E2EE th
 
 **Scope: 1:1 threads only**, same boundary every other structural change this session drew — group chat (`group_threads`/`group_messages`) is a separate, still-kill-switched billing model (`docs/18` §C1's own note) and out of scope here too.
 
-**Status: Steps 1–3 shipped** (schema migration, prekey Edge Functions, and the X3DH/Double Ratchet crypto core — see §8's build order). Step 4 (server-side `fn_send_message` wiring + byte-length billing) is next.
+**Status: Steps 1–4 shipped** (schema migration, prekey Edge Functions, the X3DH/Double Ratchet crypto core, and the server-side `fn_send_message`/`fn_edit_message` byte-length billing wiring — see §8's build order). Step 5 (client integration: `useSendMessage`/`useThreadMessages`, the enable-E2EE flow, safety-number UI) is next.
 
 ## 1. Cryptographic design
 
@@ -143,6 +143,13 @@ create index e2ee_message_envelopes_recipient_device_idx
 - If the thread is `'off'`: **completely unchanged** — same plaintext path, same word-count billing, same moderation call, same duplicate-content check in `fn_release_escrow`. Every existing thread and every existing test keeps working exactly as today.
 - If the thread is `'active'`: the request carries envelope ciphertexts (one per recipient device) instead of a plaintext `body`. Billing switches to **ciphertext byte length** (§4). The moderation call is skipped entirely (docs/20 §3's decision — nothing to moderate, there's no plaintext to read). `fn_release_escrow`'s `similarity()` duplicate-content check is skipped for escrows tied to an `'active'`-thread message (docs/20 §5's accepted gap) — metadata-only fraud signals (rate limits, collusion detection) are untouched and keep working exactly as today, since neither reads message content.
 
+**Shipped** (`20260926170000_e2ee_send_message_billing.sql`, `supabase/tests/e2ee-send-message-billing.test.js` — 33 assertions). Two implementation notes worth recording:
+
+- `fn_release_escrow` needed **zero code changes** — its duplicate-content check calls `similarity(body, ...)`, and an `'active'`-thread message's `body` is `null`; `similarity(null, x)` returns `null` in Postgres, and `if null then` is false in plpgsql, so the "skip" described above falls out of NULL propagation, not an explicit branch. Verified live (a direct query) and with a regression test (`testDuplicateContentNeverFlagsE2ee`) before trusting it, not assumed.
+- Media is rejected outright on an `'active'` thread (`e2ee_media_not_supported`) rather than silently allowed through unencrypted — out of scope for this pass, not a documented gap here before.
+- Envelope recipient devices are validated against the OTHER participant's registered, non-revoked `e2ee_devices` rows before any field is trusted — the same anti-enumeration/ownership posture `fn_fetch_prekey_bundles` already established.
+- `fn_edit_message` gained the identical envelope-replacement treatment: an edit re-encrypts as a fresh envelope per recipient device (Double Ratchet has no "edit in place"), checked against the frozen `credits_charged` exactly like the word-count path. Found and fixed in passing: its three `message_word_block_size`/`message_base_credits`/`message_max_words` lookups had no `currency` filter despite `pricing_config`'s PK being `(key, currency)` since the multicurrency migration — harmless only because this app is NGN-only in practice, fixed since it would have shipped inconsistent with the new byte-length lookups added in the same diff.
+
 ## 4. Billing — byte-length, server-verified without decryption
 
 Every envelope for the same logical message encrypts the identical plaintext, so every envelope's ciphertext length is identical up to the DR header's fixed field sizes (which this design controls precisely) — the server can measure **any one envelope's ciphertext length** and get an unambiguous, client-can't-lie-about-it number, no matter how many recipient devices exist.
@@ -155,6 +162,8 @@ credits_charged           = message_byte_base_credits × greatest(byte_blocks, 1
 ```
 
 New `pricing_config` keys (`message_byte_block_size`, `message_byte_base_credits`, `message_max_bytes`), same "config not constants" discipline CLAUDE.md rule #9 requires — mirroring `message_word_block_size`/`message_base_credits`/`message_max_words`'s exact existing shape, substituting bytes for words. **The actual tier numbers need a real calibration pass before this migration ships** (docs/20 §4 already flagged this as its own reviewed decision, not a rubber stamp) — a reasonable starting point is sizing `message_byte_block_size` so a "typical" ~50-word English message (roughly 250-300 UTF-8 bytes) lands close to today's 2-credit floor, but that's a proposal to confirm, not a default to assume.
+
+Shipped with `message_byte_block_size = 300`, `message_byte_base_credits = 2` (a ~50-word/~300-byte message lands at exactly one block, matching `message_base_credits`'s own floor), and `message_max_bytes = 3000` (mirrors `message_max_words = 500`'s own 10-block ceiling: 500/50 = 10 blocks × 300 bytes/block). Explicitly a calibration starting point, not a final tuned number — still needs the real calibration pass this paragraph called for, now against live usage data instead of a guess.
 
 `fn_edit_message`'s `edit_would_increase_cost` check gets the identical byte-length treatment — same problem, same fix, applied consistently.
 

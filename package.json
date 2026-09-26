@@ -43,6 +43,8 @@
     "test:e2ee-schema:ci": "node supabase/tests/e2ee-schema-functions.test.js",
     "test:e2ee-functions": "node --env-file=.env supabase/tests/e2ee-functions.test.js",
     "test:e2ee-functions:ci": "node supabase/tests/e2ee-functions.test.js",
+    "test:e2ee-send-message-billing": "node --env-file=.env supabase/tests/e2ee-send-message-billing.test.js",
+    "test:e2ee-send-message-billing:ci": "node supabase/tests/e2ee-send-message-billing.test.js",
     "test:e2ee-hkdf": "node supabase/tests/e2ee-hkdf-rfc5869.test.ts",
     "test:e2ee-hkdf:ci": "node supabase/tests/e2ee-hkdf-rfc5869.test.ts",
     "test:e2ee-crypto-core": "node supabase/tests/e2ee-crypto-core.test.ts",

@@ -16,6 +16,7 @@
 
 import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { E2eeEnvelopesArraySchema } from '../_shared/e2eeEnvelope.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
 import { runInBackground, sendPushToUser } from '../_shared/push.ts';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
@@ -67,6 +68,13 @@ interface SendMessageRequestBody {
   // in-thread + no-media + real/unexpired/visible-status check) — this is
   // just carried through, never trusted as "this send is free" on faith.
   reply_to_status_id?: string;
+  // Real end-to-end encryption (docs/21-E2EE-TECHNICAL-DESIGN.md §3, §4) —
+  // required instead of `body` when this send targets an e2ee-active
+  // thread; one entry per recipient device. Shape validated against
+  // E2eeEnvelopesArraySchema once the thread's e2ee_status is known
+  // (below) — a brand-new thread is always 'off' at creation, so this can
+  // only ever matter for an existing thread_id.
+  envelopes?: unknown;
 }
 
 interface FnSendMessageRow {
@@ -176,6 +184,27 @@ function mapSendMessageError(pgMessage: string): Response {
       'That status is no longer available to reply to.',
     );
   }
+  if (pgMessage.startsWith('e2ee_media_not_supported')) {
+    return errorResponse(
+      400,
+      'e2ee_media_not_supported',
+      'Media is not yet supported in end-to-end-encrypted conversations.',
+    );
+  }
+  if (pgMessage.startsWith('e2ee_envelopes_required')) {
+    return errorResponse(
+      400,
+      'e2ee_envelopes_required',
+      'This conversation is end-to-end encrypted — provide envelopes instead of a plaintext body.',
+    );
+  }
+  if (pgMessage.startsWith('invalid_envelope_recipient_device')) {
+    return errorResponse(
+      400,
+      'invalid_envelope_recipient_device',
+      'One of the envelopes was addressed to a device that does not belong to the other person in this thread.',
+    );
+  }
   if (pgMessage.startsWith('insufficient_credit')) {
     // fn_send_message raises 'insufficient_credit: need % have %'.
     const match = /need (\d+) have (\d+)/.exec(pgMessage);
@@ -224,9 +253,10 @@ Deno.serve(async (req) => {
     return errorResponse(400, 'invalid_request', 'body must be a string.');
   }
   const body = payload.body ?? '';
-  if (body.trim().length === 0 && !hasMedia) {
-    return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
-  }
+  // The "body (or media) must be non-empty" check used to run here
+  // unconditionally, but an e2ee-active thread legitimately sends an
+  // empty body (the real content is in `envelopes`) — that check is
+  // deferred below, once the thread's e2ee_status is actually known.
 
   if (payload.media_path !== undefined && typeof payload.media_path !== 'string') {
     return errorResponse(400, 'invalid_request', 'media_path must be a string.');
@@ -325,97 +355,135 @@ Deno.serve(async (req) => {
     threadId = newThreadId as string;
   }
 
+  // Real end-to-end encryption (docs/21-E2EE-TECHNICAL-DESIGN.md §3) — a
+  // brand-new thread (just created above) is always 'off', so this only
+  // ever matters for an existing thread_id. e2ee_status governs both
+  // what shape this request must have (envelopes vs. body) and whether
+  // moderation runs at all — there is no plaintext to moderate once
+  // active.
+  const { data: threadE2eeRow, error: threadE2eeError } = await db
+    .from('threads')
+    .select('e2ee_status')
+    .eq('id', threadId)
+    .maybeSingle();
+  if (threadE2eeError) {
+    console.error('send-message: e2ee_status lookup failed:', threadE2eeError.message);
+    return errorResponse(500, 'internal_error', 'Something went wrong.');
+  }
+  const isE2eeActive = threadE2eeRow?.e2ee_status === 'active';
+
+  let envelopes: z.infer<typeof E2eeEnvelopesArraySchema> | null = null;
+  if (isE2eeActive) {
+    if (hasMedia) {
+      return errorResponse(
+        400,
+        'e2ee_media_not_supported',
+        'Media is not yet supported in end-to-end-encrypted conversations.',
+      );
+    }
+    const envelopesParsed = parseBody(E2eeEnvelopesArraySchema, payload.envelopes);
+    if (!envelopesParsed.success) return envelopesParsed.response;
+    envelopes = envelopesParsed.data;
+  } else if (body.trim().length === 0 && !hasMedia) {
+    return errorResponse(400, 'empty_message', 'Message body cannot be empty.');
+  }
+
   // Content moderation (docs/06-SECURITY-FRAUD-LOOPHOLES.md §6,
   // docs/07-COMPLIANCE-LEGAL.md §3) — checked before fn_send_message, not
   // after: a hard block must never be charged or delivered, so it can
   // never reach the billing RPC at all. See packages/moderation/
   // provider.ts for the blocked-vs-flagged distinction. A flagged (not
   // blocked) result is logged further down, once the real message_id
-  // exists to reference.
+  // exists to reference. Skipped entirely for an e2ee-active thread
+  // (docs/21 §3) — there is no plaintext here to read.
   let flaggedCategories: string[] | null = null;
-  try {
-    const moderationProvider = createOpenAiModerationProvider(loadOpenAiModerationConfig());
-    const textModeration = await moderationProvider.moderateText(body);
+  if (!isE2eeActive) {
+    try {
+      const moderationProvider = createOpenAiModerationProvider(loadOpenAiModerationConfig());
+      const textModeration = await moderationProvider.moderateText(body);
 
-    // Image moderation (docs/16-CHAT-MEDIA-SCOPING.md §5) — checked
-    // separately from text, both before fn_send_message: either one
-    // blocking is enough to block the whole message, same "never charged
-    // or delivered" posture the text-only path already has. Downloads the
-    // just-uploaded object with the service-role client (chat-media is
-    // private; this bypasses its RLS the same way every other service-
-    // role read in this codebase does) rather than trusting a client-
-    // supplied mime type for what actually gets sent to OpenAI.
-    //
-    // Voice notes (docs/17-VOICE-NOTES-SCOPING.md §6) — transcribe first,
-    // then run the transcript through the same moderateText the caller
-    // above already used for the caption. Same "either one blocking is
-    // enough" posture as image moderation; catches spoken-content abuse,
-    // not non-speech audio abuse (a stated gap, not a silent one).
-    let mediaModeration: { action: string; categories: string[] } = {
-      action: 'clean',
-      categories: [],
-    };
-    if (hasMedia && (payload.media_type === 'image' || payload.media_type === 'audio')) {
-      const { data: mediaBlob, error: downloadError } = await db.storage
-        .from('chat-media')
-        .download(payload.media_path!);
-      if (downloadError) {
-        // The upload itself is verified server-side by fn_send_message's
-        // own path-ownership check below; a download failure here means
-        // moderation can't run, not that the send should be silently
-        // skipped — fail open on the moderation check specifically (same
-        // posture the catch block below already has for a provider
-        // outage), not on the send itself.
-        console.error('send-message: could not download media for moderation:', downloadError);
-      } else if (payload.media_type === 'image') {
-        const imageBytes = new Uint8Array(await mediaBlob.arrayBuffer());
-        mediaModeration = await moderationProvider.moderateImage(
-          imageBytes,
-          mediaBlob.type || 'image/jpeg',
-        );
-      } else {
-        const audioBytes = new Uint8Array(await mediaBlob.arrayBuffer());
-        mediaModeration = await moderationProvider.moderateAudio(
-          audioBytes,
-          mediaBlob.type || 'audio/m4a',
+      // Image moderation (docs/16-CHAT-MEDIA-SCOPING.md §5) — checked
+      // separately from text, both before fn_send_message: either one
+      // blocking is enough to block the whole message, same "never charged
+      // or delivered" posture the text-only path already has. Downloads the
+      // just-uploaded object with the service-role client (chat-media is
+      // private; this bypasses its RLS the same way every other service-
+      // role read in this codebase does) rather than trusting a client-
+      // supplied mime type for what actually gets sent to OpenAI.
+      //
+      // Voice notes (docs/17-VOICE-NOTES-SCOPING.md §6) — transcribe first,
+      // then run the transcript through the same moderateText the caller
+      // above already used for the caption. Same "either one blocking is
+      // enough" posture as image moderation; catches spoken-content abuse,
+      // not non-speech audio abuse (a stated gap, not a silent one).
+      let mediaModeration: { action: string; categories: string[] } = {
+        action: 'clean',
+        categories: [],
+      };
+      if (hasMedia && (payload.media_type === 'image' || payload.media_type === 'audio')) {
+        const { data: mediaBlob, error: downloadError } = await db.storage
+          .from('chat-media')
+          .download(payload.media_path!);
+        if (downloadError) {
+          // The upload itself is verified server-side by fn_send_message's
+          // own path-ownership check below; a download failure here means
+          // moderation can't run, not that the send should be silently
+          // skipped — fail open on the moderation check specifically (same
+          // posture the catch block below already has for a provider
+          // outage), not on the send itself.
+          console.error('send-message: could not download media for moderation:', downloadError);
+        } else if (payload.media_type === 'image') {
+          const imageBytes = new Uint8Array(await mediaBlob.arrayBuffer());
+          mediaModeration = await moderationProvider.moderateImage(
+            imageBytes,
+            mediaBlob.type || 'image/jpeg',
+          );
+        } else {
+          const audioBytes = new Uint8Array(await mediaBlob.arrayBuffer());
+          mediaModeration = await moderationProvider.moderateAudio(
+            audioBytes,
+            mediaBlob.type || 'audio/m4a',
+          );
+        }
+      }
+
+      const blocked = textModeration.action === 'blocked' || mediaModeration.action === 'blocked';
+      const flagged =
+        !blocked && (textModeration.action === 'flagged' || mediaModeration.action === 'flagged');
+      const categories = [
+        ...new Set([...textModeration.categories, ...mediaModeration.categories]),
+      ];
+
+      if (blocked) {
+        await db.from('moderated_content').insert({
+          user_id: user.id,
+          content_type: 'message',
+          action: 'blocked',
+          categories,
+        });
+        return errorResponse(
+          400,
+          'content_blocked',
+          'This message violates our content policy and could not be sent.',
         );
       }
+      if (flagged) {
+        flaggedCategories = categories;
+      }
+    } catch (e) {
+      // A moderation-provider outage must not take down messaging — fail
+      // open (allow the send) rather than block every message in the app
+      // because a third-party API had a bad moment. Logged loudly so a
+      // sustained outage is visible in supabase functions logs.
+      console.error('send-message: content moderation check failed, allowing send:', e);
     }
-
-    const blocked = textModeration.action === 'blocked' || mediaModeration.action === 'blocked';
-    const flagged =
-      !blocked && (textModeration.action === 'flagged' || mediaModeration.action === 'flagged');
-    const categories = [...new Set([...textModeration.categories, ...mediaModeration.categories])];
-
-    if (blocked) {
-      await db.from('moderated_content').insert({
-        user_id: user.id,
-        content_type: 'message',
-        action: 'blocked',
-        categories,
-      });
-      return errorResponse(
-        400,
-        'content_blocked',
-        'This message violates our content policy and could not be sent.',
-      );
-    }
-    if (flagged) {
-      flaggedCategories = categories;
-    }
-  } catch (e) {
-    // A moderation-provider outage must not take down messaging — fail
-    // open (allow the send) rather than block every message in the app
-    // because a third-party API had a bad moment. Logged loudly so a
-    // sustained outage is visible in supabase functions logs.
-    console.error('send-message: content moderation check failed, allowing send:', e);
   }
 
   const { data: rawData, error } = await db
     .rpc('fn_send_message', {
       p_thread_id: threadId,
       p_sender_id: user.id,
-      p_body: body,
+      p_body: isE2eeActive ? '' : body,
       p_client_message_id: payload.client_message_id ?? null,
       p_reply_to_message_id: payload.reply_to_message_id ?? null,
       p_is_forwarded: payload.is_forwarded ?? false,
@@ -424,6 +492,7 @@ Deno.serve(async (req) => {
       p_duration_seconds: isAudio ? payload.duration_seconds : null,
       p_waveform_samples: isAudio ? (payload.waveform_samples ?? null) : null,
       p_reply_to_status_id: payload.reply_to_status_id ?? null,
+      p_envelopes: envelopes,
     })
     .single();
 
@@ -470,15 +539,23 @@ Deno.serve(async (req) => {
     // A captionless photo/voice note has nothing for the push body to
     // truncate — "📷 Photo" / "🎤 Voice message" match the same convention
     // WhatsApp's own notification text uses for a media-only message.
-    const pushBody = body.trim().length
-      ? body.length > 120
-        ? `${body.slice(0, 117)}...`
-        : body
-      : isAudio
-        ? '🎤 Voice message'
-        : hasMedia
-          ? '📷 Photo'
-          : '';
+    // An e2ee-active send never has a plaintext `body` at all (the real
+    // content lives only in envelopes this server never decrypts) — a
+    // generic "🔒 New message" here isn't a fallback for a missing value,
+    // it's the actual privacy-correct behavior: the push provider (APNs/
+    // FCM) must never see this conversation's real content, same as this
+    // server itself doesn't.
+    const pushBody = isE2eeActive
+      ? '🔒 New message'
+      : body.trim().length
+        ? body.length > 120
+          ? `${body.slice(0, 117)}...`
+          : body
+        : isAudio
+          ? '🎤 Voice message'
+          : hasMedia
+            ? '📷 Photo'
+            : '';
 
     await sendPushToUser(db, recipientId, sender?.display_name ?? 'New message', pushBody, {
       thread_id: threadId,

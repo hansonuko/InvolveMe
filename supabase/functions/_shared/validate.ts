@@ -84,3 +84,24 @@ export function requiredBase64Key(fieldName: string, byteLength: number) {
     { message },
   );
 }
+
+// A base64-encoded field of variable (not fixed) length that must decode
+// to at least `minByteLength` bytes — used for E2EE ciphertext
+// (docs/21-E2EE-TECHNICAL-DESIGN.md §4), which varies per message unlike
+// a fixed-size key. This checks shape only (well-formed base64, plausible
+// minimum length); the real authority on the actual byte-length billing
+// cap is fn_send_message/fn_edit_message, which read it from
+// pricing_config, not a compile-time constant this schema could reference.
+export function requiredBase64Bytes(fieldName: string, minByteLength: number) {
+  const message = `${fieldName} must be base64-encoded and at least ${minByteLength} bytes when decoded.`;
+  return z.string({ required_error: message, invalid_type_error: message }).refine(
+    (value) => {
+      try {
+        return atob(value).length >= minByteLength;
+      } catch {
+        return false;
+      }
+    },
+    { message },
+  );
+}
