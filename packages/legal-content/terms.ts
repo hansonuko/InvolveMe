@@ -20,6 +20,11 @@
  * updates both surfaces, they can never silently drift apart. Moved here
  * from apps/mobile/content/legal/terms.ts 2026-09-24 (Phase B); no wording
  * changed in the move.
+ *
+ * Section 11 (and the Section 4 cross-reference to it) updated 2026-09-26
+ * (docs/21-E2EE-TECHNICAL-DESIGN.md step 7) — automated content moderation
+ * does not run on a conversation with end-to-end encryption turned on
+ * (see privacy.ts's own header comment for the full context).
  */
 
 export interface LegalSection {
@@ -27,7 +32,7 @@ export interface LegalSection {
   body: string[];
 }
 
-export const TERMS_LAST_UPDATED = '2026-09-15';
+export const TERMS_LAST_UPDATED = '2026-09-26';
 
 export const TERMS_OF_SERVICE: LegalSection[] = [
   {
@@ -57,7 +62,7 @@ export const TERMS_OF_SERVICE: LegalSection[] = [
     heading: '4. The Service',
     body: [
       'InvolveMe is a messaging application where sending a message to another user costs InvolveMe credit, and the recipient earns real money (subject to a platform fee) when they reply. This pay-per-message model is the core, disclosed premise of the Service — not an incidental feature.',
-      'The Service is for genuine personal communication between consenting adults. It is not, and may not be used as, a platform for soliciting or arranging sexual services, escort services, or any other service or transaction prohibited by applicable law. We actively moderate for this (Section 11) and will suspend accounts that use the Service for these purposes.',
+      'The Service is for genuine personal communication between consenting adults. It is not, and may not be used as, a platform for soliciting or arranging sexual services, escort services, or any other service or transaction prohibited by applicable law. We actively moderate for this (Section 11) and will suspend accounts that use the Service for these purposes — except that automated moderation cannot run on a conversation you have turned end-to-end encryption on for (Section 11), so this prohibition still applies there in full, it is just enforced through reports and other means rather than automated screening.',
       'We do not vet, endorse, or take responsibility for the identity, intentions, or conduct of any user you communicate with. You are solely responsible for your interactions with other users and should exercise the same judgment you would with any stranger.',
     ],
   },
@@ -116,6 +121,7 @@ export const TERMS_OF_SERVICE: LegalSection[] = [
     heading: '11. Content moderation and enforcement',
     body: [
       'Messages and status updates are screened by an automated moderation system before being sent or posted. Content identified as severe — including sexual content involving minors, credible threats of violence, and similar high-severity categories — is blocked outright and never delivered or charged. Content flagged as lower-severity is delivered normally but logged for review, and repeated or serious flags may lead to account-level enforcement under Section 10.',
+      'This screening does not run on a conversation that has turned on end-to-end encryption (see our Privacy Policy, Section 9) — we cannot screen content we cannot read. You may still report another user or a specific conversation to us directly from within the app regardless of whether it is encrypted, but our own review of an encrypted conversation is limited to what we can actually see about it (participants, timing, message length), not its content.',
       'You may also report another user or a specific conversation to us directly from within the app. We review reports and may take any of the enforcement actions described in Section 10 as a result.',
       'Automated moderation is not perfect. If you believe your content was blocked or flagged in error, contact us at the address in Section 17.',
     ],

@@ -8,14 +8,26 @@
  * guidance before this ships publicly.
  *
  * Every specific claim here (what's hashed vs. stored raw, which vendors
- * see what, that there's no end-to-end encryption) is checked against
- * this session's own investigation of the actual schema/code, not
+ * see what, what end-to-end encryption does and doesn't cover) is checked
+ * against this session's own investigation of the actual schema/code, not
  * asserted generically — see docs/00-SESSION-HANDOFF.md session 13.
+ *
+ * Section 9 rewritten 2026-09-26 (docs/21-E2EE-TECHNICAL-DESIGN.md step 7)
+ * — real, opt-in, per-conversation end-to-end encryption shipped this
+ * session (docs/21, steps 1-6). CLAUDE.md's own standing rule ("no UI
+ * copy, marketing material, or ToS language may imply [E2EE] unless
+ * actually built") is why this section previously said the opposite —
+ * that premise is now false for a conversation that's turned it on, and
+ * this file is being updated in the same spirit CLAUDE.md required the
+ * original honest disclosure in: say plainly what is and isn't true,
+ * including E2EE's real current limits (opt-in only, not group chat,
+ * moderation stops working on that conversation once it's on, not yet
+ * independently audited) rather than overclaiming the other direction.
  */
 
 import type { LegalSection } from './terms';
 
-export const PRIVACY_LAST_UPDATED = '2026-09-15';
+export const PRIVACY_LAST_UPDATED = '2026-09-26';
 
 export const PRIVACY_POLICY: LegalSection[] = [
   {
@@ -28,7 +40,7 @@ export const PRIVACY_POLICY: LegalSection[] = [
     heading: '2. Information we collect',
     body: [
       'Account information: your phone number (used for one-time-passcode login and as your primary identifier), and any display name, avatar, or "about" status text you choose to add.',
-      'Message and status content: the text of messages you send and status updates you post. Message content is stored so conversations can be delivered and displayed to their recipient — it is not end-to-end encrypted (see Section 9).',
+      "Message and status content: the text of messages you send and status updates you post. For a conversation that has not turned on end-to-end encryption, message content is stored so it can be delivered and displayed to its recipient, and Sun Media has the technical ability to read it (see Section 9). For a conversation that has turned on end-to-end encryption, we only ever receive and store content already encrypted on your device — we do not have the technical ability to read it (see Section 9 for exactly what that does and doesn't mean).",
       'Identity verification data: if you complete identity verification, we receive a verification result from our KYC provider and store the verified name it returns, plus a one-way cryptographic hash of your BVN or NIN (never the raw number itself — see Section 8 of our Terms).',
       'Payment and financial data: your credit purchase, spending, earning, transfer, and withdrawal history within the app, a tokenized reference to any bank account you link (not the raw account number, beyond what our payment provider needs to process a payout), and a provider-issued customer identifier from our payment processor.',
       'Device and fraud-prevention data: a one-way hash of a stable device identifier (computed on your device before it is ever sent to us — we never receive or store the raw hardware identifier), used to detect when multiple accounts share a device, as part of fraud prevention.',
@@ -59,7 +71,7 @@ export const PRIVACY_POLICY: LegalSection[] = [
       'We share information with the following categories of third party, only as needed to provide the Service:',
       '• Payment processors (currently Flutterwave), to process top-ups and withdrawals. They receive the payment details necessary to process a transaction.',
       '• Identity verification providers (currently Prembly), to perform BVN/NIN verification. They receive the identity number you submit for verification and return a verification result and matched name to us; we do not store the number itself, only a hash.',
-      '• Content moderation providers (currently OpenAI), which receive message and status text for automated screening as described in our Terms of Service, Section 11.',
+      '• Content moderation providers (currently OpenAI), which receive message and status text for automated screening as described in our Terms of Service, Section 11 — this applies only to conversations that have not turned on end-to-end encryption. For an end-to-end-encrypted conversation, there is no plaintext for us to send anywhere, so nothing from it reaches our moderation provider.',
       '• Push notification infrastructure (currently Expo), to deliver notifications to your device.',
       '• Law enforcement, courts, or regulators, where we are legally compelled to disclose information, or where necessary to investigate fraud or protect the rights and safety of our users.',
       'We do not sell your personal information to anyone, and we do not share it with third parties for their own independent marketing purposes.',
@@ -84,12 +96,18 @@ export const PRIVACY_POLICY: LegalSection[] = [
     body: [
       'Data is encrypted in transit between your device and our servers. Sensitive identifiers — your BVN/NIN and your device fingerprint — are never stored in raw form; only a one-way cryptographic hash is stored, computed with a secret value we control so the original value cannot practically be recovered from the hash.',
       'Access to financial and identity-verification data within our systems is restricted to what is operationally necessary. No system is perfectly secure, and we cannot guarantee absolute security, but we design our data handling around minimizing what raw sensitive data exists in the first place, not just protecting it after the fact.',
+      "You can also turn on end-to-end encryption for an individual conversation, an additional, optional layer specifically for that conversation's message content — see Section 9 for exactly what it protects and what it does not.",
     ],
   },
   {
-    heading: '9. No end-to-end encryption',
+    heading: '9. End-to-end encryption (optional, per conversation)',
     body: [
-      'InvolveMe does not currently offer end-to-end encryption for messages. Message content is encrypted in transit and stored on our servers, but — unlike some other messaging apps — Sun Media Limited has the technical ability to access message content, for example to investigate abuse reports, respond to legal process, or operate the content moderation described in Section 11 of our Terms. We are telling you this plainly rather than implying a level of privacy the Service does not currently provide.',
+      "You can turn on end-to-end encryption for an individual one-on-one conversation from that conversation's menu. It is off by default for every conversation, it is not currently available for group chats, and once turned on for a conversation, it cannot be turned back off for that conversation.",
+      'Once a conversation has end-to-end encryption turned on, its message content is encrypted on your device before it ever leaves it, and can only be decrypted by you and the other participant. Sun Media Limited does not have the technical ability to read that content — not to investigate an abuse report, not in response to legal process, not for any reason — because we never receive or possess a readable copy of it, only the encrypted form. This is a genuine, meaningful difference from a conversation that has not turned this on (see Section 2), and we want to be equally plain about what it does not do:',
+      '• It does not moderate your conversation. Our automated content-moderation system (Terms of Service, Section 11) screens message text before sending — it cannot do that for content it cannot read, so moderation does not run at all on an end-to-end-encrypted conversation. The same is true of our ability to review a specific message if you or the other participant later reports it — we can see that a report was made, but not the content being reported. Use ordinary caution in these conversations for that reason, the same caution you would use in any conversation the platform itself cannot see into.',
+      '• It does not hide who you are messaging, when, or how often. We can still see conversation metadata — the participants, timestamps, and message length (used to calculate its cost) — because that information is what lets the Service function and remain billable, and our fraud- and abuse-detection systems (Terms of Service, Section 10) continue to operate on that metadata exactly as they do for any other conversation.',
+      '• It is a newly introduced feature, built following the same public Double Ratchet/X3DH cryptographic design other end-to-end-encrypted messaging apps use, implemented by us rather than licensed from an existing provider. It has not yet been reviewed by an independent, external security audit. We are disclosing this so you can make an informed choice about when to rely on it, not to discourage its use.',
+      'For a conversation that has not turned on end-to-end encryption, message content is encrypted in transit and stored on our servers, and Sun Media Limited has the technical ability to access that content — for example to investigate abuse reports, respond to legal process, or operate the content moderation described in Section 11 of our Terms.',
     ],
   },
   {
