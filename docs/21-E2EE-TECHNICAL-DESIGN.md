@@ -225,7 +225,9 @@ All three fixed with `deviceLock.ts` (a real per-`(threadId, deviceId)` async mu
 
 **A fourth issue found while investigating the review's more speculative note** that `sessionStore.ts`'s peer-device-only keying could let two threads with the same contact share one ratchet session: checking `threads`' own schema confirmed this is reachable, not just theoretical — `threads_participants_unique unique (participant_a, participant_b)` only constrains the exact ordered pair, not its reverse, so both sides independently starting a conversation (before either's client has seen the other's already-created thread) can create two separate threads between the same two people. **Not fixed here** — `fn_start_thread` is pre-existing, unrelated to E2EE, out of this step's scope — but session storage is now keyed by `(threadId, peerDeviceId)` rather than `peerDeviceId` alone as defense-in-depth regardless of whether that specific race is ever hit: a session belongs to one conversation, not "everything with this device," and there's no principled reason two threads should share one ratchet's sequential chain position even setting the duplicate-thread question aside. Flagging `fn_start_thread`'s asymmetric uniqueness check as a real, separately-worth-fixing bug for whenever someone picks it up.
 
-Per this section's own standing instruction: this pass is necessary but not sufficient. A genuinely independent (non-AI, or at least fresh-eyes) review before this touches real user data is still the right bar for something this consequential — that call remains yours to make.
+Per this section's own standing instruction: this pass is necessary but not sufficient. A genuinely independent (non-AI, or at least fresh-eyes) review before this touches real user data is still the right bar for something this consequential.
+
+**Decision (session 36, 2026-09-26):** ship on the adversarial AI pass alone for now, given resource constraints — an independent review stays a backlog item, to be picked up before this handles either a much larger user base or higher-stakes usage than it does today, not before this initial rollout.
 
 ## 8. Build order
 
