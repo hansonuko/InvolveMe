@@ -48,7 +48,12 @@ export function hkdfExpand(
   }
 
   const okm = new Uint8Array(n * HASH_LEN);
-  let previousBlock = new Uint8Array(0);
+  // Explicit `Uint8Array` annotation (not inferred from `new Uint8Array(0)`,
+  // which narrows to the ArrayBuffer-specific generic in newer TS lib
+  // versions) — `hmacSha256`'s return type is the more general
+  // ArrayBufferLike-flavored `Uint8Array`, and `previousBlock` is
+  // reassigned from it on every loop iteration below.
+  let previousBlock: Uint8Array = new Uint8Array(0);
 
   for (let i = 1; i <= n; i++) {
     const input = concatBytes(previousBlock, info, new Uint8Array([i]));
