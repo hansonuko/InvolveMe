@@ -14,11 +14,17 @@
 // (update-group-profile) after the upload succeeds — this function never
 // touches group_threads.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredUuid } from '../_shared/validate.ts';
 
-interface CreateGroupAvatarUploadUrlRequestBody {
-  group_thread_id?: string;
-}
+// Tightened from a bare "is this a string" check to a real UUID format
+// check (docs/19-SECURITY-HARDENING-SCOPING.md §4) — group_thread_id is
+// interpolated directly into a Storage path below, so validating its shape
+// here is real defense-in-depth, not just cleaner error messages.
+const CreateGroupAvatarUploadUrlRequestSchema = z.object({
+  group_thread_id: requiredUuid('group_thread_id'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -45,16 +51,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: CreateGroupAvatarUploadUrlRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.group_thread_id !== 'string') {
-    return errorResponse(400, 'invalid_request', 'group_thread_id is required.');
-  }
+  const parsed = parseBody(CreateGroupAvatarUploadUrlRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
 

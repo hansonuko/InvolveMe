@@ -19,11 +19,14 @@
 // upload" Edge Function needed, since setting avatar_url/cover_url has no
 // financial or security logic behind it (CLAUDE.md rule #1's scope).
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody } from '../_shared/validate.ts';
 
-interface CreateProfileUploadUrlRequestBody {
-  kind?: 'avatar' | 'cover';
-}
+const KIND_MSG = 'kind must be "avatar" or "cover".';
+const CreateProfileUploadUrlRequestSchema = z.object({
+  kind: z.enum(['avatar', 'cover'], { errorMap: () => ({ message: KIND_MSG }) }),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -50,16 +53,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: CreateProfileUploadUrlRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (payload.kind !== 'avatar' && payload.kind !== 'cover') {
-    return errorResponse(400, 'invalid_request', 'kind must be "avatar" or "cover".');
-  }
+  const parsed = parseBody(CreateProfileUploadUrlRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const path = `${user.id}/${payload.kind}.jpg`;
   const db = serviceRoleClient();

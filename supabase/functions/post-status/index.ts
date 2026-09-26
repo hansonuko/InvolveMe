@@ -22,15 +22,21 @@
 // ever make a status render with a fallback background client-side, never
 // anything security- or money-relevant.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
+import { parseBody } from '../_shared/validate.ts';
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
 
-interface PostStatusRequestBody {
-  media_path?: string;
-  caption?: string;
-  text_style?: string;
-}
+// The "needs a caption or a media_path" cross-field rule keeps its own
+// empty_status code (checked manually below, matching send-message/post-
+// status's other distinct-code fields elsewhere in this codebase) — this
+// schema only covers each field's own type.
+const PostStatusRequestSchema = z.object({
+  media_path: z.string({ invalid_type_error: 'media_path must be a string.' }).optional(),
+  caption: z.string({ invalid_type_error: 'caption must be a string.' }).optional(),
+  text_style: z.string({ invalid_type_error: 'text_style must be a string.' }).optional(),
+});
 
 interface FnPostStatusRow {
   status_id: string;
@@ -93,22 +99,17 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: PostStatusRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (payload.media_path !== undefined && typeof payload.media_path !== 'string') {
-    return errorResponse(400, 'invalid_request', 'media_path must be a string.');
-  }
-  if (payload.caption !== undefined && typeof payload.caption !== 'string') {
-    return errorResponse(400, 'invalid_request', 'caption must be a string.');
-  }
-  if (payload.text_style !== undefined && typeof payload.text_style !== 'string') {
-    return errorResponse(400, 'invalid_request', 'text_style must be a string.');
-  }
+  const parsed = parseBody(PostStatusRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
+
   if (
     (payload.media_path === undefined || payload.media_path.trim().length === 0) &&
     (payload.caption === undefined || payload.caption.trim().length === 0)

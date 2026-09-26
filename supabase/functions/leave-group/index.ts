@@ -7,11 +7,13 @@
 // role (group_threads.created_by) to someone else first, per
 // 20260913200000_group_chats.sql's own header comment.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 
-interface LeaveGroupRequestBody {
-  group_thread_id?: string;
-}
+const LeaveGroupRequestSchema = z.object({
+  group_thread_id: requiredString('group_thread_id'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -57,16 +59,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: LeaveGroupRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.group_thread_id !== 'string') {
-    return errorResponse(400, 'invalid_request', 'group_thread_id is required.');
-  }
+  const parsed = parseBody(LeaveGroupRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { error } = await db.rpc('fn_leave_group', {

@@ -6,12 +6,20 @@
 // authenticated caller's own id, never taken from the request body (CLAUDE.md
 // rule #1's identity-from-JWT posture, same as create-group-thread).
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 
-interface AddGroupMembersRequestBody {
-  group_thread_id?: string;
-  member_ids?: string[];
-}
+const MEMBER_IDS_MSG = 'member_ids must be a non-empty array of user ids.';
+const AddGroupMembersRequestSchema = z.object({
+  group_thread_id: requiredString('group_thread_id'),
+  member_ids: z
+    .array(z.string({ invalid_type_error: MEMBER_IDS_MSG }), {
+      required_error: MEMBER_IDS_MSG,
+      invalid_type_error: MEMBER_IDS_MSG,
+    })
+    .min(1, MEMBER_IDS_MSG),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -59,27 +67,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: AddGroupMembersRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.group_thread_id !== 'string') {
-    return errorResponse(400, 'invalid_request', 'group_thread_id is required.');
-  }
-  if (
-    !Array.isArray(payload.member_ids) ||
-    payload.member_ids.length === 0 ||
-    !payload.member_ids.every((id) => typeof id === 'string')
-  ) {
-    return errorResponse(
-      400,
-      'invalid_request',
-      'member_ids must be a non-empty array of user ids.',
-    );
-  }
+  const parsed = parseBody(AddGroupMembersRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { data, error } = await db.rpc('fn_add_group_members', {

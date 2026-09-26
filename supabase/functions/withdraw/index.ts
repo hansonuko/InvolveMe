@@ -15,21 +15,26 @@
 // the safety-critical half of this function regardless of which API
 // eventually backs it.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
+import { parseBody, requiredUuid } from '../_shared/validate.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
-interface WithdrawRequestBody {
-  bank_account_id?: string;
-  amount_kobo?: number;
-}
+const AMOUNT_KOBO_MSG = 'amount_kobo must be a positive integer.';
+const WithdrawRequestSchema = z.object({
+  bank_account_id: requiredUuid('bank_account_id'),
+  amount_kobo: z
+    .number({ invalid_type_error: AMOUNT_KOBO_MSG })
+    .int(AMOUNT_KOBO_MSG)
+    .positive(AMOUNT_KOBO_MSG)
+    .optional(),
+});
 
 interface FnInitiateWithdrawalRow {
   withdrawal_id: string;
   amount_kobo: number;
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -83,26 +88,17 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: WithdrawRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
+  const parsed = parseBody(WithdrawRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
   const bankAccountId = payload.bank_account_id;
-  if (typeof bankAccountId !== 'string' || !UUID_RE.test(bankAccountId)) {
-    return errorResponse(400, 'invalid_request', 'bank_account_id must be a UUID.');
-  }
-
-  if (
-    payload.amount_kobo !== undefined &&
-    (typeof payload.amount_kobo !== 'number' ||
-      !Number.isInteger(payload.amount_kobo) ||
-      payload.amount_kobo <= 0)
-  ) {
-    return errorResponse(400, 'invalid_request', 'amount_kobo must be a positive integer.');
-  }
 
   const db = serviceRoleClient();
 

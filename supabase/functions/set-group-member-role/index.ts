@@ -5,13 +5,18 @@
 // (enforced in the DB function). p_actor_id is always the authenticated
 // caller's own id.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 
-interface SetGroupMemberRoleRequestBody {
-  group_thread_id?: string;
-  target_user_id?: string;
-  role?: string;
-}
+const REQUIRED_FIELDS_MSG =
+  'group_thread_id, target_user_id, and role ("admin" | "member") are required.';
+
+const SetGroupMemberRoleRequestSchema = z.object({
+  group_thread_id: requiredString('group_thread_id'),
+  target_user_id: requiredString('target_user_id'),
+  role: z.enum(['admin', 'member'], { errorMap: () => ({ message: REQUIRED_FIELDS_MSG }) }),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -66,24 +71,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: SetGroupMemberRoleRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (
-    typeof payload.group_thread_id !== 'string' ||
-    typeof payload.target_user_id !== 'string' ||
-    (payload.role !== 'admin' && payload.role !== 'member')
-  ) {
-    return errorResponse(
-      400,
-      'invalid_request',
-      'group_thread_id, target_user_id, and role ("admin" | "member") are required.',
-    );
-  }
+  const parsed = parseBody(SetGroupMemberRoleRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { error } = await db.rpc('fn_set_group_member_role', {

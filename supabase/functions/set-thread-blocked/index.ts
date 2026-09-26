@@ -10,12 +10,14 @@
 // "identity re-derived from the caller's JWT" posture as every other
 // function here, via _shared/auth.ts.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredBoolean, requiredString } from '../_shared/validate.ts';
 
-interface SetThreadBlockedRequestBody {
-  thread_id?: string;
-  blocked?: boolean;
-}
+const SetThreadBlockedRequestSchema = z.object({
+  thread_id: requiredString('thread_id'),
+  blocked: requiredBoolean('blocked'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -42,19 +44,16 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: SetThreadBlockedRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.thread_id !== 'string' || payload.thread_id.trim().length === 0) {
-    return errorResponse(400, 'invalid_request', 'thread_id is required.');
-  }
-  if (typeof payload.blocked !== 'boolean') {
-    return errorResponse(400, 'invalid_request', 'blocked must be a boolean.');
-  }
+  const parsed = parseBody(SetThreadBlockedRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
   const { error } = await db.rpc('fn_set_thread_blocked', {

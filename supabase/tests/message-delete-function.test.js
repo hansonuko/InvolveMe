@@ -163,7 +163,11 @@ async function main() {
   const tokenOutsider = mintAccessToken(outsider);
 
   const threadRow = await admin.query(
-    `insert into threads (participant_a, participant_b) values ($1, $2) returning id`,
+    // payer_id has no column default (docs/18 §C1) — set explicitly here
+    // for consistency, even though this file never calls fn_send_message
+    // (messages are seeded directly), so a future copy-paste into a test
+    // that does call it doesn't inherit a null-payer_id trap.
+    `insert into threads (participant_a, participant_b, payer_id) values ($1, $2, $1) returning id`,
     [a, b],
   );
   const threadId = threadRow.rows[0].id;

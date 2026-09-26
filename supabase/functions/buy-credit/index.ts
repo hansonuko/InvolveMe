@@ -25,13 +25,31 @@
 // users.provider_customer_id (new this session) so a returning user's
 // second top-up reuses it instead of creating a duplicate Customer record.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
+import { checkRateLimit } from '../_shared/rateLimit.ts';
+import { parseBody } from '../_shared/validate.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
 
-interface BuyCreditRequestBody {
-  amount_kobo?: number;
-}
+// Defense-in-depth (docs/19-SECURITY-HARDENING-SCOPING.md §3) — each call
+// hits the live Flutterwave API regardless of outcome (this file's own
+// header comment), so bounding call rate here also bounds real provider
+// cost, not just app-side load. Top-ups are an occasional action, not a
+// per-minute one — generous enough for a legitimate retry-after-failure
+// burst, tight enough to bound a scripted hammer.
+const BUY_CREDIT_MAX = 10;
+const BUY_CREDIT_WINDOW_SECONDS = 60 * 60;
+
+const BuyCreditRequestSchema = z.object({
+  amount_kobo: z
+    .number({
+      required_error: 'amount_kobo must be a positive integer.',
+      invalid_type_error: 'amount_kobo must be a positive integer.',
+    })
+    .int('amount_kobo must be a positive integer.')
+    .positive('amount_kobo must be a positive integer.'),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -76,22 +94,28 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: BuyCreditRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (
-    typeof payload.amount_kobo !== 'number' ||
-    !Number.isInteger(payload.amount_kobo) ||
-    payload.amount_kobo <= 0
-  ) {
-    return errorResponse(400, 'invalid_request', 'amount_kobo must be a positive integer.');
-  }
+  const parsed = parseBody(BuyCreditRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const db = serviceRoleClient();
+
+  const rateAllowed = await checkRateLimit(
+    db,
+    `buy-credit:user:${user.id}`,
+    BUY_CREDIT_MAX,
+    BUY_CREDIT_WINDOW_SECONDS,
+  );
+  if (!rateAllowed) {
+    return errorResponse(429, 'rate_limited', 'Too many top-up attempts, try again later.');
+  }
 
   const { data: userRow, error: userError } = await db
     .from('users')

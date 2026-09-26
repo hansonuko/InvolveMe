@@ -16,12 +16,21 @@
 // enforces that server-side regardless, but rejecting it here too gives a
 // clearer 400 instead of a raised exception for the obviously-wrong case.
 
+import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { parseBody, requiredString } from '../_shared/validate.ts';
 
-interface SetThreadPayerRequestBody {
-  thread_id?: string;
-  new_payer_id?: string | null;
-}
+// new_payer_id's *shape* (string, null, or absent) is validated here; the
+// business rule that it may only ever equal the caller's own id is not a
+// shape concern and stays below, since it depends on the authenticated
+// user, not just the request body.
+const SetThreadPayerRequestSchema = z.object({
+  thread_id: requiredString('thread_id'),
+  new_payer_id: z
+    .string({ invalid_type_error: 'new_payer_id must be a string or null.' })
+    .nullable()
+    .optional(),
+});
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -48,21 +57,18 @@ Deno.serve(async (req) => {
     return errorResponse(500, 'internal_error', 'Auth check failed.');
   }
 
-  let payload: SetThreadPayerRequestBody;
+  let rawBody: unknown;
   try {
-    payload = await req.json();
+    rawBody = await req.json();
   } catch {
     return errorResponse(400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  if (typeof payload.thread_id !== 'string' || payload.thread_id.trim().length === 0) {
-    return errorResponse(400, 'invalid_request', 'thread_id is required.');
-  }
+  const parsed = parseBody(SetThreadPayerRequestSchema, rawBody);
+  if (!parsed.success) return parsed.response;
+  const payload = parsed.data;
 
   const newPayerId = payload.new_payer_id ?? null;
-  if (newPayerId !== null && typeof newPayerId !== 'string') {
-    return errorResponse(400, 'invalid_request', 'new_payer_id must be a string or null.');
-  }
   if (newPayerId !== null && newPayerId !== user.id) {
     return errorResponse(
       403,
