@@ -1423,7 +1423,13 @@ export default function ThreadScreen() {
       // can't actually be true here; this is just the same guard other
       // edit-adjacent code paths in this file already apply defensively.
       editMessage.mutate(
-        { threadId: id, messageId: editingMessage.id, body: text },
+        {
+          threadId: id,
+          messageId: editingMessage.id,
+          body: text,
+          e2eeStatus: headerInfo?.e2eeStatus,
+          partnerId: headerInfo?.partnerId,
+        },
         {
           onSuccess: () => {
             setBody('');

@@ -448,6 +448,17 @@ interface EditMessageRequest {
   threadId: string;
   messageId: string;
   body: string;
+  /** Real end-to-end encryption (docs/21-E2EE-TECHNICAL-DESIGN.md §3) —
+   * same reasoning as SendMessageRequest's own fields: pass the thread's
+   * current e2ee_status and (whenever it's 'active') the other
+   * participant's user id, so this mutation can re-encrypt `body` into a
+   * fresh per-device envelope instead of sending it as plaintext.
+   * fn_edit_message's envelope-replacement path (step 4) requires this —
+   * Double Ratchet has no "edit in place", an edit is a brand-new
+   * encrypt of the new text, checked server-side against the frozen
+   * credits_charged exactly like a plaintext edit is. */
+  e2eeStatus?: 'off' | 'active';
+  partnerId?: string;
 }
 
 interface EditMessageResponse {
@@ -469,12 +480,31 @@ export function useEditMessage() {
   const queryClient = useQueryClient();
 
   return useMutation<EditMessageResponse, EdgeFunctionError, EditMessageRequest>({
-    mutationFn: (request: EditMessageRequest) =>
-      callEdgeFunction<EditMessageResponse>('edit-message', {
+    mutationFn: async (request: EditMessageRequest) => {
+      let envelopes: ReturnType<typeof envelopesForRpc> | undefined;
+      if (request.e2eeStatus === 'active') {
+        if (!request.partnerId) {
+          throw new Error('useEditMessage: an active-e2ee edit needs partnerId.');
+        }
+        const outgoing = await encryptForThread(request.threadId, request.partnerId, request.body);
+        envelopes = envelopesForRpc(outgoing);
+      }
+
+      return callEdgeFunction<EditMessageResponse>('edit-message', {
         message_id: request.messageId,
-        body: request.body,
-      }),
-    onSuccess: (_data, variables) => {
+        body: envelopes ? undefined : request.body,
+        envelopes,
+      });
+    },
+    onSuccess: async (data, variables) => {
+      if (variables.e2eeStatus === 'active') {
+        // Same reasoning as useSendMessage's own onSuccess: the sender's
+        // edited copy has no envelope addressed to itself to decrypt
+        // later, so the local plaintext cache is the only thing that
+        // makes this device's own bubble show the new text rather than
+        // "🔒 Message unavailable" going forward.
+        await setCachedPlaintext(data.message_id, variables.body);
+      }
       queryClient.invalidateQueries({ queryKey: ['messages', variables.threadId] });
     },
   });
@@ -518,11 +548,12 @@ export function useDeleteMessageForEveryone() {
     onSuccess: async (_data, variables) => {
       // A locally-cached plaintext copy of a message the sender just
       // deleted "for everyone" would defeat the point of that feature —
-      // scrub it here too, not just server-side. NOTE: this does not
-      // touch e2ee_message_envelopes' ciphertext row itself (out of scope
-      // for this pass, docs/21 doesn't cover delete-for-everyone) — a
-      // recipient who never opened the app between send and delete would
-      // still be able to decrypt it. Flagged, not silently assumed handled.
+      // scrub it here too, not just server-side (which itself now also
+      // scrubs the e2ee_message_envelopes ciphertext row,
+      // 20260926180000_e2ee_delete_scrub_envelopes.sql — a recipient who
+      // never opened the app between send and delete no longer has
+      // anything left to decrypt afterward, closing the gap this comment
+      // used to flag).
       await deleteCachedPlaintext(variables.messageId);
       queryClient.invalidateQueries({ queryKey: ['messages', variables.threadId] });
     },
