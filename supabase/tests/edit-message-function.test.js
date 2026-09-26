@@ -8,6 +8,15 @@
 // validation, error-code mapping) on top of that, plus one full happy
 // path and the two rejection cases that matter most for a client
 // integration (not the sender; would increase cost).
+//
+// Also covers the e2ee envelope-replacement path at the HTTP layer
+// (docs/00-SESSION-HANDOFF.md session 35 "Next session" list, item 3 —
+// wiring editing into the E2EE client, apps/mobile/lib/queries/messages.ts's
+// useEditMessage) — fn_edit_message's own envelope logic was already
+// verified directly against the DB (e2ee-send-message-billing.test.js),
+// but this Edge Function's e2ee_status lookup / envelopes-vs-body
+// dispatch / E2eeEnvelopesArraySchema validation had never been exercised
+// through the actual HTTP request the new client code now sends.
 
 const { Client } = require('pg');
 const { spawn } = require('node:child_process');
@@ -138,6 +147,78 @@ async function seedEscrowedMessage(admin, payerId, payeeId, wordCount) {
   };
 }
 
+function randomBase64(byteLength) {
+  return crypto.randomBytes(byteLength).toString('base64');
+}
+
+function fakePrekeyBatch(count, startKeyId = 1) {
+  const batch = [];
+  for (let i = 0; i < count; i++) {
+    batch.push({ key_id: startKeyId + i, public_key: randomBase64(32) });
+  }
+  return batch;
+}
+
+// Same shape as e2ee-send-message-billing.test.js's own registerDevice —
+// this file doesn't otherwise need the e2ee schema, so it's kept local
+// rather than shared, matching this test suite's existing self-contained
+// style (no shared test-helper module in this project).
+async function registerDevice(admin, userId) {
+  const res = await admin.query(
+    `select public.fn_register_e2ee_device($1, $2, $3, $4, $5, $6, $7, $8, $9) as device_id`,
+    [
+      userId,
+      'test device',
+      randomBase64(32),
+      randomBase64(32),
+      1,
+      randomBase64(32),
+      randomBase64(64),
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      JSON.stringify(fakePrekeyBatch(3)),
+    ],
+  );
+  return res.rows[0].device_id;
+}
+
+function makeEnvelope(recipientDeviceId, ciphertextByteLength) {
+  return {
+    recipient_device_id: recipientDeviceId,
+    ciphertext: randomBase64(ciphertextByteLength),
+    ratchet_public_key: randomBase64(32),
+    previous_chain_length: 0,
+    message_number: 0,
+    x3dh_sender_identity_key: null,
+    x3dh_sender_ephemeral_key: null,
+    x3dh_one_time_prekey_id: null,
+  };
+}
+
+async function seedEscrowedE2eeMessage(admin, payerId, payeeId) {
+  const {
+    rows: [thread],
+  } = await admin.query('select public.fn_start_thread($1, $2) as id', [payerId, payeeId]);
+  const deviceA = await registerDevice(admin, payerId);
+  const deviceB = await registerDevice(admin, payeeId);
+  await admin.query('select public.fn_enable_e2ee($1, $2)', [thread.id, payerId]);
+
+  const {
+    rows: [sent],
+  } = await admin.query(
+    `select * from public.fn_send_message(
+       p_thread_id => $1, p_sender_id => $2, p_body => $3, p_envelopes => $4::jsonb
+     )`,
+    [thread.id, payerId, '', JSON.stringify([makeEnvelope(deviceB, 64)])],
+  );
+  return {
+    threadId: thread.id,
+    messageId: sent.message_id,
+    creditsCharged: Number(sent.credits_charged),
+    deviceA,
+    deviceB,
+  };
+}
+
 async function callEditMessage(token, body) {
   const res = await fetch(`${FUNCTION_URL}/`, {
     method: 'POST',
@@ -181,7 +262,16 @@ async function main() {
   const B = await createTestUser();
   const tokenA = mintAccessToken(A);
   const tokenB = mintAccessToken(B);
+  // Separate pair from A/B for the e2ee scenario below — fn_start_thread
+  // is idempotent per (participant_a, participant_b) and would otherwise
+  // hand back A/B's own already-created plaintext thread instead of a
+  // fresh one, corrupting both scenarios' cleanup (found live: the first
+  // version of this test reused A/B and hit exactly that).
+  const C = await createTestUser();
+  const D = await createTestUser();
+  const tokenC = mintAccessToken(C);
   let threadId;
+  let e2eeThreadId;
 
   try {
     await waitForFunctionReady(15000);
@@ -282,11 +372,85 @@ async function main() {
       afterRelease.status === 409 && afterRelease.json?.error === 'message_not_editable',
       JSON.stringify(afterRelease.json),
     );
+
+    // --- e2ee envelope-replacement path, at the HTTP layer ---
+    const {
+      rows: [cWallet],
+    } = await admin.query(
+      `select id from public.wallets where user_id = $1 and kind = 'topup_credit'`,
+      [C],
+    );
+    await admin.query(
+      `insert into public.ledger_entries (wallet_id, amount, reason) values ($1, 20, 'manual_adjustment')`,
+      [cWallet.id],
+    );
+
+    const e2eeSeed = await seedEscrowedE2eeMessage(admin, C, D);
+    e2eeThreadId = e2eeSeed.threadId;
+
+    const e2eeNoEnvelopes = await callEditMessage(tokenC, {
+      message_id: e2eeSeed.messageId,
+      body: 'plaintext body on an e2ee thread',
+    });
+    log(
+      'plaintext body on an e2ee-active thread -> 400, envelopes required',
+      e2eeNoEnvelopes.status === 400 && e2eeNoEnvelopes.json?.error === 'invalid_request',
+      JSON.stringify(e2eeNoEnvelopes.json),
+    );
+
+    const e2eeHappy = await callEditMessage(tokenC, {
+      message_id: e2eeSeed.messageId,
+      envelopes: [makeEnvelope(e2eeSeed.deviceB, 40)],
+    });
+    log(
+      'e2ee edit with a valid envelope -> 200, credits unchanged',
+      e2eeHappy.status === 200 &&
+        e2eeHappy.json?.credits_charged === e2eeSeed.creditsCharged &&
+        !!e2eeHappy.json?.edited_at,
+      JSON.stringify(e2eeHappy.json),
+    );
+
+    const {
+      rows: [envelopeAfterEdit],
+    } = await admin.query(
+      'select recipient_device_id, length(ciphertext) as ciphertext_len from public.e2ee_message_envelopes where message_id = $1',
+      [e2eeSeed.messageId],
+    );
+    log(
+      'the old envelope was replaced by exactly the new one (one row, new ciphertext length)',
+      envelopeAfterEdit?.recipient_device_id === e2eeSeed.deviceB &&
+        Number(envelopeAfterEdit?.ciphertext_len) === 40,
+      JSON.stringify(envelopeAfterEdit),
+    );
+
+    const e2eeBadDevice = await callEditMessage(tokenC, {
+      message_id: e2eeSeed.messageId,
+      envelopes: [makeEnvelope(e2eeSeed.deviceA, 40)],
+    });
+    log(
+      "e2ee edit addressed to the sender's own device -> 400 invalid_envelope_recipient_device",
+      e2eeBadDevice.status === 400 &&
+        e2eeBadDevice.json?.error === 'invalid_envelope_recipient_device',
+      JSON.stringify(e2eeBadDevice.json),
+    );
   } finally {
     deno.kill();
     if (threadId) await deleteTestThread(admin, threadId);
+    if (e2eeThreadId) {
+      // e2ee_message_envelopes.message_id is RESTRICT, not CASCADE
+      // (20260926161500_e2ee_cascade_deletes.sql's own header comment) —
+      // must go before deleteTestThread's `delete from messages` or that
+      // FK blocks it.
+      await admin.query(
+        'delete from public.e2ee_message_envelopes where message_id in (select id from public.messages where thread_id = $1)',
+        [e2eeThreadId],
+      );
+      await deleteTestThread(admin, e2eeThreadId);
+    }
     await deleteTestUser(admin, A);
     await deleteTestUser(admin, B);
+    await deleteTestUser(admin, C);
+    await deleteTestUser(admin, D);
     await admin.end();
   }
 
