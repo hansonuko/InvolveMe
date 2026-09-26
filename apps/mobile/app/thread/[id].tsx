@@ -44,11 +44,17 @@ import {
 import { useSendGroupMessage } from '@/lib/queries/groups';
 import { useReportUser } from '@/lib/queries/profile';
 import {
+  useEnableE2ee,
   useMarkThreadRead,
   useSetThreadBlocked,
   useSetThreadMuted,
   useSetThreadPayer,
 } from '@/lib/queries/threads';
+import { hexToBytes } from '@/lib/e2ee/bytes';
+import { getOrCreateIdentity } from '@/lib/e2ee/identity';
+import { ensureDeviceRegistered } from '@/lib/e2ee/prekeys';
+import { computeSafetyNumber } from '@/lib/e2ee/safetyNumber';
+import { nativeSodiumProvider as sodium } from '@/lib/e2ee/sodiumProviderNative';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { useIsOnline } from '@/lib/network';
 import { type OutboxItem, useOutboxStore } from '@/lib/outboxStore';
@@ -73,6 +79,11 @@ interface ThreadHeaderInfo {
    * thing as "am I participant_a" (see the fetch below): payer_id is a
    * separate, mutable economic role layered on the fixed participant pair. */
   payerId: string | null;
+  /** docs/21-E2EE-TECHNICAL-DESIGN.md §6 — `'off'` (default, every existing
+   * thread) is the unchanged plaintext path; `'active'` means every
+   * message here is a Double Ratchet envelope, decrypted client-side
+   * (lib/e2ee/session.ts). Never flickers back once active. */
+  e2eeStatus: 'off' | 'active';
   blockedByMe: boolean;
   blockedByPartner: boolean;
   /** The caller's own mute flag on this thread (docs/10-UX-REFINEMENT-BACKLOG.md
@@ -110,7 +121,7 @@ function useThreadHeaderInfo(
       const { data: thread } = await supabase
         .from('threads')
         .select(
-          'participant_a, participant_b, payer_id, blocked_by, muted_by_a, muted_by_b, participant_a_last_read_at, participant_b_last_read_at',
+          'participant_a, participant_b, payer_id, e2ee_status, blocked_by, muted_by_a, muted_by_b, participant_a_last_read_at, participant_b_last_read_at',
         )
         .eq('id', threadId)
         .maybeSingle();
@@ -142,6 +153,7 @@ function useThreadHeaderInfo(
         partnerAvatarUrl: partner?.avatar_url ?? null,
         partnerPhone: partner?.phone ?? null,
         payerId: thread.payer_id,
+        e2eeStatus: thread.e2ee_status,
         blockedByMe: thread.blocked_by === currentUserId,
         blockedByPartner: !!thread.blocked_by && thread.blocked_by !== currentUserId,
         mutedByMe: isParticipantA ? thread.muted_by_a : thread.muted_by_b,
@@ -232,20 +244,25 @@ function ThreadOverflowMenu({
   onClose,
   threadId,
   partnerId,
+  partnerName,
   blockedByMe,
   mutedByMe,
   currentUserId,
+  e2eeStatus,
   onBlockedChange,
   onMutedChange,
   onBuyCredit,
+  onE2eeStatusChange,
 }: {
   visible: boolean;
   onClose: () => void;
   threadId: string;
   partnerId: string;
+  partnerName: string | null;
   blockedByMe: boolean;
   mutedByMe: boolean;
   currentUserId: string;
+  e2eeStatus: 'off' | 'active';
   /** Called after a block/unblock mutation succeeds — useThreadHeaderInfo
    * is a one-shot fetch, not a live subscription, so the parent needs an
    * explicit nudge to re-fetch rather than picking this up automatically. */
@@ -256,13 +273,70 @@ function ThreadOverflowMenu({
    * BuyCreditModal the insufficient-credit flow already uses; this menu
    * only closes itself and hands off, no new modal/state of its own. */
   onBuyCredit: () => void;
+  /** Same reasoning as onBlockedChange/onMutedChange, for enabling E2EE. */
+  onE2eeStatusChange: () => void;
 }) {
   const { colors, spacing, radius } = useTheme();
   const setBlocked = useSetThreadBlocked();
   const setMuted = useSetThreadMuted();
   const reportUser = useReportUser();
+  const enableE2ee = useEnableE2ee();
   const [reportOpen, setReportOpen] = useState(false);
   const [reason, setReason] = useState<string | null>(null);
+  const [safetyNumberOpen, setSafetyNumberOpen] = useState(false);
+  const [safetyNumber, setSafetyNumber] = useState<string | null>(null);
+  const [enablingE2ee, setEnablingE2ee] = useState(false);
+
+  const handleEnableE2ee = async () => {
+    onClose();
+    setEnablingE2ee(true);
+    try {
+      await ensureDeviceRegistered();
+      await enableE2ee.mutateAsync({ threadId });
+      onE2eeStatusChange();
+      Alert.alert(
+        'Encryption enabled',
+        'Messages in this conversation are now end-to-end encrypted.',
+      );
+    } catch (e) {
+      const message =
+        e instanceof EdgeFunctionError && e.code === 'partner_not_ready'
+          ? "The other person hasn't set up encryption on their device yet — this will work once they have."
+          : e instanceof Error
+            ? e.message
+            : 'Something went wrong.';
+      Alert.alert('Could not enable encryption', message);
+    } finally {
+      setEnablingE2ee(false);
+    }
+  };
+
+  const handleViewSafetyNumber = async () => {
+    onClose();
+    setSafetyNumberOpen(true);
+    setSafetyNumber(null);
+    try {
+      const own = await getOrCreateIdentity();
+      const { data: partnerDevice, error } = await supabase
+        .from('e2ee_devices')
+        .select('identity_key_x25519')
+        .eq('user_id', partnerId)
+        .is('revoked_at', null)
+        .limit(1)
+        .maybeSingle();
+      if (error || !partnerDevice) throw error ?? new Error('no device on record');
+
+      await sodium.ready();
+      const number = computeSafetyNumber(
+        sodium,
+        { userId: currentUserId, identityKeyX25519: own.identityX25519.publicKey },
+        { userId: partnerId, identityKeyX25519: hexToBytes(partnerDevice.identity_key_x25519) },
+      );
+      setSafetyNumber(number);
+    } catch {
+      setSafetyNumber('unavailable');
+    }
+  };
 
   const handleToggleBlock = () => {
     onClose();
@@ -338,6 +412,26 @@ function ThreadOverflowMenu({
                 {blockedByMe ? 'Unblock contact' : 'Block contact'}
               </Text>
             </Pressable>
+            {e2eeStatus === 'off' ? (
+              <Pressable
+                style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
+                onPress={handleEnableE2ee}
+                disabled={enablingE2ee}
+              >
+                <Text variant="bodyMedium" color="primary">
+                  {enablingE2ee ? 'Enabling…' : 'Enable end-to-end encryption'}
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
+                onPress={handleViewSafetyNumber}
+              >
+                <Text variant="bodyMedium" color="primary">
+                  View safety number
+                </Text>
+              </Pressable>
+            )}
             <Pressable
               style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
               onPress={() => {
@@ -351,6 +445,38 @@ function ThreadOverflowMenu({
             </Pressable>
           </View>
         </Pressable>
+      </Modal>
+
+      <Modal
+        visible={safetyNumberOpen}
+        animationType="slide"
+        onRequestClose={() => setSafetyNumberOpen(false)}
+      >
+        <Screen>
+          <View
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <Text variant="title">Safety number</Text>
+            <Pressable onPress={() => setSafetyNumberOpen(false)} hitSlop={12}>
+              <Text variant="body" color="secondary">
+                Close
+              </Text>
+            </Pressable>
+          </View>
+          <View style={{ marginTop: spacing.xl, gap: spacing.md }}>
+            <Text variant="body" color="secondary">
+              Compare this number with {partnerName ?? 'the other person'} through a call or in
+              person. If it matches on both devices, no one is intercepting this conversation.
+            </Text>
+            <Text variant="title" color="primary">
+              {safetyNumber === null
+                ? 'Loading…'
+                : safetyNumber === 'unavailable'
+                  ? 'Unavailable'
+                  : safetyNumber}
+            </Text>
+          </View>
+        </Screen>
       </Modal>
 
       <Modal visible={reportOpen} animationType="slide" onRequestClose={() => setReportOpen(false)}>
@@ -802,11 +928,19 @@ export default function ThreadScreen() {
   const { session } = useSession();
   const currentUserId = session?.user.id;
 
+  // Moved above useThreadMessages (its original position was further
+  // below, alongside the rest of this screen's useState calls) — decrypt
+  // wiring needs to know the thread's e2ee_status before fetching
+  // messages, and hook call order must stay stable regardless, so this
+  // just needed to move, not change in any other way.
+  const [headerRefetchKey, setHeaderRefetchKey] = useState(0);
+  const headerInfo = useThreadHeaderInfo(id, currentUserId, headerRefetchKey);
+
   const {
     data: messages,
     isLoading,
     refetch: refetchMessages,
-  } = useThreadMessages(id, currentUserId);
+  } = useThreadMessages(id, currentUserId, headerInfo?.e2eeStatus);
   const sendMessage = useSendMessage();
   const createChatMediaUploadUrl = useCreateChatMediaUploadUrl();
   const sendGroupMessage = useSendGroupMessage();
@@ -838,8 +972,6 @@ export default function ThreadScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
-  const [headerRefetchKey, setHeaderRefetchKey] = useState(0);
-  const headerInfo = useThreadHeaderInfo(id, currentUserId, headerRefetchKey);
   const [menuVisible, setMenuVisible] = useState(false);
   const [buyCreditVisible, setBuyCreditVisible] = useState(false);
   const setThreadPayer = useSetThreadPayer();
@@ -1135,7 +1267,15 @@ export default function ThreadScreen() {
     );
     scrollToLatest();
     sendMessage.mutate(
-      { threadId: id, body: text, replyToMessageId, mediaPath, mediaType },
+      {
+        threadId: id,
+        body: text,
+        replyToMessageId,
+        mediaPath,
+        mediaType,
+        e2eeStatus: headerInfo?.e2eeStatus,
+        partnerId: headerInfo?.partnerId,
+      },
       {
         onSuccess: () => {
           setPendingSend(null);
@@ -1262,7 +1402,15 @@ export default function ThreadScreen() {
     scrollToLatest();
 
     sendMessage.mutate(
-      { threadId: id, body: text, replyToMessageId, mediaPath, mediaType },
+      {
+        threadId: id,
+        body: text,
+        replyToMessageId,
+        mediaPath,
+        mediaType,
+        e2eeStatus: headerInfo?.e2eeStatus,
+        partnerId: headerInfo?.partnerId,
+      },
       {
         onSuccess: () => {
           setBody('');
@@ -1703,6 +1851,14 @@ export default function ThreadScreen() {
             </Pressable>
           ) : null}
 
+          {headerInfo?.e2eeStatus === 'active' ? (
+            <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
+              <Text variant="caption" color="secondary">
+                🔒 Messages here are end-to-end encrypted
+              </Text>
+            </View>
+          ) : null}
+
           {headerInfo?.blockedByMe ? (
             <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
               <Text variant="caption" color="danger">
@@ -1936,12 +2092,15 @@ export default function ThreadScreen() {
           onClose={() => setMenuVisible(false)}
           threadId={id}
           partnerId={headerInfo.partnerId}
+          partnerName={headerInfo.partnerName}
           blockedByMe={headerInfo.blockedByMe}
           mutedByMe={headerInfo.mutedByMe}
           currentUserId={currentUserId}
+          e2eeStatus={headerInfo.e2eeStatus}
           onBlockedChange={() => setHeaderRefetchKey((k) => k + 1)}
           onMutedChange={() => setHeaderRefetchKey((k) => k + 1)}
           onBuyCredit={() => setBuyCreditVisible(true)}
+          onE2eeStatusChange={() => setHeaderRefetchKey((k) => k + 1)}
         />
       ) : null}
 

@@ -302,6 +302,24 @@ export function useSetThreadPayer() {
   });
 }
 
+/** Wraps POST /functions/v1/enable-e2ee (docs/21-E2EE-TECHNICAL-DESIGN.md
+ * §3, §6) — flips a thread's `e2ee_status` to `'active'`, participant-only
+ * and idempotent server-side. The real gating condition (both
+ * participants already have a registered device) is `fn_enable_e2ee`'s
+ * own — this mutation doesn't pre-check it, it just surfaces whatever
+ * `partner_not_ready`/other error the server returns. Callers must run
+ * `ensureDeviceRegistered()` (`lib/e2ee/prekeys.ts`) for the CURRENT user
+ * before calling this, so at least one side is ready before asking. Like
+ * `useSetThreadPayer`, `useThreadHeaderInfo` is a one-shot fetch rather
+ * than a TanStack Query, so there's no query key to invalidate — the
+ * caller bumps its own refetch key on success. */
+export function useEnableE2ee() {
+  return useMutation({
+    mutationFn: (params: { threadId: string }) =>
+      callEdgeFunction<{ ok: true }>('enable-e2ee', { thread_id: params.threadId }),
+  });
+}
+
 export interface BlockedThread {
   thread_id: string;
   partner: { id: string; display_name: string | null };

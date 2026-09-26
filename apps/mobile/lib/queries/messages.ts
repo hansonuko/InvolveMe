@@ -1,8 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { callEdgeFunction, EdgeFunctionError } from '@/lib/edgeFunctions';
+import { deleteCachedPlaintext, setCachedPlaintext } from '@/lib/e2ee/plaintextCache';
+import { decryptThreadMessages, encryptForThread, type OutgoingEnvelope } from '@/lib/e2ee/session';
 import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
+
+/** `fn_send_message`/`fn_edit_message`'s `p_envelopes` shape (docs/21-E2EE-TECHNICAL-DESIGN.md §3) — the wire/RPC field names, snake_case, distinct from OutgoingEnvelope's camelCase in-app shape. */
+function envelopesForRpc(envelopes: OutgoingEnvelope[]) {
+  return envelopes.map((e) => ({
+    recipient_device_id: e.recipientDeviceId,
+    ciphertext: e.ciphertext,
+    ratchet_public_key: e.ratchetPublicKey,
+    previous_chain_length: e.previousChainLength,
+    message_number: e.messageNumber,
+    x3dh_sender_identity_key: e.x3dhSenderIdentityKey,
+    x3dh_sender_ephemeral_key: e.x3dhSenderEphemeralKey,
+    x3dh_one_time_prekey_id: e.x3dhOneTimePrekeyId,
+  }));
+}
 
 export interface Message {
   id: string;
@@ -72,7 +88,11 @@ export interface Message {
  * embed" call this file's other hooks already make; an acceptable extra
  * round trip since Realtime already refetches this wholesale on any
  * change, not per-keystroke. */
-export function useThreadMessages(threadId: string | undefined, currentUserId: string | undefined) {
+export function useThreadMessages(
+  threadId: string | undefined,
+  currentUserId: string | undefined,
+  e2eeStatus?: 'off' | 'active',
+) {
   const queryClient = useQueryClient();
   const queryKey = ['messages', threadId];
 
@@ -102,7 +122,25 @@ export function useThreadMessages(threadId: string | undefined, currentUserId: s
       if (deletionsError) throw deletionsError;
 
       const deletedIds = new Set((deletions ?? []).map((d) => d.message_id));
-      return data.filter((m) => !deletedIds.has(m.id));
+      const visible = data.filter((m) => !deletedIds.has(m.id));
+
+      if (e2eeStatus !== 'active') return visible;
+
+      // Real end-to-end encryption (docs/21-E2EE-TECHNICAL-DESIGN.md §5) —
+      // every row here has body: null from the server; decryptThreadMessages
+      // resolves as many as it can (from the durable local plaintext cache,
+      // or by consuming this device's own envelope + ratchet state — see
+      // that function's own header comment for why a cache miss on the
+      // sender's own message is unrecoverable by construction, not a bug).
+      const decrypted = await decryptThreadMessages(
+        threadId as string,
+        currentUserId as string,
+        visible,
+      );
+      return visible.map((m) => ({
+        ...m,
+        body: decrypted.get(m.id) ?? '🔒 Message unavailable',
+      }));
     },
   });
 
@@ -123,6 +161,22 @@ export function useThreadMessages(threadId: string | undefined, currentUserId: s
       // query itself will pick the row up naturally once it does.
       if (payload.eventType === 'INSERT') {
         const row = payload.new as unknown as Message;
+        if (e2eeStatus === 'active' && currentUserId) {
+          // `row.body` is always null here (docs/21 §2) — resolve it the
+          // same way the initial fetch does before the row ever reaches
+          // the cache, so a live-arriving message never flashes/stays
+          // unreadable while some other re-render happens to trigger a
+          // refetch.
+          decryptThreadMessages(threadId as string, currentUserId, [row]).then((decrypted) => {
+            const resolvedRow = { ...row, body: decrypted.get(row.id) ?? '🔒 Message unavailable' };
+            queryClient.setQueryData<Message[]>(queryKey, (old) => {
+              if (!old) return old;
+              if (old.some((m) => m.id === resolvedRow.id)) return old;
+              return [...old, resolvedRow].sort((a, b) => a.created_at.localeCompare(b.created_at));
+            });
+          });
+          return;
+        }
         queryClient.setQueryData<Message[]>(queryKey, (old) => {
           if (!old) return old;
           if (old.some((m) => m.id === row.id)) return old;
@@ -131,7 +185,18 @@ export function useThreadMessages(threadId: string | undefined, currentUserId: s
       } else if (payload.eventType === 'UPDATE') {
         const row = payload.new as unknown as Message;
         queryClient.setQueryData<Message[]>(queryKey, (old) =>
-          old?.map((m) => (m.id === row.id ? { ...m, ...row } : m)),
+          old?.map((m) =>
+            m.id === row.id
+              ? // e2ee threads: `row.body` is always null (docs/21 §2) —
+                // an UPDATE here is a status/read-receipt/edit-flag change,
+                // never a real content change to apply; keep whatever body
+                // this device already resolved rather than clobbering it
+                // back to null.
+                e2eeStatus === 'active'
+                ? { ...m, ...row, body: m.body }
+                : { ...m, ...row }
+              : m,
+          ),
         );
       } else if (payload.eventType === 'DELETE') {
         const oldRow = payload.old as { id?: string };
@@ -231,6 +296,14 @@ interface SendMessageRequest {
    * this turns out free (first-message-in-thread + no media + a real,
    * unexpired, visible status) — this is just carried through. */
   replyToStatusId?: string;
+  /** Real end-to-end encryption (docs/21-E2EE-TECHNICAL-DESIGN.md §5) —
+   * pass the thread's current `e2ee_status` and (whenever it's `'active'`)
+   * the other participant's user id, so this mutation can encrypt `body`
+   * into per-device envelopes instead of sending it as plaintext. A
+   * brand-new thread (no `threadId` yet) is always `'off'` — omit both
+   * for that case. */
+  e2eeStatus?: 'off' | 'active';
+  partnerId?: string;
 }
 
 interface SendMessageResponse {
@@ -262,19 +335,46 @@ export function useSendMessage() {
   const queryClient = useQueryClient();
 
   return useMutation<SendMessageResponse, EdgeFunctionError, SendMessageRequest>({
-    mutationFn: (request: SendMessageRequest) =>
-      callEdgeFunction<SendMessageResponse>('send-message', {
+    mutationFn: async (request: SendMessageRequest) => {
+      let envelopes: ReturnType<typeof envelopesForRpc> | undefined;
+      if (request.e2eeStatus === 'active') {
+        if (!request.threadId || !request.partnerId) {
+          throw new Error('useSendMessage: an active-e2ee send needs both threadId and partnerId.');
+        }
+        const outgoing = await encryptForThread(request.threadId, request.partnerId, request.body);
+        envelopes = envelopesForRpc(outgoing);
+      }
+
+      return callEdgeFunction<SendMessageResponse>('send-message', {
         thread_id: request.threadId,
         recipient_id: request.recipientId,
-        body: request.body,
+        body: envelopes ? '' : request.body,
         client_message_id: request.clientMessageId,
         reply_to_message_id: request.replyToMessageId,
         is_forwarded: request.isForwarded,
         media_path: request.mediaPath,
         media_type: request.mediaType,
         reply_to_status_id: request.replyToStatusId,
-      }),
-    onSuccess: () => {
+        envelopes,
+      });
+    },
+    onSuccess: async (data, variables) => {
+      if (variables.e2eeStatus === 'active') {
+        // The sender already has the plaintext it just typed — no
+        // envelope exists addressed to itself to decrypt later (docs/21
+        // §2), so this is the ONLY chance to make this device's own copy
+        // of its own sent message survive past the current session. Must
+        // land before the Realtime INSERT this same send triggers tries
+        // to resolve the same message id — in practice always true (this
+        // callback fires off the same HTTP response the DB insert that
+        // triggers Realtime already committed before returning), but not
+        // a hard guarantee; decryptThreadMessages checks this cache
+        // first regardless, so a loss here just means a one-time "🔒
+        // Message unavailable" for this device's own bubble until the
+        // next real fetch, never corrupted content.
+        await setCachedPlaintext(data.message_id, variables.body);
+      }
+
       // Deliberately no `invalidateQueries(['messages', ...])` here — the
       // just-sent row lands in the thread's message cache via the same
       // Realtime INSERT patch every other participant's client relies on
@@ -415,7 +515,15 @@ export function useDeleteMessageForEveryone() {
   return useMutation<{ ok: true }, EdgeFunctionError, DeleteMessageRequest>({
     mutationFn: (request) =>
       callEdgeFunction('delete-message-for-everyone', { message_id: request.messageId }),
-    onSuccess: (_data, variables) => {
+    onSuccess: async (_data, variables) => {
+      // A locally-cached plaintext copy of a message the sender just
+      // deleted "for everyone" would defeat the point of that feature —
+      // scrub it here too, not just server-side. NOTE: this does not
+      // touch e2ee_message_envelopes' ciphertext row itself (out of scope
+      // for this pass, docs/21 doesn't cover delete-for-everyone) — a
+      // recipient who never opened the app between send and delete would
+      // still be able to decrypt it. Flagged, not silently assumed handled.
+      await deleteCachedPlaintext(variables.messageId);
       queryClient.invalidateQueries({ queryKey: ['messages', variables.threadId] });
     },
   });
