@@ -7,6 +7,12 @@
 // a raw `pg` connection (service-role/no-RLS, fine for verification —
 // group-rls-recursion.test.js is the one that specifically needs to go
 // through RLS, this one doesn't).
+//
+// Also covers the e2ee_message_envelopes scrub added by
+// 20260926180000_e2ee_delete_scrub_envelopes.sql (docs/00-SESSION-HANDOFF.md
+// session 35 "Next session" list, item 1) — delete-for-everyone on an
+// e2ee-active thread's message must remove every envelope row for it, not
+// just blank messages.body (which is already null for those messages).
 
 const { Client } = require('pg');
 const { spawn } = require('node:child_process');
@@ -150,6 +156,58 @@ async function insertMessage(admin, threadId, senderId, body, createdAt) {
   return row.rows[0].id;
 }
 
+function randomBase64(byteLength) {
+  return crypto.randomBytes(byteLength).toString('base64');
+}
+
+function fakePrekeyBatch(count, startKeyId = 1) {
+  const batch = [];
+  for (let i = 0; i < count; i++) {
+    batch.push({ key_id: startKeyId + i, public_key: randomBase64(32) });
+  }
+  return batch;
+}
+
+// Registers a real e2ee_devices row (docs/21 §2) so a fabricated envelope
+// row below has a valid recipient_device_id to reference — same helper
+// shape as e2ee-send-message-billing.test.js's own registerDevice.
+async function registerE2eeDevice(admin, userId) {
+  const res = await admin.query(
+    `select public.fn_register_e2ee_device($1, $2, $3, $4, $5, $6, $7, $8, $9) as device_id`,
+    [
+      userId,
+      'test device',
+      randomBase64(32),
+      randomBase64(32),
+      1,
+      randomBase64(32),
+      randomBase64(64),
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      JSON.stringify(fakePrekeyBatch(3)),
+    ],
+  );
+  return res.rows[0].device_id;
+}
+
+// Inserted directly (not via fn_send_message) — this file already inserts
+// plaintext messages the same way; this mirrors that for an e2ee-active
+// thread's envelope so the delete-scrub path can be exercised without
+// pulling in the full crypto-core send flow (e2ee-send-message-billing.
+// test.js's own job, not this file's).
+async function insertEnvelope(admin, messageId, recipientDeviceId) {
+  await admin.query(
+    `insert into e2ee_message_envelopes
+       (message_id, recipient_device_id, ciphertext, ratchet_public_key, previous_chain_length, message_number)
+     values ($1, $2, $3, $4, 0, 0)`,
+    [
+      messageId,
+      recipientDeviceId,
+      Buffer.from(randomBase64(64), 'base64'),
+      Buffer.from(randomBase64(32), 'base64'),
+    ],
+  );
+}
+
 async function main() {
   const admin = new Client({ connectionString: DB_URL, ssl: { rejectUnauthorized: false } });
   admin.on('error', (e) => process.stderr.write(`[connection error, non-fatal] ${e.message}\n`));
@@ -180,6 +238,17 @@ async function main() {
     'an old message',
     new Date(Date.now() - 2 * 60 * 60 * 1000), // 2h ago, past the 60-min delete-for-everyone window
   );
+
+  // --- e2ee envelope scrub setup (docs/00-SESSION-HANDOFF.md session 35
+  // "Next session" list, item 1) — a dedicated e2ee-active thread, separate
+  // from the plaintext one above, so this scenario doesn't interact with
+  // the plaintext delete assertions already covered.
+  const deviceA = await registerE2eeDevice(admin, a);
+  const deviceB = await registerE2eeDevice(admin, b);
+  await admin.query('select public.fn_enable_e2ee($1, $2)', [threadId, a]);
+  const e2eeMsgId = await insertMessage(admin, threadId, a, null, new Date());
+  await insertEnvelope(admin, e2eeMsgId, deviceB);
+  await insertEnvelope(admin, e2eeMsgId, deviceA);
 
   try {
     // --- delete-message-for-me ---
@@ -279,11 +348,55 @@ async function main() {
       ledgerUntouched === 0,
       `n=${ledgerUntouched}`,
     );
+
+    // --- e2ee envelope scrub ---
+    const envelopesBefore = (
+      await admin.query(
+        'select count(*)::int as n from e2ee_message_envelopes where message_id = $1',
+        [e2eeMsgId],
+      )
+    ).rows[0].n;
+    log('e2ee envelopes exist before delete', envelopesBefore === 2, `n=${envelopesBefore}`);
+
+    await withFunction('delete-message-for-everyone', async () => {
+      const bySender = await callFunction(tokenA, { message_id: e2eeMsgId });
+      log(
+        'for-everyone: sender can delete an e2ee-active message -> 200',
+        bySender.status === 200,
+        JSON.stringify(bySender.json),
+      );
+    });
+
+    const envelopesAfter = (
+      await admin.query(
+        'select count(*)::int as n from e2ee_message_envelopes where message_id = $1',
+        [e2eeMsgId],
+      )
+    ).rows[0].n;
+    log(
+      'for-everyone scrubs every e2ee_message_envelopes row for the message (sender and recipient device alike)',
+      envelopesAfter === 0,
+      `n=${envelopesAfter}`,
+    );
+
+    const e2eeDeletedRow = (
+      await admin.query('select body, deleted_for_everyone from messages where id = $1', [
+        e2eeMsgId,
+      ])
+    ).rows[0];
+    log(
+      'e2ee message row still gets the same tombstone treatment as a plaintext one',
+      e2eeDeletedRow.body === '' && e2eeDeletedRow.deleted_for_everyone === true,
+      JSON.stringify(e2eeDeletedRow),
+    );
   } finally {
     await admin.query('delete from message_deletions where message_id = any($1)', [
-      [recentMsgId, oldMsgId],
+      [recentMsgId, oldMsgId, e2eeMsgId],
     ]);
-    await admin.query('delete from messages where id = any($1)', [[recentMsgId, oldMsgId]]);
+    await admin.query('delete from e2ee_message_envelopes where message_id = $1', [e2eeMsgId]);
+    await admin.query('delete from messages where id = any($1)', [
+      [recentMsgId, oldMsgId, e2eeMsgId],
+    ]);
     await admin.query('delete from threads where id = $1', [threadId]);
     await deleteTestUser(a);
     await deleteTestUser(b);
