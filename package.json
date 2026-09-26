@@ -43,6 +43,10 @@
     "test:e2ee-schema:ci": "node supabase/tests/e2ee-schema-functions.test.js",
     "test:e2ee-functions": "node --env-file=.env supabase/tests/e2ee-functions.test.js",
     "test:e2ee-functions:ci": "node supabase/tests/e2ee-functions.test.js",
+    "test:e2ee-hkdf": "node supabase/tests/e2ee-hkdf-rfc5869.test.ts",
+    "test:e2ee-hkdf:ci": "node supabase/tests/e2ee-hkdf-rfc5869.test.ts",
+    "test:e2ee-crypto-core": "node supabase/tests/e2ee-crypto-core.test.ts",
+    "test:e2ee-crypto-core:ci": "node supabase/tests/e2ee-crypto-core.test.ts",
     "test:group-chat": "node --env-file=.env supabase/tests/group-chat-functions.test.js",
     "test:group-admin": "node --env-file=.env supabase/tests/group-admin-actions-function.test.js",
     "test:group-rls": "node --env-file=.env supabase/tests/group-rls-recursion.test.js",
@@ -53,8 +57,10 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@types/libsodium-wrappers-sumo": "^0.7.8",
     "eslint": "^9.19.0",
     "husky": "^9.1.7",
+    "libsodium-wrappers-sumo": "^0.8.4",
     "lint-staged": "^15.2.10",
     "pg": "^8.13.1",
     "prettier": "^3.9.6",
@@ -70,5 +76,8 @@
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "npm@10.8.2"
+  "packageManager": "npm@10.8.2",
+  "allowScripts": {
+    "react-native-libsodium@1.7.0": true
+  }
 }
