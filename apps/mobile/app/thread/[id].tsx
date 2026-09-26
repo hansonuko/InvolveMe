@@ -1591,6 +1591,18 @@ export default function ThreadScreen() {
 
     const jobs = forwardMessages.flatMap((message) =>
       targets.map(async (target) => {
+        // The outbox has no concept of "encrypt this once actually
+        // online" (outboxDrain.ts posts body/is_forwarded straight
+        // through, docs/13-OFFLINE-MODE-SCOPING.md's own stub state) — a
+        // pre-existing gap shared with a plain offline send into an
+        // e2ee-active thread, not something this forward-specific pass
+        // takes on. Failing loudly here (same "no connection" pattern the
+        // media guard above already uses) beats silently queuing
+        // something the drain would only reject later.
+        if (!isOnline && target.kind === '1:1' && target.e2eeStatus === 'active') {
+          throw new Error('e2ee_offline_forward_unsupported');
+        }
+
         if (!isOnline) {
           const item: OutboxItem =
             target.kind === '1:1'
@@ -1619,6 +1631,8 @@ export default function ThreadScreen() {
             threadId: target.id,
             body: message.body,
             isForwarded: true,
+            e2eeStatus: target.e2eeStatus,
+            partnerId: target.partnerId,
           });
         } else {
           await sendGroupMessage.mutateAsync({

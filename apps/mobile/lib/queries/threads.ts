@@ -8,6 +8,12 @@ export interface ThreadWithPartner {
   id: string;
   participant_a: string;
   participant_b: string;
+  /** docs/21-E2EE-TECHNICAL-DESIGN.md §6 — `'off'` (default, every existing
+   * thread) is the unchanged plaintext path; `'active'` means every
+   * message here is a Double Ratchet envelope. Added to this list's own
+   * select so ForwardMessageModal can tell which 1:1 targets need
+   * encrypting a forward into, without a second per-thread fetch. */
+  e2ee_status: 'off' | 'active';
   /** Who blocked this thread, if anyone — `null` means not blocked. Only
    * the user this equals can unblock it (see fn_set_thread_blocked's
    * comment in migration 20260914090000_settings_privacy_reports_push.sql
@@ -74,7 +80,9 @@ export function useThreads(currentUserId: string | undefined) {
     queryFn: async (): Promise<ThreadWithPartner[]> => {
       const { data: threads, error } = await supabase
         .from('threads')
-        .select('id, participant_a, participant_b, blocked_by, last_message_at, created_at')
+        .select(
+          'id, participant_a, participant_b, e2ee_status, blocked_by, last_message_at, created_at',
+        )
         .or(`participant_a.eq.${currentUserId},participant_b.eq.${currentUserId}`)
         .order('last_message_at', { ascending: false, nullsFirst: false });
 

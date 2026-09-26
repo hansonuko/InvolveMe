@@ -16,6 +16,15 @@ export interface ForwardTarget {
   id: string;
   name: string;
   avatarUrl: string | null;
+  /** docs/21-E2EE-TECHNICAL-DESIGN.md §6 — only ever set for a `'1:1'`
+   * target (group chat has no e2ee support at all, out of scope
+   * entirely). `useSendMessage` needs this and `partnerId` below to
+   * encrypt a forward instead of sending it as plaintext when the target
+   * thread is e2ee-active. */
+  e2eeStatus?: 'off' | 'active';
+  /** The target thread's other participant — same reasoning as
+   * `e2eeStatus`, only meaningful for a `'1:1'` target. */
+  partnerId?: string;
 }
 
 interface ForwardMessageModalProps {
@@ -61,6 +70,8 @@ export function ForwardMessageModal({
       id: t.id,
       name: resolveContactName(t.partner),
       avatarUrl: t.partner.avatar_url,
+      e2eeStatus: t.e2ee_status,
+      partnerId: t.partner.id,
     }));
     const groupTargets: ForwardTarget[] = (groups ?? []).map((g) => ({
       kind: 'group',

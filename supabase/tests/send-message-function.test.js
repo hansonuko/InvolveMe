@@ -168,6 +168,52 @@ function wordMessage(n) {
   return Array.from({ length: n }, (_, i) => `w${i}`).join(' ');
 }
 
+function randomBase64(byteLength) {
+  return crypto.randomBytes(byteLength).toString('base64');
+}
+
+function fakePrekeyBatch(count, startKeyId = 1) {
+  const batch = [];
+  for (let i = 0; i < count; i++) {
+    batch.push({ key_id: startKeyId + i, public_key: randomBase64(32) });
+  }
+  return batch;
+}
+
+// Same shape as e2ee-send-message-billing.test.js's own registerDevice —
+// kept local rather than shared, matching this project's existing
+// self-contained-per-test-file style (no shared test-helper module).
+async function registerDevice(admin, userId) {
+  const res = await admin.query(
+    `select public.fn_register_e2ee_device($1, $2, $3, $4, $5, $6, $7, $8, $9) as device_id`,
+    [
+      userId,
+      'test device',
+      randomBase64(32),
+      randomBase64(32),
+      1,
+      randomBase64(32),
+      randomBase64(64),
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      JSON.stringify(fakePrekeyBatch(3)),
+    ],
+  );
+  return res.rows[0].device_id;
+}
+
+function makeEnvelope(recipientDeviceId, ciphertextByteLength) {
+  return {
+    recipient_device_id: recipientDeviceId,
+    ciphertext: randomBase64(ciphertextByteLength),
+    ratchet_public_key: randomBase64(32),
+    previous_chain_length: 0,
+    message_number: 0,
+    x3dh_sender_identity_key: null,
+    x3dh_sender_ephemeral_key: null,
+    x3dh_one_time_prekey_id: null,
+  };
+}
+
 async function callSendMessage(token, body) {
   const res = await fetch(`${FUNCTION_URL}/`, {
     method: 'POST',
@@ -669,6 +715,90 @@ async function testReplyAndForward(admin) {
   await deleteTestUser(admin, C);
 }
 
+// Forwarding into an e2ee-active thread (docs/00-SESSION-HANDOFF.md
+// session 35 "Next session" list, item 4 — apps/mobile/app/thread/[id].tsx's
+// handleConfirmForward now encrypts via encryptForThread and sends
+// envelopes + is_forwarded together). fn_send_message's envelope path was
+// already verified directly against the DB
+// (e2ee-send-message-billing.test.js), but never through this Edge
+// Function's actual HTTP request with is_forwarded set — this proves the
+// two features actually compose, not just each in isolation.
+async function testForwardIntoE2eeThread(admin) {
+  const A = await createTestUser();
+  const D = await createTestUser();
+  const tokenA = mintAccessToken(A);
+
+  const aWallet = await walletRow(admin, A, 'topup_credit');
+  await admin.query(
+    `insert into public.ledger_entries (wallet_id, amount, reason) values ($1, 20, 'manual_adjustment')`,
+    [aWallet.id],
+  );
+
+  const {
+    rows: [thread],
+  } = await admin.query('select public.fn_start_thread($1, $2) as id', [A, D]);
+  const threadId = thread.id;
+  const deviceD = await registerDevice(admin, D);
+  await registerDevice(admin, A);
+  await admin.query('select public.fn_enable_e2ee($1, $2)', [threadId, A]);
+
+  const plaintextForward = await callSendMessage(tokenA, {
+    thread_id: threadId,
+    body: 'a plaintext forward into an encrypted thread',
+    is_forwarded: true,
+  });
+  log(
+    'a plaintext-body forward into an e2ee-active thread is still rejected',
+    plaintextForward.status === 400 && plaintextForward.json?.error === 'invalid_request',
+    JSON.stringify(plaintextForward.json),
+  );
+
+  const forwarded = await callSendMessage(tokenA, {
+    thread_id: threadId,
+    is_forwarded: true,
+    envelopes: [makeEnvelope(deviceD, 64)],
+  });
+  log(
+    'an encrypted forward into an e2ee-active thread succeeds',
+    forwarded.status === 200,
+    JSON.stringify(forwarded.json),
+  );
+
+  const forwardedRow = (
+    await admin.query('select is_forwarded, body from public.messages where id = $1', [
+      forwarded.json.message_id,
+    ])
+  ).rows[0];
+  log(
+    'is_forwarded is stored and body stays null, same as any other e2ee message',
+    forwardedRow.is_forwarded === true && forwardedRow.body === null,
+    JSON.stringify(forwardedRow),
+  );
+
+  const envelopeRow = (
+    await admin.query(
+      'select recipient_device_id from public.e2ee_message_envelopes where message_id = $1',
+      [forwarded.json.message_id],
+    )
+  ).rows[0];
+  log(
+    "the envelope is stored, addressed to the recipient's device",
+    envelopeRow?.recipient_device_id === deviceD,
+    JSON.stringify(envelopeRow),
+  );
+
+  // e2ee_message_envelopes.message_id is RESTRICT, not CASCADE
+  // (20260926161500_e2ee_cascade_deletes.sql) — must go before
+  // deleteTestThread's `delete from messages` or that FK blocks it.
+  await admin.query(
+    'delete from public.e2ee_message_envelopes where message_id in (select id from public.messages where thread_id = $1)',
+    [threadId],
+  );
+  await deleteTestThread(admin, threadId);
+  await deleteTestUser(admin, A);
+  await deleteTestUser(admin, D);
+}
+
 async function main() {
   const admin = new Client({ connectionString: DB_URL, ssl: { rejectUnauthorized: false } });
   admin.on('error', (e) => process.stderr.write(`[connection error, non-fatal] ${e.message}\n`));
@@ -696,6 +826,7 @@ async function main() {
     await testErrorMapping(admin);
     await testClientMessageIdempotency(admin);
     await testReplyAndForward(admin);
+    await testForwardIntoE2eeThread(admin);
   } finally {
     deno.kill();
     await admin.end();
