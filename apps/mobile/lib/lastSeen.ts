@@ -12,7 +12,7 @@ export const ONLINE_THRESHOLD_MS = 45_000;
 
 async function pingLastSeen(userId: string) {
   // Best-effort — same "never block or surface a failure for this" posture
-  // resyncPushTokenIfPermitted/registerDeviceFingerprint already use for
+  // syncPushTokenOnLaunch/registerDeviceFingerprint already use for
   // silent, automatic, no-user-visible-effect background writes.
   try {
     await supabase

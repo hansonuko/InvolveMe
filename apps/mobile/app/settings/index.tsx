@@ -73,7 +73,11 @@ export default function SettingsScreen() {
   const { data: profile } = useProfile(userId);
 
   const handleSignOut = async () => {
-    await unregisterPushToken();
+    // Not an opt-out — the next person to sign into this device should
+    // still get the normal launch-time prompt/resync, not silently
+    // inherit this account's "notifications off" choice (see
+    // unregisterPushToken's own header comment).
+    await unregisterPushToken(false);
     await supabase.auth.signOut();
     router.replace('/(auth)');
   };

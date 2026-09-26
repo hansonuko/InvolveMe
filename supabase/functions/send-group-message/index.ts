@@ -14,6 +14,7 @@
 import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
+import { runInBackground, sendPushToUser } from '../_shared/push.ts';
 import { parseBody, requiredString } from '../_shared/validate.ts';
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
 
@@ -172,6 +173,49 @@ Deno.serve(async (req) => {
       categories: flaggedCategories,
     });
   }
+
+  // Push notification — WhatsApp-parity fanout to every OTHER member of
+  // the group (a 1:1 send already does this; group sends never did).
+  // Best-effort/never blocks this billing-irrelevant response, same
+  // fire-and-forget posture send-message's own push call already uses.
+  runInBackground(async () => {
+    const { data: group } = await db
+      .from('group_threads')
+      .select('name')
+      .eq('id', payload.group_thread_id)
+      .maybeSingle();
+    if (!group) return;
+
+    const { data: members } = await db
+      .from('group_members')
+      .select('user_id')
+      .eq('group_thread_id', payload.group_thread_id)
+      .neq('user_id', user.id);
+    if (!members?.length) return;
+
+    const { data: sender } = await db
+      .from('users')
+      .select('display_name')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    // WhatsApp's own group-notification convention: the group name as the
+    // title, "Sender: message" as the body — distinguishes a group message
+    // from a 1:1 one at a glance in the notification tray. Same 120-char/
+    // 117-slice truncation send-message's own pushBody already uses.
+    const senderName = sender?.display_name ?? 'Someone';
+    const truncatedBody =
+      payload.body.length > 120 ? `${payload.body.slice(0, 117)}...` : payload.body;
+
+    await Promise.all(
+      members.map((m) =>
+        sendPushToUser(db, m.user_id, group.name, `${senderName}: ${truncatedBody}`, {
+          type: 'new_group_message',
+          group_thread_id: payload.group_thread_id,
+        }),
+      ),
+    );
+  });
 
   return json(200, {
     message_id: data.message_id,

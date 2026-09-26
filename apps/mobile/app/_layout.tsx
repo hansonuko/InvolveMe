@@ -2,7 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import * as Notifications from 'expo-notifications';
+import { type Href, Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -19,7 +20,11 @@ import { useLastSeenHeartbeat } from '@/lib/lastSeen';
 import { useOnboardingStatusStore } from '@/lib/onboardingStore';
 import { useOutboxDrain } from '@/lib/outboxDrain';
 import { checkForOtaUpdateOnLaunch } from '@/lib/otaUpdates';
-import { resyncPushTokenIfPermitted } from '@/lib/push';
+import {
+  type PushNotificationData,
+  resolvePushNotificationRoute,
+  syncPushTokenOnLaunch,
+} from '@/lib/push';
 import { useTwoStepGateStore } from '@/lib/twoStepGateStore';
 import { ThemeProvider } from '@/theme';
 
@@ -174,14 +179,62 @@ export default function RootLayout() {
     }
   }, [session?.user.id, checkTwoStepPinStatus, resetTwoStepGate]);
 
-  // Silent re-sync only (never prompts) — see lib/push.ts's header
-  // comment. The only place that ever requests notification permission
-  // is the explicit toggle in settings/index.tsx.
+  // Runs on every launch/session-restore — prompts for notification
+  // permission automatically the first time (WhatsApp's own behavior,
+  // not "buried in Settings until someone finds it"), silently re-syncs
+  // an already-granted token otherwise, and never touches anything if
+  // this device explicitly opted out. See lib/push.ts's own header
+  // comment on syncPushTokenOnLaunch for the full reasoning.
   useEffect(() => {
     if (session?.user.id) {
-      void resyncPushTokenIfPermitted(session.user.id);
+      void syncPushTokenOnLaunch(session.user.id);
     }
   }, [session?.user.id]);
+
+  // Tapping a push notification should open the conversation/screen it's
+  // about, the same way WhatsApp's own notifications do — not just bring
+  // the app to the foreground with no idea what was tapped. Two cases:
+  // the listener below fires while JS is already running (foreground or
+  // backgrounded-but-alive); getLastNotificationResponseAsync covers a
+  // cold start where the tap is what launched the process in the first
+  // place, which the listener alone would never see.
+  const router = useRouter();
+  useEffect(() => {
+    const handleResponse = (response: Notifications.NotificationResponse) => {
+      const route = resolvePushNotificationRoute(
+        response.notification.request.content.data as PushNotificationData,
+      );
+      if (route) router.push(route as Href);
+    };
+
+    // Both calls below are real native modules with no web implementation
+    // — expo-notifications throws an UnavailabilityError SYNCHRONOUSLY
+    // rather than rejecting a promise (confirmed live: an unguarded call
+    // here crashed the whole app on `expo start --web`, an unhandled
+    // throw inside a passive effect). Same "never let an automatic,
+    // silent-startup native call go unguarded" posture registerPushToken's
+    // own header comment already documents, applied here too.
+    let subscription: { remove: () => void } | undefined;
+    try {
+      subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
+    } catch (e) {
+      console.error('notification response listener unavailable:', e);
+    }
+
+    try {
+      // Cold start: the app was launched BY tapping a notification — the
+      // listener above only fires for taps while JS is already running.
+      void Notifications.getLastNotificationResponseAsync()
+        .then((response) => {
+          if (response) handleResponse(response);
+        })
+        .catch((e) => console.error('getLastNotificationResponseAsync failed:', e));
+    } catch (e) {
+      console.error('getLastNotificationResponseAsync unavailable:', e);
+    }
+
+    return () => subscription?.remove();
+  }, [router]);
 
   // Fraud-infra device link (docs/06-SECURITY-FRAUD-LOOPHOLES.md §2) — no
   // permission prompt, no user-visible effect either way. Same automatic,
