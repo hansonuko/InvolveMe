@@ -1,10 +1,20 @@
 // Real end-to-end encryption, step 5 (docs/21-E2EE-TECHNICAL-DESIGN.md §5)
 //
 // Persists one Double Ratchet session (doubleRatchet.ts's RatchetState)
-// per peer device, keyed by that device's id, in expo-secure-store. This
-// state is exactly as sensitive as the identity key (docs/21 §5's own
-// framing) — it never leaves the device, never reaches the server in any
-// form.
+// per (thread, peer device) pair, in expo-secure-store. This state is
+// exactly as sensitive as the identity key (docs/21 §5's own framing) —
+// it never leaves the device, never reaches the server in any form.
+//
+// Keyed by (threadId, peerDeviceId), not peerDeviceId alone (step 6 fix,
+// docs/21 §7's adversarial review) — threads.threads_participants_unique
+// only constrains the exact (participant_a, participant_b) ordering, not
+// the reverse pair, so two separate threads between the same two people
+// are reachable (e.g. both sides independently starting a conversation
+// before either's client has seen the other's already-created thread).
+// Two threads sharing one ratchet session would interleave their chain
+// positions, corrupting both — this is not contingent on whether that
+// specific race is common; a session keyed to one specific conversation
+// is the correct scope regardless, and costs nothing extra to get right.
 //
 // skippedMessageKeys is capped at MAX_PERSISTED_SKIPPED entries on write,
 // independent of doubleRatchet.ts's own MAX_SKIP (a protocol-level
@@ -24,7 +34,8 @@ import type { RatchetState } from './doubleRatchet';
 
 const MAX_PERSISTED_SKIPPED = 25;
 
-const sessionStorageKey = (peerDeviceId: string) => `e2ee_session_${peerDeviceId}`;
+const sessionStorageKey = (threadId: string, peerDeviceId: string) =>
+  `e2ee_session_${threadId}_${peerDeviceId}`;
 
 interface SerializedRatchetState {
   dhSelfPub: string;
@@ -74,15 +85,22 @@ function deserialize(raw: string): RatchetState {
   };
 }
 
-export async function loadSession(peerDeviceId: string): Promise<RatchetState | null> {
-  const raw = await SecureStore.getItemAsync(sessionStorageKey(peerDeviceId));
+export async function loadSession(
+  threadId: string,
+  peerDeviceId: string,
+): Promise<RatchetState | null> {
+  const raw = await SecureStore.getItemAsync(sessionStorageKey(threadId, peerDeviceId));
   return raw ? deserialize(raw) : null;
 }
 
-export async function saveSession(peerDeviceId: string, state: RatchetState): Promise<void> {
-  await SecureStore.setItemAsync(sessionStorageKey(peerDeviceId), serialize(state));
+export async function saveSession(
+  threadId: string,
+  peerDeviceId: string,
+  state: RatchetState,
+): Promise<void> {
+  await SecureStore.setItemAsync(sessionStorageKey(threadId, peerDeviceId), serialize(state));
 }
 
-export async function deleteSession(peerDeviceId: string): Promise<void> {
-  await SecureStore.deleteItemAsync(sessionStorageKey(peerDeviceId));
+export async function deleteSession(threadId: string, peerDeviceId: string): Promise<void> {
+  await SecureStore.deleteItemAsync(sessionStorageKey(threadId, peerDeviceId));
 }
