@@ -29,7 +29,16 @@ Living doc. Read this first in any new session before touching the repo — it's
 - Group chat is out of scope entirely, same boundary every other structural change this project has drawn.
 - **The one call that's explicitly yours to make, not a build step**: `docs/21` §7's own standing recommendation is that this adversarial self-review pass is necessary but not sufficient — a genuinely independent (non-AI, or at least fresh-eyes) review before this touches real user data is still the right bar for something this consequential.
 
-**Next session:** no fixed next step handed off — whichever of the residual gaps above (if any) you want closed next, whether to pursue the independent-review question, or something unrelated. If picking up the E2EE work cold, start by re-reading `docs/21` §5/§7 in full rather than trusting this summary's compression of it.
+**Next session: explicit instruction to start here, closing this session out.** Work through the residual gaps above, in this order (roughly risk/value order, not a hard requirement):
+
+1. `delete-message-for-everyone` doesn't scrub the `e2ee_message_envelopes` ciphertext row — the real privacy gap of the list, fix first.
+2. Safety-number change-detection alert — the higher-value half of that feature is currently missing.
+3. Wire editing into the client for E2EE-active messages (server-side path already shipped, step 4).
+4. Wire forwarding into an E2EE-active thread (currently a clean server-side rejection, not a working feature).
+5. On-device verification of the native HKDF path (react-native-libsodium) against the RFC 5869 vectors — needs real hardware, can't be done from this Node-only environment; note this explicitly if it's still unavailable when picked up.
+6. The independent (non-AI) review question — still the user's call, not a build step; ask again if it hasn't been decided by the time this list is picked up.
+
+If picking up the E2EE work cold, start by re-reading `docs/21` §5/§7 in full rather than trusting this summary's compression of it. Two pre-existing, unrelated bugs are also on record and not fixed: `fn_start_thread`'s asymmetric `threads_participants_unique` check (two threads can exist between the same two people), and two unexplained `fraud-functions.test.js` failures (memory `fraud-functions-test-pricing-config-leak`) — pick either up only if directly asked to, not as part of the E2EE list above.
 
 ## Where we stopped (end of session 34 — voice-notes backend, a real safe-area bug fix, chat/status refinement batch Tier A+B+C1 shipped, a full security-hardening pass shipped, 2026-09-26) — start here next session
 
