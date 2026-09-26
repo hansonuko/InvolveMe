@@ -4,7 +4,7 @@ Follows `docs/20-E2EE-SCOPING.md`'s decisions: no pre-send moderation on E2EE th
 
 **Scope: 1:1 threads only**, same boundary every other structural change this session drew — group chat (`group_threads`/`group_messages`) is a separate, still-kill-switched billing model (`docs/18` §C1's own note) and out of scope here too.
 
-**Status: design only, nothing built.** This is the last checkpoint before implementation code starts.
+**Status: Steps 1–3 shipped** (schema migration, prekey Edge Functions, and the X3DH/Double Ratchet crypto core — see §8's build order). Step 4 (server-side `fn_send_message` wiring + byte-length billing) is next.
 
 ## 1. Cryptographic design
 
@@ -185,6 +185,10 @@ A thread starts `'off'` (every existing thread, forever, unless explicitly upgra
 - **Tampered-ciphertext rejection**: AEAD authentication must reject a modified envelope outright, never partially decrypt.
 - **Billing**: the same ledger-conservation + concurrency test discipline CLAUDE.md already requires for every balance-mutating function, applied to the new byte-length path in `fn_send_message`.
 - **A dedicated adversarial self-review pass** — a fork tasked specifically with trying to break the `doubleRatchet.ts`/`x3dh.ts` implementation (nonce reuse, key/role confusion, replay, downgrade attacks) before this is considered done, separate from normal functional testing. Per the standing recommendation in `docs/20`: this is necessary but not sufficient — a genuinely independent (non-AI, or at least a fresh, unbiased) review before this touches real user data is still the right bar for something this consequential, and that call is yours to make once there's real code to point someone at.
+
+**Step 3 status (shipped):** `apps/mobile/lib/e2ee/` now has `sodiumProvider.ts` (the interface), `hmacSha256Rfc2104.ts` + `hkdfRfc5869.ts` (hand-rolled, RFC-4231/RFC-5869-vector-verified — see `supabase/tests/e2ee-hkdf-rfc5869.test.ts`), `x3dh.ts` + `doubleRatchet.ts` (implemented from the public specs, `supabase/tests/e2ee-crypto-core.test.ts`'s 21 assertions cover every case listed above), and two adapters: `sodiumProviderTestAdapter.ts` (libsodium-wrappers-**sumo** — the plain "libsodium-wrappers" package's actual runtime is missing box/sign/scalarmult/AEAD/hmac entirely despite its own `.d.ts` claiming otherwise, verified live) and `sodiumProviderNative.ts` (`react-native-libsodium`, production).
+
+**One residual gap, recorded honestly rather than papered over:** `sodiumProviderNative.ts`'s HKDF calls (`_unstable_crypto_kdf_hkdf_sha256_extract/expand`, react-native-libsodium's real native binding) have **not** been verified against the RFC 5869 test vectors — doing that requires the actual on-device/RN runtime, which this Node-only session can't reach. Only the Node test adapter's hand-rolled HKDF path is vector-verified so far. Before this reaches real users, run a one-off on-device check comparing the native adapter's `hkdfExtract`/`hkdfExpand` output against the same RFC 5869 vectors already in `e2ee-hkdf-rfc5869.test.ts` — folding this into Step 6's adversarial review pass is the natural place for it.
 
 ## 8. Build order
 
