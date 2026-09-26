@@ -69,7 +69,8 @@
             "buildArchs": ["arm64-v8a"]
           }
         }
-      ]
+      ],
+      "./plugins/withCertPinning.js"
     ],
     "experiments": {
       "typedRoutes": true,
