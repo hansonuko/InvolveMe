@@ -196,7 +196,13 @@ async function testReserveSkimOnEscrowRelease(admin) {
     B,
     'I am doing well thanks',
   ]);
-  await admin.query('select public.fn_release_escrow($1)', [threadId]);
+  // fn_release_escrow now takes the sender explicitly (docs/18 §C1's
+  // fn_release_escrow correction — it's payee-agnostic since threads can
+  // have a mutable payer role) — B is the payee here, and B's own send
+  // above already triggered this release; this call is now a deliberate,
+  // harmless no-op that exercises the direct-call path this suite has
+  // always used, not a second real release.
+  await admin.query('select public.fn_release_escrow($1, $2)', [threadId, B]);
 
   const revenueAfter = await platformWalletRow(admin, 'platform_revenue_earnings_cut');
   const reserveAfter = await platformWalletRow(admin, 'platform_reserve_earnings_cut');
@@ -299,7 +305,13 @@ async function testChargebackCreatesDebtAndFreezes(admin) {
     B,
     'I am doing well thanks',
   ]);
-  await admin.query('select public.fn_release_escrow($1)', [threadId]);
+  // fn_release_escrow now takes the sender explicitly (docs/18 §C1's
+  // fn_release_escrow correction — it's payee-agnostic since threads can
+  // have a mutable payer role) — B is the payee here, and B's own send
+  // above already triggered this release; this call is now a deliberate,
+  // harmless no-op that exercises the direct-call path this suite has
+  // always used, not a second real release.
+  await admin.query('select public.fn_release_escrow($1, $2)', [threadId, B]);
 
   const bCashBefore = await walletRow(admin, B, 'withdrawable_cash');
   const bEarningsBefore = await walletRow(admin, B, 'earnings_pending');
