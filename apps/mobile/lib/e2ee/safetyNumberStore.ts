@@ -33,3 +33,31 @@ export async function setKnownIdentityKey(
 ): Promise<void> {
   await AsyncStorage.setItem(storageKey(partnerId), identityKeyHex);
 }
+
+// "Messages here are end-to-end encrypted" in-chat system notice (session
+// 37) — WhatsApp shows this once at the top of a conversation, then again
+// after a long stretch of silence, rather than as a permanently-fixed
+// header banner. Keyed per THREAD (not per partner like the identity key
+// above) since the notice is about a specific conversation's own history,
+// not the partner relationship in the abstract.
+
+const NOTICE_KEY_PREFIX = 'e2ee_notice_last_shown_at_';
+const noticeStorageKey = (threadId: string) => `${NOTICE_KEY_PREFIX}${threadId}`;
+const NOTICE_RESHOW_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // ~1 month
+
+/** Whether the in-chat "protected" system notice should show right now for
+ * this thread — true the first time this thread is ever opened as
+ * e2ee-active, and again once ~30 days have passed since it last showed
+ * (a long-quiet conversation resurfacing the reminder, same as WhatsApp). */
+export async function shouldShowE2eeNotice(threadId: string): Promise<boolean> {
+  const lastShownRaw = await AsyncStorage.getItem(noticeStorageKey(threadId));
+  if (!lastShownRaw) return true;
+  const lastShownAt = Number(lastShownRaw);
+  if (!Number.isFinite(lastShownAt)) return true;
+  return Date.now() - lastShownAt >= NOTICE_RESHOW_AFTER_MS;
+}
+
+/** Marks the notice as shown now — resets the ~30-day reshow clock. */
+export async function markE2eeNoticeShown(threadId: string): Promise<void> {
+  await AsyncStorage.setItem(noticeStorageKey(threadId), String(Date.now()));
+}
