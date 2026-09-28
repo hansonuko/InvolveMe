@@ -247,7 +247,10 @@ Deno.serve(async (req) => {
     }
   } else if (event === 'transfer.completed' && payload.data?.reference) {
     const reference = payload.data.reference;
-    const { error } = await db.rpc('fn_fail_withdrawal', { p_withdrawal_id: reference });
+    const { error } = await db.rpc('fn_fail_withdrawal', {
+      p_withdrawal_id: reference,
+      p_failure_reason: `Flutterwave transfer.completed webhook, status=${payload.data?.status ?? 'unknown'}`,
+    });
     if (error && error.message.includes('withdrawal_not_found')) {
       const { error: platformError } = await db.rpc('fn_admin_fail_platform_withdrawal', {
         p_platform_withdrawal_id: reference,

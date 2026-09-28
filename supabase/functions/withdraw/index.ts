@@ -9,11 +9,15 @@
 // docs/00-SESSION-HANDOFF.md's Phase 1 notes on why fn_fail_withdrawal
 // exists — make sure this path is actually exercised, not just written).
 //
-// initiatePayout is currently a stub (see packages/payments/flutterwave.ts)
-// pending a Flutterwave API-generation decision — every real call today
-// exercises the provider-failure/fn_fail_withdrawal path for real, which is
-// the safety-critical half of this function regardless of which API
-// eventually backs it.
+// initiatePayout is a real call against Flutterwave's /transfers v4 API
+// (packages/payments/flutterwave.ts) — the header comment here used to call
+// it "currently a stub," which was stale and, per docs/00-SESSION-HANDOFF.md,
+// no real payout has ever actually succeeded through it yet, only failed. On
+// a provider failure, the caught error's message (which carries Flutterwave's
+// own raw rejection reason — see PaymentProviderError) is now stored on
+// `withdrawals.failure_reason` via fn_fail_withdrawal, not just
+// console.error'd, specifically so the next failure is diagnosable without
+// needing Edge Function log access this project has repeatedly not had.
 
 import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
@@ -149,19 +153,53 @@ Deno.serve(async (req) => {
       reference: withdrawal.withdrawal_id,
     });
   } catch (e) {
-    console.error('withdraw: provider.initiatePayout failed:', e);
+    const providerErrorMessage = e instanceof Error ? e.message : String(e);
+    console.error('withdraw: provider.initiatePayout failed:', providerErrorMessage);
 
     const { error: failError } = await db.rpc('fn_fail_withdrawal', {
       p_withdrawal_id: withdrawal.withdrawal_id,
+      // Stored on the withdrawal row (not just logged) so the actual
+      // provider rejection reason is queryable later — this project has
+      // repeatedly not had a working path to read Edge Function logs back.
+      // Truncated: PaymentProviderError's own message already caps the
+      // provider's raw response body at 500 chars; this is a further,
+      // generous ceiling against anything else that might throw here.
+      p_failure_reason: providerErrorMessage.slice(0, 1000),
     });
+
     if (failError) {
-      // The debit is now stranded — this is the one case worth escalating
-      // loudly rather than just logging, since no automatic recovery path
-      // exists yet (no on-call paging, same documented gap as Phase 1
-      // item 5's reconciliation job).
+      // The compensating reversal itself failed — the debit may genuinely
+      // be stranded (no automatic recovery path exists yet, same
+      // documented gap as Phase 1 item 5's reconciliation job). Telling
+      // the user "your balance has not been debited" here would be a
+      // false claim this code cannot actually guarantee, so this path
+      // gets its own honest message instead of repeating that one.
+      // fn_fail_withdrawal already failed, so this marks the row directly
+      // rather than routing back through the RPC that just failed.
       console.error(
         'withdraw: fn_fail_withdrawal ALSO failed after a provider error — debit may be stranded:',
         failError.message,
+      );
+
+      const { error: holdError } = await db
+        .from('withdrawals')
+        .update({
+          status: 'held_for_review',
+          failure_reason: `provider_error=${providerErrorMessage.slice(0, 400)}; reversal_error=${failError.message.slice(0, 400)}`,
+        })
+        .eq('id', withdrawal.withdrawal_id);
+      if (holdError) {
+        console.error(
+          'withdraw: could not even mark the withdrawal held_for_review:',
+          holdError.message,
+        );
+      }
+
+      return errorResponse(
+        500,
+        'withdrawal_needs_review',
+        "Something went wrong processing your withdrawal and it needs manual review — we can't yet confirm whether your balance was debited. Contact support with this reference: " +
+          withdrawal.withdrawal_id,
       );
     }
 

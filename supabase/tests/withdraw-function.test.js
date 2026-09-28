@@ -222,12 +222,17 @@ async function testProviderFailureReversesDebit(admin) {
   );
 
   const w = await admin.query(
-    'select status from public.withdrawals where user_id = $1 order by created_at desc limit 1',
+    'select status, failure_reason from public.withdrawals where user_id = $1 order by created_at desc limit 1',
     [A],
   );
   log(
     "the withdrawal row itself is marked 'failed', not left dangling in 'processing'",
     w.rows[0]?.status === 'failed',
+    JSON.stringify(w.rows[0]),
+  );
+  log(
+    "the real provider rejection reason is captured on the row, not just console.error'd (session 37 — this project has repeatedly had no working path to read Edge Function logs back)",
+    typeof w.rows[0]?.failure_reason === 'string' && w.rows[0].failure_reason.length > 0,
     JSON.stringify(w.rows[0]),
   );
 
