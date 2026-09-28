@@ -38,6 +38,8 @@
     "test:chargeback": "node --env-file=.env supabase/tests/chargeback-functions.test.js",
     "test:chargeback:ci": "node supabase/tests/chargeback-functions.test.js",
     "test:thread-payer": "node --env-file=.env supabase/tests/thread-payer-functions.test.js",
+    "test:thread-dedup": "node --env-file=.env supabase/tests/thread-creation-dedup.test.js",
+    "test:thread-dedup:ci": "node supabase/tests/thread-creation-dedup.test.js",
     "test:thread-payer:ci": "node supabase/tests/thread-payer-functions.test.js",
     "test:e2ee-schema": "node --env-file=.env supabase/tests/e2ee-schema-functions.test.js",
     "test:e2ee-schema:ci": "node supabase/tests/e2ee-schema-functions.test.js",
