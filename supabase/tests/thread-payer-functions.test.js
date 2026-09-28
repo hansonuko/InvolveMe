@@ -10,8 +10,10 @@
 //
 //   1. fn_set_thread_payer's policy: self-only appointment, only the
 //      current payer may step down, taking over the role (from an active
-//      payer OR from null) is gated on 24h of thread inactivity, stepping
-//      down itself is never gated, and every change is logged to
+//      payer OR from null) is instant and ungated — same as stepping down
+//      always was (20260927120000_payer_takeover_instant_flip_burst_signal.sql
+//      removed the 24h idle gate this used to have; a willing payer must
+//      never be made to wait) — and every change is logged to
 //      thread_payer_history with the correct old/new values.
 //
 //   2. The actual bug this build's second review pass found and fixed:
@@ -108,6 +110,26 @@ async function backdateLastMessage(admin, threadId, hoursAgo) {
   );
 }
 
+// For the payer_flip_then_burst signal test below — that signal judges
+// "was the thread idle before the flip" off the actual `messages.created_at`
+// of the last message before the flip, not `threads.last_message_at`
+// (which the flip itself doesn't touch), so it needs its own backdate helper.
+async function backdateMessage(admin, messageId, hoursAgo) {
+  await admin.query(
+    `update public.messages set created_at = now() - make_interval(hours => $2) where id = $1`,
+    [messageId, hoursAgo],
+  );
+}
+
+async function fraudSignalsFor(admin, userId, signalType) {
+  const r = await admin.query(
+    `select user_id, related_user_id, metadata from public.fraud_signals
+     where user_id = $1 and signal_type = $2`,
+    [userId, signalType],
+  );
+  return r.rows;
+}
+
 async function sendMessage(admin, threadId, senderId, body) {
   const r = await admin.query('select * from public.fn_send_message($1, $2, $3)', [
     threadId,
@@ -186,35 +208,37 @@ async function testSetThreadPayerPolicy(admin) {
     }
     log('only the current payer (A) can step down — B cannot step A down', rejected);
 
-    rejected = false;
-    try {
-      await setThreadPayer(admin, threadId, B, B);
-    } catch (e) {
-      rejected = e.message.includes('thread_not_idle_long_enough');
-    }
-    log('B taking over from A is rejected while the thread is not yet idle 24h', rejected);
-
-    // A stepping down is instant and ungated, even though the thread is
-    // just as "not idle" as the rejected takeover attempt above.
-    await setThreadPayer(admin, threadId, A, null);
+    // The thread is fresh (last_message_at just set to "now" above) — a
+    // takeover here is exactly the case the old idle gate used to reject.
+    // It must succeed instantly regardless: a willing payer is never made
+    // to wait (20260927120000_payer_takeover_instant_flip_burst_signal.sql).
+    await setThreadPayer(admin, threadId, B, B);
     let after = await threadRow(admin, threadId);
-    log('A stepping down succeeds immediately, ungated by the idle check', after.payer_id === null);
+    log('B can take over from A INSTANTLY even on a fresh, non-idle thread', after.payer_id === B);
 
-    rejected = false;
+    // A (no longer the payer) cannot step down — only the current payer can.
+    let rejectedStepdown = false;
     try {
-      await setThreadPayer(admin, threadId, B, B);
+      await setThreadPayer(admin, threadId, A, null);
     } catch (e) {
-      rejected = e.message.includes('thread_not_idle_long_enough');
+      rejectedStepdown = e.message.includes('not_current_payer');
     }
-    log(
-      'claiming out of a null payer_id is ALSO idle-gated (closes the step-down-then-reclaim bypass)',
-      rejected,
-    );
+    log('A can no longer step down now that B is the payer', rejectedStepdown);
 
-    await backdateLastMessage(admin, threadId, 25);
+    // B steps down — instant, as always.
+    await setThreadPayer(admin, threadId, B, null);
+    after = await threadRow(admin, threadId);
+    log('B stepping down succeeds immediately', after.payer_id === null);
+
+    // Claiming out of a null payer_id, on a still-fresh thread, is ALSO
+    // instant — the old gate deliberately did not exempt this path either,
+    // and removing the gate must remove it from both paths equally.
     await setThreadPayer(admin, threadId, B, B);
     after = await threadRow(admin, threadId);
-    log('B can claim once the thread has genuinely been idle 24h+', after.payer_id === B);
+    log(
+      'claiming out of a null payer_id is ALSO instant on a non-idle thread (no step-down-then-reclaim penalty)',
+      after.payer_id === B,
+    );
 
     // No-op: B is already the payer.
     const historyBefore = await payerHistory(admin, threadId);
@@ -227,12 +251,14 @@ async function testSetThreadPayerPolicy(admin) {
 
     const history = await payerHistory(admin, threadId);
     log(
-      'thread_payer_history recorded exactly the two real transitions (A->null, null->B)',
-      history.length === 2 &&
+      'thread_payer_history recorded exactly the three real transitions (A->B, B->null, null->B)',
+      history.length === 3 &&
         history[0].old_payer_id === A &&
-        history[0].new_payer_id === null &&
-        history[1].old_payer_id === null &&
-        history[1].new_payer_id === B,
+        history[0].new_payer_id === B &&
+        history[1].old_payer_id === B &&
+        history[1].new_payer_id === null &&
+        history[2].old_payer_id === null &&
+        history[2].new_payer_id === B,
       JSON.stringify(history),
     );
   } finally {
@@ -316,8 +342,9 @@ async function testPayerFlipRoutesReleasesToCorrectPayee(admin) {
       JSON.stringify(escrow1),
     );
 
-    // 2) The thread goes idle 25h, then B takes over paying.
-    await backdateLastMessage(admin, threadId, 25);
+    // 2) B takes over paying — instant, no idle requirement (this test
+    // isn't about the takeover gate, so it doesn't matter either way; not
+    // backdated, unlike before this feature's idle gate was removed).
     await setThreadPayer(admin, threadId, B, B);
     log(
       'B successfully takes over the payer role',
@@ -448,9 +475,8 @@ async function testPayerFlipRoutesReleasesToCorrectPayee(admin) {
 }
 
 // ===========================================================================
-// Test 4: concurrency — two simultaneous "B claims payer" calls, issued
-// against the same already-idle thread, must not both succeed as real
-// transitions. fn_set_thread_payer's `for update` lock on the thread row
+// Test 4: concurrency — two simultaneous "B claims payer" calls must not
+// both succeed as real transitions. fn_set_thread_payer's `for update` lock on the thread row
 // serializes them; the loser should see itself as already-the-payer (a
 // no-op) rather than racing a second real change through.
 // ===========================================================================
@@ -464,7 +490,6 @@ async function testConcurrentClaimCannotDoubleLog(admin) {
 
   try {
     await sendMessage(admin, threadId, A, 'hello');
-    await backdateLastMessage(admin, threadId, 25);
 
     const client1 = newClient();
     const client2 = newClient();
@@ -501,6 +526,94 @@ async function testConcurrentClaimCannotDoubleLog(admin) {
   }
 }
 
+// ===========================================================================
+// Test 5: payer_flip_then_burst fraud signal (docs/18 §C1's own scoped-but-
+// never-built follow-up, now built as part of removing the blocking idle
+// gate on takeover — 20260927120000_payer_takeover_instant_flip_burst_
+// signal.sql). Proves the signal actually fires on the pattern it's meant
+// to catch (an idle-boundary flip immediately followed by a paid-message
+// burst from the new payer), and does NOT fire on a flip with no burst
+// after it — same "prove it, don't assume it generalizes" rigor docs/18
+// §C1 itself calls for.
+// ===========================================================================
+
+async function testPayerFlipThenBurstSignal(admin) {
+  const A = await createTestUser(admin);
+  const B = await createTestUser(admin);
+  const threadRes = await admin.query('select public.fn_start_thread($1, $2) as id', [A, B]);
+  const threadId = threadRes.rows[0].id;
+  await fundTopupCredit(admin, A, 50);
+  await fundTopupCredit(admin, B, 50);
+
+  const C = await createTestUser(admin); // second, unrelated pair — the negative control
+  const D = await createTestUser(admin);
+  const controlThreadRes = await admin.query('select public.fn_start_thread($1, $2) as id', [C, D]);
+  const controlThreadId = controlThreadRes.rows[0].id;
+  await fundTopupCredit(admin, C, 50);
+  await fundTopupCredit(admin, D, 50);
+
+  try {
+    // Positive case: A's message goes stale (30h — past the 24h idle
+    // threshold), B takes over, then B sends a burst of 5 paid messages
+    // within the 1h window.
+    const msg1 = await sendMessage(admin, threadId, A, 'hello');
+    await backdateMessage(admin, msg1.message_id, 30);
+    await setThreadPayer(admin, threadId, B, B);
+    for (let i = 0; i < 5; i++) {
+      await sendMessage(admin, threadId, B, `burst message ${i}`);
+    }
+
+    // Negative control: same idle-boundary flip, but NO burst afterward —
+    // must not fire.
+    const controlMsg1 = await sendMessage(admin, controlThreadId, C, 'hello');
+    await backdateMessage(admin, controlMsg1.message_id, 30);
+    await setThreadPayer(admin, controlThreadId, D, D);
+    await sendMessage(admin, controlThreadId, D, 'just one reply, no burst');
+
+    const signalCount = (await admin.query('select public.fn_run_collusion_detection() as n'))
+      .rows[0].n;
+    log('fn_run_collusion_detection runs without error and returns a count', signalCount >= 1);
+
+    const positiveSignals = await fraudSignalsFor(admin, B, 'payer_flip_then_burst');
+    log(
+      'the idle-boundary flip + 5-message burst DOES fire payer_flip_then_burst, flagging the new payer against the other participant',
+      positiveSignals.length === 1 &&
+        positiveSignals[0].related_user_id === A &&
+        positiveSignals[0].metadata.thread_id === threadId &&
+        positiveSignals[0].metadata.burst_message_count >= 5,
+      JSON.stringify(positiveSignals),
+    );
+
+    const negativeSignals = await fraudSignalsFor(admin, D, 'payer_flip_then_burst');
+    log(
+      'the same idle-boundary flip WITHOUT a burst afterward does NOT fire the signal',
+      negativeSignals.length === 0,
+      JSON.stringify(negativeSignals),
+    );
+
+    // Re-running the nightly job must not double-insert for the same flip.
+    await admin.query('select public.fn_run_collusion_detection()');
+    const positiveSignalsAfterRerun = await fraudSignalsFor(admin, B, 'payer_flip_then_burst');
+    log(
+      're-running the detection job does not duplicate the signal for the same flip event',
+      positiveSignalsAfterRerun.length === 1,
+    );
+  } finally {
+    await admin.query('delete from public.fraud_signals where user_id in ($1, $2, $3, $4)', [
+      A,
+      B,
+      C,
+      D,
+    ]);
+    await deleteTestThread(admin, threadId);
+    await deleteTestThread(admin, controlThreadId);
+    await deleteTestUser(admin, A);
+    await deleteTestUser(admin, B);
+    await deleteTestUser(admin, C);
+    await deleteTestUser(admin, D);
+  }
+}
+
 async function main() {
   const admin = newClient();
   await admin.connect();
@@ -509,6 +622,7 @@ async function main() {
     await testSetThreadPayerPolicy(admin);
     await testNoActivePayerBlocksSends(admin);
     await testPayerFlipRoutesReleasesToCorrectPayee(admin);
+    await testPayerFlipThenBurstSignal(admin);
     await testConcurrentClaimCannotDoubleLog(admin);
   } finally {
     await admin.end();

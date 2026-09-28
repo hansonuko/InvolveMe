@@ -2,9 +2,11 @@
 //
 // Sets who pays for a thread — see migration 20260926140000_thread_payer_role.sql
 // and docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §C1 for the schema/
-// rationale. Same shape as set-thread-muted/set-thread-blocked (this file's
-// closest siblings): the actual policy (self-only appointment, current-
-// payer-only stepdown, the idle-conversation gate on taking over) lives
+// rationale (claiming/taking over is instant and ungated as of
+// 20260927120000_payer_takeover_instant_flip_burst_signal.sql — a willing
+// payer is never made to wait; see that migration for why). Same shape as
+// set-thread-muted/set-thread-blocked (this file's closest siblings): the
+// actual policy (self-only appointment, current-payer-only stepdown) lives
 // entirely in fn_set_thread_payer, not here — this function only re-derives
 // the caller's identity from their JWT (CLAUDE.md rule #1: no financial
 // logic on the client, and "who's calling" is exactly the kind of thing a
@@ -104,13 +106,6 @@ Deno.serve(async (req) => {
         403,
         'not_current_payer',
         'Only the current payer can step down from paying.',
-      );
-    }
-    if (message.includes('thread_not_idle_long_enough')) {
-      return errorResponse(
-        409,
-        'thread_not_idle_long_enough',
-        'This conversation needs to be quiet for a while before you can take over paying.',
       );
     }
     console.error('set-thread-payer: fn_set_thread_payer failed:', message);
