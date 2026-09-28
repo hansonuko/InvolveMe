@@ -15,6 +15,16 @@ export interface PublicPricing {
   message_max_words: number;
   platform_topup_fee_bps: number;
   platform_earning_take_bps: number;
+  /** End-to-end-encrypted threads bill by ciphertext byte length instead
+   * of word count (20260926170000_e2ee_send_message_billing.sql §4) — the
+   * server can measure an encrypted message's length without decrypting
+   * it, word count it genuinely cannot. Same shape as the word-based
+   * fields above, mirrored 1:1 (2 credits per 300-byte block, capped at
+   * 3000 bytes / 10 blocks, exactly matching the word formula's own
+   * 50-word block / 500-word cap). */
+  message_byte_base_credits: number;
+  message_byte_block_size: number;
+  message_max_bytes: number;
 }
 
 const FALLBACK: PublicPricing = {
@@ -28,6 +38,10 @@ const FALLBACK: PublicPricing = {
   message_max_words: 500,
   platform_topup_fee_bps: 200,
   platform_earning_take_bps: 2000,
+  // Matches 20260926170000_e2ee_send_message_billing.sql's own defaults.
+  message_byte_base_credits: 2,
+  message_byte_block_size: 300,
+  message_max_bytes: 3000,
 };
 
 export async function getPublicPricing(): Promise<PublicPricing> {
@@ -66,5 +80,18 @@ export function creditsForWords(pricing: PublicPricing, words: number): number {
 // pays, which is all creditsForWords() alone tells you.
 export function earningsForWords(pricing: PublicPricing, words: number): number {
   const cost = creditsForWords(pricing, words);
+  return cost - Math.round((cost * pricing.platform_earning_take_bps) / 10000);
+}
+
+// End-to-end-encrypted threads only — mirrors creditsForWords/
+// earningsForWords exactly, just keyed on ciphertext bytes instead of
+// words (see PublicPricing.message_byte_* fields' own comment for why).
+export function creditsForBytes(pricing: PublicPricing, bytes: number): number {
+  const capped = Math.min(bytes, pricing.message_max_bytes);
+  return pricing.message_byte_base_credits * Math.ceil(capped / pricing.message_byte_block_size);
+}
+
+export function earningsForBytes(pricing: PublicPricing, bytes: number): number {
+  const cost = creditsForBytes(pricing, bytes);
   return cost - Math.round((cost * pricing.platform_earning_take_bps) / 10000);
 }

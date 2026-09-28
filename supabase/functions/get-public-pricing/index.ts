@@ -12,6 +12,16 @@
 // earn per reply" figure (the earn-first repositioning), not just what a
 // sender pays — same non-sensitive-numeric-config category as the rest.
 //
+// message_byte_base_credits/message_byte_block_size/message_max_bytes
+// added (session 37) alongside the existing word-based keys — an
+// e2ee-active thread bills by ciphertext byte length instead of word
+// count (20260926170000_e2ee_send_message_billing.sql §4: the server
+// can measure an encrypted message's length without decrypting it,
+// word count it genuinely cannot), and the marketing site's pricing
+// pages need both formulas to describe pricing accurately now that
+// e2ee threads exist. Same non-sensitive-numeric-config category as
+// every other key here.
+//
 // MUST be deployed with `--no-verify-jwt`, same as webhook-flutterwave and
 // reconcile-topups — see webhook-flutterwave/index.ts's header for the
 // real 2026-09-13 incident that makes this non-optional:
@@ -26,6 +36,9 @@ const PUBLIC_KEYS = [
   'message_max_words',
   'platform_topup_fee_bps',
   'platform_earning_take_bps',
+  'message_byte_base_credits',
+  'message_byte_block_size',
+  'message_max_bytes',
 ] as const;
 
 function json(status: number, payload: unknown): Response {
