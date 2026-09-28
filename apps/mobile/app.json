@@ -13,6 +13,7 @@
     },
     "android": {
       "package": "app.involveme.mobile",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#5F1B31",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
