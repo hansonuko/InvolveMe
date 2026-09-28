@@ -1,0 +1,48 @@
+-- Real, live, 9-day-old regression found and fixed (session 37) — the
+-- user reported "last seen" staying permanently stale, not live/current.
+--
+-- Root cause, confirmed live (not guessed): `20260918110000_profile_media_
+-- and_two_step.sql` did `revoke update on public.users from authenticated;`
+-- then re-granted only `(display_name, avatar_url, status_text, cover_url,
+-- links)` — silently dropping every column-level UPDATE grant a PRIOR
+-- migration had given `authenticated` on this same table:
+--
+--   - `read_receipts_enabled` (20260914090000_settings_privacy_reports_push.sql)
+--   - `terms_accepted_at`     (20260915130000_terms_acceptance.sql)
+--   - `last_seen_at`, `last_seen_enabled` (20260917100000_last_seen.sql)
+--
+-- Confirmed live via a real anon-key + minted-user-JWT PATCH request
+-- (exactly what the mobile app's own `supabase.from('users').update(...)`
+-- calls do) against the actual deployed project: a plain `last_seen_at`
+-- update came back `403 permission denied for table users` — not an RLS
+-- policy rejection (that would be a 403 with a different, RLS-specific
+-- message/empty result), a genuine missing column-privilege error. Every
+-- one of these three features writes directly from the client (no Edge
+-- Function in the path), which is exactly why this project's own test
+-- suite — entirely Edge-Function/service-role based — never once exercised
+-- the code path that was actually broken, for 9 days, undetected.
+--
+-- Real, confirmed blast radius, not just last-seen:
+--   - The online/last-seen heartbeat (`apps/mobile/lib/lastSeen.ts`) has
+--     been silently failing on every tick since 2026-09-18 — this project's
+--     entire `users` table has only ever recorded 2 real last_seen_at
+--     values, both from before this regression.
+--   - Settings > Privacy's "Read receipts" toggle (`apps/mobile/lib/
+--     queries/profile.ts`) has been a no-op since the same date — flipping
+--     it in the UI does nothing server-side.
+--   - Every user who has verified their phone number since 2026-09-18 has
+--     an empty `terms_accepted_at` — the server-side ToS/Privacy consent
+--     audit trail this column exists for (docs/07-COMPLIANCE-LEGAL.md) has
+--     not actually been recording anything for 9 days, even though nobody
+--     was blocked from signing up (the write is deliberately best-effort,
+--     per that code's own comment — the right call for not locking out a
+--     real user over this, but it also means the failure stayed invisible).
+--
+-- Fixed here with a plain additive GRANT (column-level grants are
+-- cumulative in Postgres, never a replacement of what's already there) —
+-- deliberately NOT another `revoke ... ; grant (full list) ...` cycle,
+-- which is the exact pattern that caused this regression in the first
+-- place and remains one incomplete list away from doing it again.
+
+grant update (last_seen_at, last_seen_enabled, read_receipts_enabled, terms_accepted_at)
+  on public.users to authenticated;

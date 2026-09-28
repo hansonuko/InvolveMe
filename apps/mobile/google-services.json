@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "451716924164",
+    "project_id": "involveme-app",
+    "storage_bucket": "involveme-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:451716924164:android:9b625e1fd91a5274510651",
+        "android_client_info": {
+          "package_name": "app.involveme.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOfmfBKYliVcXHg8snGP5IjIq_7Gnoy50"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

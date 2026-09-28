@@ -2,7 +2,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { Card, Eyebrow, Section } from '@/components/Section';
-import { creditsForWords, earningsForWords, formatNaira, getPublicPricing } from '@/lib/pricing';
+import {
+  creditsForBytes,
+  creditsForWords,
+  earningsForBytes,
+  earningsForWords,
+  formatNaira,
+  getPublicPricing,
+} from '@/lib/pricing';
 
 export const metadata: Metadata = {
   title: 'Pricing',
@@ -16,6 +23,21 @@ export default async function PricingPage() {
     credits: creditsForWords(pricing, words),
     earnings: earningsForWords(pricing, words),
   }));
+
+  // Encrypted-conversation pricing (byte-based) — same 4 tiers as the
+  // word-based examples above, scaled by the block-size ratio
+  // (message_byte_block_size / message_word_block_size, 300/50 = 6 bytes
+  // per "word" at the calibration point) so the two example sets line up
+  // side by side rather than picking arbitrary, unrelated byte counts.
+  const bytesPerWord = pricing.message_byte_block_size / pricing.message_word_block_size;
+  const byteExamples = [10, 50, 150, 500].map((words) => {
+    const bytes = Math.round(words * bytesPerWord);
+    return {
+      bytes,
+      credits: creditsForBytes(pricing, bytes),
+      earnings: earningsForBytes(pricing, bytes),
+    };
+  });
 
   return (
     <>
@@ -70,6 +92,39 @@ export default async function PricingPage() {
               The sender pays {Math.min(...examples.map((e) => e.credits))}-
               {Math.max(...examples.map((e) => e.credits))} credits for these same messages; the
               platform&apos;s fee is the difference.
+            </p>
+          </Card>
+        </AnimatedSection>
+      </Section>
+
+      <Section>
+        <AnimatedSection>
+          <Card>
+            <p className="text-caption font-semibold uppercase tracking-wide text-muted">
+              🔒 Encrypted conversations
+            </p>
+            <p className="mt-3 max-w-2xl text-body text-muted">
+              Turn on end-to-end encryption for a conversation and pricing works the same way, just
+              measured differently: since the server can never read an encrypted message&apos;s
+              content, it can&apos;t count words in it, only the encrypted message&apos;s byte
+              length. The rate is calibrated to land on the same numbers as an equivalent-length
+              unencrypted message.
+            </p>
+            <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+              {byteExamples.map((e) => (
+                <li
+                  key={e.bytes}
+                  className="flex items-center justify-between border-b border-border pb-3 text-body last:border-0 last:pb-0 sm:border-0 sm:pb-0"
+                >
+                  <span className="text-muted">~{e.bytes}-byte message</span>
+                  <span className="font-semibold text-foreground">
+                    {e.earnings} credits · {formatNaira(e.earnings * pricing.credit_unit_kobo)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-caption text-muted">
+              Encrypted messages are capped at {pricing.message_max_bytes} bytes per message.
             </p>
           </Card>
         </AnimatedSection>

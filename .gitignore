@@ -8,7 +8,17 @@
 *.p8
 *.p12
 *.mobileprovision
-google-services.json
+# google-services.json deliberately NOT ignored (session 37) — it's a
+# low-sensitivity client config file (an Android API key restricted by
+# package name/SHA, not a real secret; the actual secret is the FCM V1
+# service-account key, which never goes in this repo, only into EAS's own
+# encrypted credential store). It's required at apps/mobile/google-
+# services.json for the Google Services Gradle plugin to apply at build
+# time (app.json's googleServicesFile) — EAS build's upload archive
+# respects .gitignore, so leaving this ignored would silently ship a build
+# without push notifications working, exactly the bug this file exists to
+# fix. GoogleService-Info.plist (iOS) stays ignored — no iOS build exists
+# for this project yet, nothing to commit.
 GoogleService-Info.plist
 
 # --- Node / JS ---

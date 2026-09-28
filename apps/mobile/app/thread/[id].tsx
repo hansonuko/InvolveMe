@@ -57,7 +57,12 @@ import { hexToBytes } from '@/lib/e2ee/bytes';
 import { getOrCreateIdentity } from '@/lib/e2ee/identity';
 import { ensureDeviceRegistered } from '@/lib/e2ee/prekeys';
 import { computeSafetyNumber } from '@/lib/e2ee/safetyNumber';
-import { getKnownIdentityKey, setKnownIdentityKey } from '@/lib/e2ee/safetyNumberStore';
+import {
+  getKnownIdentityKey,
+  setKnownIdentityKey,
+  shouldShowE2eeNotice,
+  markE2eeNoticeShown,
+} from '@/lib/e2ee/safetyNumberStore';
 import { nativeSodiumProvider as sodium } from '@/lib/e2ee/sodiumProviderNative';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { useIsOnline } from '@/lib/network';
@@ -1041,6 +1046,38 @@ export default function ThreadScreen() {
   );
   const [safetyNumberRequestId, setSafetyNumberRequestId] = useState(0);
 
+  // In-chat "protected" system notice (session 37) — WhatsApp-style: shown
+  // once the first time a conversation is opened as e2ee-active, and again
+  // after ~30 days of no notice having shown (see shouldShowE2eeNotice's
+  // own header comment). Rendered in the FlatList's ListFooterComponent,
+  // not ListHeaderComponent — this list always opens scrolled to the
+  // bottom, so a header-position notice sat above all existing history,
+  // scrolled out of view on open for any thread with real messages already
+  // in it (confirmed live, session 37). Deliberately not shown at all
+  // until we know the answer (`null`), so it never flashes on and off.
+  const [showE2eeNotice, setShowE2eeNotice] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (headerInfo?.e2eeStatus !== 'active') {
+      setShowE2eeNotice(false);
+      return;
+    }
+    let cancelled = false;
+    shouldShowE2eeNotice(id).then((show) => {
+      if (cancelled) return;
+      setShowE2eeNotice(show);
+      if (show) markE2eeNoticeShown(id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, headerInfo?.e2eeStatus]);
+
+  // Floating payer-role icon (session 37) — replaces the old fixed banner
+  // pinned above the message list. Collapsed to just the icon by default;
+  // tapping reveals the current payer state + toggle action, and any
+  // action taken (or a tap outside it) collapses it straight back.
+  const [payerPopoverVisible, setPayerPopoverVisible] = useState(false);
+
   const {
     data: messages,
     isLoading,
@@ -1599,12 +1636,23 @@ export default function ThreadScreen() {
       });
       scrollToLatest();
     } catch (e) {
+      // Session 37 — a real prior failure here surfaced only the generic
+      // fallback below ("Something went wrong."), with no way to tell
+      // what actually threw. Logged AND surfaced in the alert itself
+      // (this whole pipeline has never been exercised on a real device
+      // before, docs/17 §11) so the next failure is diagnosable instead
+      // of a dead end.
+      console.error('handleSendVoiceNote failed:', e);
+      const fallbackDetail =
+        e && typeof e === 'object' && 'message' in e && typeof e.message === 'string'
+          ? e.message
+          : `${typeof e} — ${JSON.stringify(e)}`;
       const message =
         e instanceof EdgeFunctionError
           ? e.message
           : e instanceof Error
             ? e.message
-            : 'Something went wrong.';
+            : `Unrecognized error shape: ${fallbackDetail}`;
       Alert.alert('Could not send voice message', message);
     } finally {
       setIsUploadingMedia(false);
@@ -2012,30 +2060,6 @@ export default function ThreadScreen() {
         <ChatWallpaper />
 
         <KeyboardAvoidingScreen>
-          {headerInfo && currentUserId ? (
-            <Pressable
-              onPress={handleTapPayerBanner}
-              disabled={setThreadPayer.isPending}
-              style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}
-            >
-              <Text variant="caption" color="secondary">
-                {headerInfo.payerId === null
-                  ? "No one's paying right now · tap to pay"
-                  : headerInfo.payerId === currentUserId
-                    ? "You're paying · tap to stop"
-                    : "They're paying · tap to pay instead"}
-              </Text>
-            </Pressable>
-          ) : null}
-
-          {headerInfo?.e2eeStatus === 'active' ? (
-            <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
-              <Text variant="caption" color="secondary">
-                🔒 Messages here are end-to-end encrypted
-              </Text>
-            </View>
-          ) : null}
-
           {safetyNumberAlert.changed ? (
             <Pressable
               onPress={() => {
@@ -2104,6 +2128,35 @@ export default function ThreadScreen() {
               }}
               ListFooterComponent={
                 <>
+                  {/* Session 37 — moved from ListHeaderComponent (the very
+                   * top of the full message history) to here: this list
+                   * always opens scrolled to the BOTTOM
+                   * (handleMessagesContentSizeChange), so a header-position
+                   * notice was scrolled out of view on open for any thread
+                   * with real history above it — confirmed live, exactly
+                   * the bug reported ("not seen anywhere" once the chat
+                   * was actually opened). The footer is what's on screen
+                   * the moment the chat opens instead. */}
+                  {showE2eeNotice ? (
+                    <Pressable
+                      onPress={() => setSafetyNumberRequestId((n) => n + 1)}
+                      style={{ alignItems: 'center', paddingVertical: spacing.md }}
+                    >
+                      <View
+                        style={{
+                          backgroundColor: colors.bgSurfaceAlt,
+                          borderRadius: radius.card,
+                          paddingHorizontal: spacing.md,
+                          paddingVertical: spacing.sm,
+                          maxWidth: '85%',
+                        }}
+                      >
+                        <Text variant="caption" color="secondary" style={{ textAlign: 'center' }}>
+                          🔒 Messages here are end-to-end encrypted. Tap to verify.
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ) : null}
                   {outboxItems.map((item) => (
                     <OutboxPendingBubble key={item.clientMessageId} body={item.body} />
                   ))}
@@ -2118,6 +2171,76 @@ export default function ThreadScreen() {
               }
             />
           )}
+
+          {/* Floating payer-role icon (session 37) — small, collapsed to
+           * just an icon (same footprint as the send button) so it never
+           * competes with the header or the message list for attention.
+           * Tapping reveals the current payer state + toggle action;
+           * taking that action (or tapping outside it) collapses it right
+           * back. Replaces the old fixed banner that used to sit pinned
+           * above the message list at all times. */}
+          {headerInfo && currentUserId && payerPopoverVisible ? (
+            // Full-screen, beneath the icon/popover in stacking order (lower
+            // zIndex) so it dims nothing visually but still catches a tap
+            // anywhere outside the popover to collapse it.
+            <Pressable
+              style={[StyleSheet.absoluteFill, { zIndex: 9, elevation: 9 }]}
+              onPress={() => setPayerPopoverVisible(false)}
+            />
+          ) : null}
+
+          {headerInfo && currentUserId ? (
+            <View style={styles.payerFloatingContainer} pointerEvents="box-none">
+              <Pressable
+                onPress={() => setPayerPopoverVisible((v) => !v)}
+                hitSlop={4}
+                style={[
+                  styles.payerFloatingButton,
+                  { backgroundColor: colors.bgSurfaceAlt, borderColor: colors.borderSubtle },
+                ]}
+              >
+                <Ionicons
+                  name="cash-outline"
+                  size={20}
+                  color={
+                    headerInfo.payerId === currentUserId
+                      ? colors.brandPrimary
+                      : colors.textSecondary
+                  }
+                />
+              </Pressable>
+              {payerPopoverVisible ? (
+                <View
+                  style={[
+                    styles.payerPopover,
+                    { backgroundColor: colors.bgSurfaceAlt, borderColor: colors.borderSubtle },
+                  ]}
+                >
+                  <Text variant="caption" color="secondary">
+                    {headerInfo.payerId === null
+                      ? "No one's paying right now"
+                      : headerInfo.payerId === currentUserId
+                        ? "You're paying for this conversation"
+                        : "They're paying for this conversation"}
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      setPayerPopoverVisible(false);
+                      handleTapPayerBanner();
+                    }}
+                    disabled={setThreadPayer.isPending}
+                    style={{ paddingTop: spacing.sm }}
+                  >
+                    <Text variant="bodyMedium" color="brand">
+                      {headerInfo.payerId === currentUserId
+                        ? 'Stop paying'
+                        : 'Pay for this conversation'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
 
           {pendingSend ? (
             <View
@@ -2381,5 +2504,32 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     minWidth: 180,
     overflow: 'hidden',
+  },
+  // Session 37 — floating payer-role icon, top-left over the message list
+  // (not fixed to the header). Same 44x44 footprint as sendButton above,
+  // per the explicit "just the size of the send button" request.
+  payerFloatingContainer: {
+    position: 'absolute',
+    top: 8,
+    left: 12,
+    zIndex: 10,
+    elevation: 10,
+  },
+  payerFloatingButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  payerPopover: {
+    position: 'absolute',
+    top: 50,
+    left: 0,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    minWidth: 220,
   },
 });

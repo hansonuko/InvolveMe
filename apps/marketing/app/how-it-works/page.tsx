@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { Card, Eyebrow, Section } from '@/components/Section';
-import { earningsForWords, formatNaira, getPublicPricing } from '@/lib/pricing';
+import { earningsForBytes, earningsForWords, formatNaira, getPublicPricing } from '@/lib/pricing';
 
 export const metadata: Metadata = {
   title: 'How it works',
@@ -35,6 +35,8 @@ export default async function HowItWorksPage() {
   const pricing = await getPublicPricing();
   const exampleWords = pricing.message_word_block_size;
   const exampleEarnings = earningsForWords(pricing, exampleWords);
+  const exampleBytes = pricing.message_byte_block_size;
+  const exampleByteEarnings = earningsForBytes(pricing, exampleBytes);
 
   return (
     <>
@@ -123,6 +125,15 @@ export default async function HowItWorksPage() {
                   Security &amp; Trust
                 </a>{' '}
                 page.
+              </p>
+              <p className="mt-4 rounded-card border border-border bg-surface px-5 py-4 text-caption text-muted">
+                🔒 In an end-to-end-encrypted conversation, the same formula applies to the
+                message&apos;s encrypted byte length instead of its word count, since that&apos;s
+                the only thing about an encrypted message the server can ever measure. A{' '}
+                {exampleBytes}-byte encrypted message earns {exampleByteEarnings} credits (
+                {formatNaira(exampleByteEarnings * pricing.credit_unit_kobo)}), calibrated to land
+                on the same numbers as an equivalent-length unencrypted message. Capped at{' '}
+                {pricing.message_max_bytes} bytes per message.
               </p>
             </div>
           </div>

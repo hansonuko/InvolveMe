@@ -13,15 +13,23 @@
 // that cannot run under plain Node.
 //
 // hkdfExtract/hkdfExpand are first-class methods here, not decomposed into
-// a shared hmac primitive, because react-native-libsodium's real binding
-// does not expose raw SHA-256 or HMAC-SHA256 at all — only a pre-built
-// native crypto_kdf_hkdf_sha256_extract/expand pair. The two
-// implementations of this interface therefore take genuinely different
-// code paths for HKDF (native adapter: delegates directly; test adapter:
-// hand-rolled per RFC 5869 on top of libsodium-wrappers' crypto_auth_
-// hmacsha256). That's fine *because* both are verified independently
-// against RFC 5869's own published test vectors (see hkdfRfc5869.test.ts)
-// rather than trusted to agree with each other.
+// a shared hmac primitive, purely because that's the natural interface
+// shape for callers (x3dh.ts/doubleRatchet.ts) — as of session 37, BOTH
+// implementations of this interface actually take the SAME code path
+// underneath: hand-rolled RFC 5869 HKDF (hkdfRfc5869.ts) on top of a
+// hand-rolled RFC 2104 HMAC-SHA256 (hmacSha256Rfc2104.ts), fed by a real
+// SHA-256 implementation each adapter sources differently (native adapter:
+// `@noble/hashes`, pure JS; test adapter: libsodium-wrappers-sumo's
+// crypto_hash_sha256). This used to differ — the native adapter called
+// react-native-libsodium's own `_unstable_crypto_kdf_hkdf_sha256_extract/
+// expand` directly — until session 37 found that path (and, far more
+// seriously, `scalarMult`'s `crypto_scalarmult` call) genuinely does not
+// exist in that library's real native binary at all, only in the generic
+// web-facing type declarations `tsc` happens to read. See
+// sodiumProviderNative.ts's own header comment for the full incident.
+// Both HKDF code paths are still verified independently against RFC
+// 5869's own published test vectors (hkdfRfc5869.test.ts) rather than
+// trusted to agree with each other just because they now share logic.
 
 export interface KeyPair {
   publicKey: Uint8Array;

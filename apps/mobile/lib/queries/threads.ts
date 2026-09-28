@@ -36,8 +36,12 @@ export interface ThreadWithPartner {
      * already does exactly this. */
     phone: string | null;
   };
-  /** Real last-message text, resolved client-side below — `null` until a
-   * thread has at least one message. */
+  /** Last-message preview text, resolved client-side below — `null` until a
+   * thread has at least one message. For an e2ee-active thread this is
+   * always the fixed "🔒 Encrypted message" placeholder (the real
+   * `messages.body` is null by design, docs/21 §2 — never decrypted just
+   * for a list preview); for a media message with no caption it's a
+   * "📷 Photo"/"🎤 Voice message" placeholder instead of an empty string. */
   last_message_body: string | null;
   /** From the `thread_unread_counts` view (migration
    * 20260914080000_thread_read_cursor.sql) — messages from the *other*
@@ -109,16 +113,24 @@ export function useThreads(currentUserId: string | undefined) {
       const threadIds = threads.map((t) => t.id);
       const { data: recentMessages, error: messagesError } = await supabase
         .from('messages')
-        .select('thread_id, body, created_at')
+        .select('thread_id, body, media_type, created_at')
         .in('thread_id', threadIds)
         .order('created_at', { ascending: false });
 
       if (messagesError) throw messagesError;
 
-      const lastBodyByThreadId = new Map<string, string>();
+      // Raw `body`/`media_type` of the newest message per thread — kept
+      // separate from the final display string below because whether a
+      // null/empty body means "🔒 Encrypted message" vs "📷 Photo" depends
+      // on the *thread's* e2ee_status, which isn't known until the
+      // `threads.map` below runs.
+      const lastMessageByThreadId = new Map<
+        string,
+        { body: string | null; media_type: string | null }
+      >();
       for (const m of recentMessages ?? []) {
-        if (!lastBodyByThreadId.has(m.thread_id)) {
-          lastBodyByThreadId.set(m.thread_id, m.body);
+        if (!lastMessageByThreadId.has(m.thread_id)) {
+          lastMessageByThreadId.set(m.thread_id, { body: m.body, media_type: m.media_type });
         }
       }
 
@@ -141,10 +153,23 @@ export function useThreads(currentUserId: string | undefined) {
       return threads.map((t) => {
         const partnerId = t.participant_a === currentUserId ? t.participant_b : t.participant_a;
         const partner = partnersById.get(partnerId);
+        const lastMessage = lastMessageByThreadId.get(t.id);
+        let lastMessageBody: string | null = null;
+        if (lastMessage) {
+          if (t.e2ee_status === 'active') {
+            lastMessageBody = '🔒 Encrypted message';
+          } else if (lastMessage.media_type === 'image') {
+            lastMessageBody = '📷 Photo';
+          } else if (lastMessage.media_type === 'audio') {
+            lastMessageBody = '🎤 Voice message';
+          } else {
+            lastMessageBody = lastMessage.body || null;
+          }
+        }
         return {
           ...t,
           partner: partner ?? { id: partnerId, display_name: null, avatar_url: null, phone: null },
-          last_message_body: lastBodyByThreadId.get(t.id) ?? null,
+          last_message_body: lastMessageBody,
           unread_count: unreadByThreadId.get(t.id) ?? 0,
         };
       });

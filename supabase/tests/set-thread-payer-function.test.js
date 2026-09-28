@@ -4,9 +4,12 @@
 // docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §C1). Modeled directly on
 // set-thread-muted-function.test.js — this file only covers request
 // validation and DB-error-to-HTTP mapping; the actual policy (self-only,
-// idle gate, stepdown rules, ledger correctness after a flip) is covered at
-// the DB level by thread-payer-functions.test.js, which doesn't need a
-// deno/HTTP layer to exercise fn_set_thread_payer directly.
+// stepdown rules, ledger correctness after a flip) is covered at the DB
+// level by thread-payer-functions.test.js, which doesn't need a deno/HTTP
+// layer to exercise fn_set_thread_payer directly. Claiming/taking over the
+// payer role is instant and ungated as of
+// 20260927120000_payer_takeover_instant_flip_burst_signal.sql — there is no
+// idle gate left to test here.
 
 const { Client } = require('pg');
 const { spawn } = require('node:child_process');
@@ -127,13 +130,6 @@ async function sendMessageDirect(admin, threadId, senderId, body) {
   await admin.query('select public.fn_send_message($1, $2, $3)', [threadId, senderId, body]);
 }
 
-async function backdateLastMessage(admin, threadId, hoursAgo) {
-  await admin.query(
-    `update public.threads set last_message_at = now() - make_interval(hours => $2) where id = $1`,
-    [threadId, hoursAgo],
-  );
-}
-
 async function callSetThreadPayer(token, body) {
   const headers = { 'Content-Type': 'application/json' };
   if (token !== null) headers.Authorization = `Bearer ${token}`;
@@ -190,10 +186,9 @@ async function main() {
     threadId = await createTestThread(admin, A, B);
     await fundTopupCredit(admin, A, 50);
     // A real message, not just a bare thread, so last_message_at is
-    // recent — otherwise a never-messaged thread's null last_message_at
-    // deliberately counts as "idle" (see the migration's own rationale)
-    // and every idle-gate assertion below would trivially pass for the
-    // wrong reason.
+    // recent — proves the instant-takeover assertion below isn't just
+    // trivially true because a never-messaged thread happens to have no
+    // activity to be blocked by in the first place.
     await sendMessageDirect(admin, threadId, A, 'hello');
 
     const noAuth = await callSetThreadPayer(null, { thread_id: threadId, new_payer_id: A });
@@ -236,15 +231,29 @@ async function main() {
       JSON.stringify(appointOther.json),
     );
 
-    const takeoverTooSoon = await callSetThreadPayer(tokenB, {
+    // A willing payer must never be blocked, even on a thread with fresh
+    // activity — 20260927120000_payer_takeover_instant_flip_burst_signal.sql
+    // removed the 24h idle gate that used to reject exactly this case (a
+    // real, reported incident: a user unable to take over paying during
+    // what could have been an emergency).
+    const takeoverInstant = await callSetThreadPayer(tokenB, {
       thread_id: threadId,
       new_payer_id: B,
     });
     log(
-      'B taking over immediately (thread not idle) -> 409 thread_not_idle_long_enough',
-      takeoverTooSoon.status === 409 &&
-        takeoverTooSoon.json?.error === 'thread_not_idle_long_enough',
-      JSON.stringify(takeoverTooSoon.json),
+      'B takes over from A INSTANTLY, even on a thread with fresh activity -> 200 ok',
+      takeoverInstant.status === 200 && takeoverInstant.json?.payer_id === B,
+      JSON.stringify(takeoverInstant.json),
+    );
+
+    const aStepsDownNotPayer = await callSetThreadPayer(tokenA, {
+      thread_id: threadId,
+      new_payer_id: null,
+    });
+    log(
+      'A (no longer the payer) trying to step down -> 403 not_current_payer',
+      aStepsDownNotPayer.status === 403 && aStepsDownNotPayer.json?.error === 'not_current_payer',
+      JSON.stringify(aStepsDownNotPayer.json),
     );
 
     const bStepsDown = await callSetThreadPayer(tokenB, {
@@ -252,25 +261,14 @@ async function main() {
       new_payer_id: null,
     });
     log(
-      'B (not the current payer) trying to step down -> 403 not_current_payer',
-      bStepsDown.status === 403 && bStepsDown.json?.error === 'not_current_payer',
+      'B (the actual current payer) steps down -> 200 ok',
+      bStepsDown.status === 200 && bStepsDown.json?.payer_id === null,
       JSON.stringify(bStepsDown.json),
     );
 
-    const aStepsDown = await callSetThreadPayer(tokenA, {
-      thread_id: threadId,
-      new_payer_id: null,
-    });
-    log(
-      'A (the actual current payer) steps down -> 200 ok',
-      aStepsDown.status === 200 && aStepsDown.json?.payer_id === null,
-      JSON.stringify(aStepsDown.json),
-    );
-
-    await backdateLastMessage(admin, threadId, 25);
     const bClaims = await callSetThreadPayer(tokenB, { thread_id: threadId, new_payer_id: B });
     log(
-      'B claims once the thread is genuinely idle 24h+ -> 200 ok, payer_id: B',
+      'B claims out of a null payer_id, also instantly (no idle requirement either way)',
       bClaims.status === 200 && bClaims.json?.payer_id === B,
       JSON.stringify(bClaims.json),
     );
