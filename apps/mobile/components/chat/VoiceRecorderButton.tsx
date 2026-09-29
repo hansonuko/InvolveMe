@@ -35,10 +35,13 @@
 // that gap, not a shortcut. Real-device confirmation is still owed
 // before this is considered fully done — flagged, not silently assumed.
 //
-// State machine: idle -> recording -> (locked | cancelling) -> idle.
-// `phaseRef` mirrors `phase` state for the PanResponder callbacks (which
-// close over stale state otherwise — a real, well-known RN gotcha, not
-// paranoia) without needing any per-callback memoization trick.
+// State machine: idle -> recording -> (locked | cancelling) -> idle, with
+// locked able to detour through preview -> idle first (listen back before
+// actually sending, added by explicit request to match WhatsApp's
+// locked-recording toolbar). `phaseRef` mirrors `phase` state for the
+// PanResponder callbacks (which close over stale state otherwise — a real,
+// well-known RN gotcha, not paranoia) without needing any per-callback
+// memoization trick.
 
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -54,6 +57,7 @@ import { Alert, PanResponder, Pressable, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 
 import { withAppLockSuppressed } from '@/lib/appLock';
+import { usePlaybackStore } from '@/lib/audio/playbackStore';
 import { downsampleWaveform, normalizeMetering } from '@/lib/audio/waveform';
 import { useTheme } from '@/theme';
 import { Text } from '@/components/ui/Text';
@@ -62,8 +66,18 @@ const CANCEL_THRESHOLD_PX = -80;
 const LOCK_THRESHOLD_PX = -80;
 const METERING_POLL_MS = 100;
 const MIN_SENDABLE_SECONDS = 1;
+const PREVIEW_BAR_WIDTH = 3;
+const PREVIEW_BAR_GAP = 2;
+const PREVIEW_BAR_MAX_HEIGHT = 28;
+const PREVIEW_BAR_MIN_HEIGHT = 3;
+// The shared player (playbackStore.ts) is keyed by message id everywhere
+// else — a not-yet-sent recording has no message id yet, so this sentinel
+// fills that slot. Never collides with a real message id (those are
+// UUIDs), so `toggle`'s own "starting a different note always restarts
+// from 0" behavior can never misfire against a real sent note by mistake.
+const PREVIEW_PLAYBACK_ID = '__voice_note_preview__';
 
-export type RecorderPhase = 'idle' | 'recording' | 'locked' | 'cancelling';
+export type RecorderPhase = 'idle' | 'recording' | 'locked' | 'cancelling' | 'preview';
 
 function formatTimer(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
@@ -93,6 +107,23 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
   const phaseRef = useRef<RecorderPhase>('idle');
   const rawSamplesRef = useRef<number[]>([]);
   const startedAtRef = useRef<number>(0);
+  // The just-stopped recording, staged for playback review before it's
+  // actually sent (docs/17's own recorder never had this step — added by
+  // explicit request to match WhatsApp's locked-recording toolbar, which
+  // lets you listen back before committing to send, not just trash-or-send
+  // blind). `null` outside the 'preview' phase.
+  const [preview, setPreview] = useState<{
+    uri: string;
+    durationSeconds: number;
+    waveformSamples: number[];
+  } | null>(null);
+
+  const previewPlayingMessageId = usePlaybackStore((s) => s.playingMessageId);
+  const previewIsPlaying = usePlaybackStore((s) => s.isPlaying);
+  const previewCurrentTime = usePlaybackStore((s) => s.currentTime);
+  const previewDuration = usePlaybackStore((s) => s.duration);
+  const togglePreviewPlayback = usePlaybackStore((s) => s.toggle);
+  const isPreviewThisPlaying = previewPlayingMessageId === PREVIEW_PLAYBACK_ID;
 
   const translateX = useSharedValue(0);
   const cancelHintOpacity = useSharedValue(1);
@@ -171,10 +202,16 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
   }, [disabled, recorder, setPhaseBoth]);
 
   const finishRecording = useCallback(
-    async (outcome: 'send' | 'discard') => {
+    async (outcome: 'send' | 'discard' | 'preview') => {
       const wasActive = phaseRef.current === 'recording' || phaseRef.current === 'locked';
-      setPhaseBoth('idle');
-      resetVisuals();
+      // 'preview' deliberately does NOT flip to 'idle' here — that would
+      // flash the idle mic icon for a frame before the preview UI replaces
+      // it (recorder.stop() below is async). It goes straight to 'preview'
+      // once the stopped recording's real uri/duration/waveform are known.
+      if (outcome !== 'preview') {
+        setPhaseBoth('idle');
+        resetVisuals();
+      }
       if (!wasActive) return;
 
       try {
@@ -196,12 +233,51 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
       rawSamplesRef.current = [];
 
       if (outcome === 'discard' || !uri || durationSeconds < MIN_SENDABLE_SECONDS) {
+        // A too-short recording can't be previewed either — same floor
+        // send already enforces, applied consistently to preview.
+        if (outcome === 'preview') {
+          setPhaseBoth('idle');
+          resetVisuals();
+        }
         return; // no message, no charge, no upload — docs/17 §1
       }
+
+      if (outcome === 'preview') {
+        setPreview({ uri, durationSeconds, waveformSamples });
+        setPhaseBoth('preview');
+        return;
+      }
+
       onSend(uri, durationSeconds, waveformSamples);
     },
     [recorder, onSend, resetVisuals, setPhaseBoth],
   );
+
+  const discardPreview = useCallback(() => {
+    usePlaybackStore.getState().stop();
+    setPreview(null);
+    setPhaseBoth('idle');
+  }, [setPhaseBoth]);
+
+  const sendPreview = useCallback(() => {
+    if (!preview) return;
+    usePlaybackStore.getState().stop();
+    const { uri, durationSeconds, waveformSamples } = preview;
+    setPreview(null);
+    setPhaseBoth('idle');
+    onSend(uri, durationSeconds, waveformSamples);
+  }, [preview, onSend, setPhaseBoth]);
+
+  // Safety net, not the primary cleanup path (discard/send above already
+  // stop it): if this component unmounts entirely mid-preview (the thread
+  // screen closes while reviewing a not-yet-sent note), don't leave the
+  // one shared player running against a local file nothing references
+  // anymore.
+  useEffect(() => {
+    return () => {
+      if (phaseRef.current === 'preview') usePlaybackStore.getState().stop();
+    };
+  }, []);
 
   // Memoized once (empty deps) — this component mounts exactly once in
   // the composer, never per list row, so there's no risk of the
@@ -294,8 +370,117 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
           <Text variant="body">{formatTimer(elapsedSeconds)}</Text>
           <AmplitudeBars level={meterLevel} color={colors.textSecondary} />
         </View>
+        {/* Stops recording and shows a real playback preview instead of
+         * sending outright — WhatsApp's own locked-recording toolbar lets
+         * you listen back before committing, not just trash-or-send blind. */}
+        <Pressable
+          onPress={() => void finishRecording('preview')}
+          hitSlop={8}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: colors.bgSurfaceAlt,
+          }}
+        >
+          <Ionicons name="pause" size={18} color={colors.textSecondary} />
+        </Pressable>
         <Pressable
           onPress={() => void finishRecording('send')}
+          hitSlop={8}
+          style={{
+            backgroundColor: colors.brandPrimary,
+            borderRadius: radius.pill,
+            width: 40,
+            height: 40,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="send" size={18} color={colors.textInverse} />
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (phase === 'preview' && preview) {
+    const previewElapsed = isPreviewThisPlaying ? previewCurrentTime : 0;
+    const previewTotal =
+      isPreviewThisPlaying && previewDuration > 0 ? previewDuration : preview.durationSeconds;
+    const previewProgress = previewTotal > 0 ? Math.min(1, previewElapsed / previewTotal) : 0;
+    const samples = preview.waveformSamples;
+
+    return (
+      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+        <Pressable onPress={discardPreview} hitSlop={8}>
+          <Ionicons name="trash-outline" size={22} color={colors.textSecondary} />
+        </Pressable>
+        <Pressable
+          onPress={() => togglePreviewPlayback(PREVIEW_PLAYBACK_ID, preview.uri)}
+          hitSlop={8}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: colors.bgSurfaceAlt,
+          }}
+        >
+          <Ionicons
+            name={isPreviewThisPlaying && previewIsPlaying ? 'pause' : 'play'}
+            size={18}
+            color={colors.textPrimary}
+          />
+        </Pressable>
+        <View style={{ flex: 1, gap: 2 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              height: PREVIEW_BAR_MAX_HEIGHT,
+              gap: PREVIEW_BAR_GAP,
+            }}
+          >
+            {samples.length > 0 ? (
+              samples.map((sample, i) => {
+                const played =
+                  samples.length > 1 ? i / (samples.length - 1) <= previewProgress : false;
+                const height = Math.max(
+                  PREVIEW_BAR_MIN_HEIGHT,
+                  Math.round((sample / 100) * PREVIEW_BAR_MAX_HEIGHT),
+                );
+                return (
+                  <View
+                    key={i}
+                    style={{
+                      width: PREVIEW_BAR_WIDTH,
+                      height,
+                      borderRadius: PREVIEW_BAR_WIDTH / 2,
+                      backgroundColor: played ? colors.brandPrimary : colors.borderSubtle,
+                    }}
+                  />
+                );
+              })
+            ) : (
+              <View
+                style={{
+                  flex: 1,
+                  height: 3,
+                  borderRadius: 1.5,
+                  backgroundColor: colors.borderSubtle,
+                }}
+              />
+            )}
+          </View>
+          <Text variant="caption" color="secondary">
+            {formatTimer(Math.floor(isPreviewThisPlaying ? previewElapsed : previewTotal))}
+          </Text>
+        </View>
+        <Pressable
+          onPress={sendPreview}
           hitSlop={8}
           style={{
             backgroundColor: colors.brandPrimary,

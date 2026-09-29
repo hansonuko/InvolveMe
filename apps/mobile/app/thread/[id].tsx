@@ -2037,7 +2037,16 @@ export default function ThreadScreen() {
     editMessage.isPending ||
     isUploadingMedia ||
     (!body.trim() && !pickedImage) ||
-    isBlocked;
+    isBlocked ||
+    // headerInfo (e2eeStatus/partnerId) resolves via its own separate,
+    // slower fetch than the messages list — without this, a send fired
+    // before it settles goes out with e2eeStatus undefined, skipping
+    // client-side encryption entirely, while the server's own e2ee_status
+    // is already 'active' and requires envelopes: `e2ee_envelopes_required`
+    // (session 37/38 bug report, hit fastest via a voice note, which needs
+    // no typing first to give this fetch time to land, but the same race
+    // exists for text/photo too — fixed once here for every send path).
+    !headerInfo;
 
   return (
     <>
@@ -2181,8 +2190,8 @@ export default function ThreadScreen() {
               style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}
             >
               <Text variant="caption" color="danger">
-                ⚠️ {headerInfo?.partnerName ?? 'This contact'}&apos;s safety number changed — tap to
-                review
+                Your security code with {headerInfo?.partnerName ?? 'this contact'} changed. Tap to
+                see more
               </Text>
             </Pressable>
           ) : null}
@@ -2265,7 +2274,8 @@ export default function ThreadScreen() {
                         }}
                       >
                         <Text variant="caption" color="secondary" style={{ textAlign: 'center' }}>
-                          🔒 Messages here are end-to-end encrypted. Tap to verify.
+                          🔒 Messages are end-to-end encrypted. Only people in this chat can read,
+                          or share them. See more
                         </Text>
                       </View>
                     </Pressable>
@@ -2527,7 +2537,7 @@ export default function ThreadScreen() {
               <VoiceRecorderButton
                 onSend={handleSendVoiceNote}
                 onPhaseChange={(phase) => setRecorderActive(phase !== 'idle')}
-                disabled={isBlocked || isUploadingMedia}
+                disabled={isBlocked || isUploadingMedia || !headerInfo}
               />
             )}
           </View>
