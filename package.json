@@ -55,6 +55,8 @@
     "test:e2ee-hkdf:ci": "node supabase/tests/e2ee-hkdf-rfc5869.test.ts",
     "test:e2ee-crypto-core": "node supabase/tests/e2ee-crypto-core.test.ts",
     "test:e2ee-crypto-core:ci": "node supabase/tests/e2ee-crypto-core.test.ts",
+    "test:e2ee-media-crypto": "node supabase/tests/e2ee-media-crypto.test.ts",
+    "test:e2ee-media-crypto:ci": "node supabase/tests/e2ee-media-crypto.test.ts",
     "test:group-chat": "node --env-file=.env supabase/tests/group-chat-functions.test.js",
     "test:group-admin": "node --env-file=.env supabase/tests/group-admin-actions-function.test.js",
     "test:group-rls": "node --env-file=.env supabase/tests/group-rls-recursion.test.js",

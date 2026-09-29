@@ -13,11 +13,14 @@
 // the one gesture-API ingredient this codebase has already crashed on.
 
 import { Ionicons } from '@expo/vector-icons';
+import { File, Paths } from 'expo-file-system';
 import { useEffect, useMemo, useState } from 'react';
-import { PanResponder, Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { Alert, PanResponder, Pressable, View, type LayoutChangeEvent } from 'react-native';
 
 import { Text } from '@/components/ui/Text';
 import { usePlaybackStore, type PlaybackRate } from '@/lib/audio/playbackStore';
+import { decryptMediaBytes } from '@/lib/e2ee/mediaCrypto';
+import { nativeSodiumProvider } from '@/lib/e2ee/sodiumProviderNative';
 import { useChatMediaUrl, useMarkAudioPlayed, type Message } from '@/lib/queries/messages';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/theme';
@@ -39,14 +42,38 @@ export function VoiceMessageBubble({
   message,
   isOwn,
   threadId,
+  isE2eeThread,
 }: {
   message: Message;
   isOwn: boolean;
   threadId: string;
+  /** Same reasoning as MessageBubble's own isE2eeThread prop — distinguishes
+   * "a normal plaintext voice note" from "an e2ee voice note whose
+   * attachment key couldn't be recovered," which are otherwise
+   * indistinguishable once e2eeMediaKeyBase64 is undefined in both cases. */
+  isE2eeThread?: boolean;
 }) {
   const { colors, spacing } = useTheme();
   const mediaUrl = useChatMediaUrl(message.media_path);
   const markAudioPlayed = useMarkAudioPlayed();
+
+  // Real end-to-end encrypted voice notes (session 37/38 follow-up to
+  // docs/21) — mediaUrl above is a signed URL to CIPHERTEXT for one of
+  // these; expo-audio can't play that directly (or a data: URI reliably,
+  // across both platforms), so this decrypts LAZILY, only on the first
+  // tap-to-play, straight to a temp file via expo-file-system's File API,
+  // and hands the resulting file:// URI to the shared player instead —
+  // matching the exact same "don't do work the user might never ask for"
+  // posture the eager (decrypt-on-arrival) choice for photos deliberately
+  // does NOT use, because unlike a photo thumbnail a voice note has no
+  // useful undecrypted preview to show while idle anyway. Cached in local
+  // state (not the plaintext cache used for text/captions — a decrypted
+  // audio file living in cache dir already survives until the OS reclaims
+  // it) so a second tap on the same note never re-decrypts.
+  const isE2eeAudio = !!message.e2eeMediaKeyBase64;
+  const isUnavailable = !!isE2eeThread && !!message.media_path && !message.e2eeMediaKeyBase64;
+  const [decryptedLocalUri, setDecryptedLocalUri] = useState<string | null>(null);
+  const [isDecrypting, setIsDecrypting] = useState(false);
 
   const playingMessageId = usePlaybackStore((s) => s.playingMessageId);
   const isPlaying = usePlaybackStore((s) => s.isPlaying);
@@ -66,15 +93,51 @@ export function VoiceMessageBubble({
   const [barsWidth, setBarsWidth] = useState(0);
   const handleBarsLayout = (e: LayoutChangeEvent) => setBarsWidth(e.nativeEvent.layout.width);
 
-  const handleTogglePlay = () => {
-    if (!mediaUrl.data) return;
-    toggle(message.id, mediaUrl.data);
+  const markPlayedIfNeeded = () => {
     // The recipient's client marks a note played the first time IT starts
     // playback — never the sender's own device replaying its own sent
     // note (docs/17 §8; fn_mark_audio_played itself also rejects that,
     // this just avoids firing a doomed request).
     if (!isOwn && !message.audio_played_at) {
       markAudioPlayed.mutate({ threadId, messageId: message.id });
+    }
+  };
+
+  const handleTogglePlay = async () => {
+    if (isUnavailable) return;
+    if (!isE2eeAudio) {
+      if (!mediaUrl.data) return;
+      toggle(message.id, mediaUrl.data);
+      markPlayedIfNeeded();
+      return;
+    }
+
+    if (decryptedLocalUri) {
+      toggle(message.id, decryptedLocalUri);
+      markPlayedIfNeeded();
+      return;
+    }
+
+    if (!mediaUrl.data || isDecrypting) return;
+    setIsDecrypting(true);
+    try {
+      const response = await fetch(mediaUrl.data);
+      const ciphertext = new Uint8Array(await response.arrayBuffer());
+      const plaintext = decryptMediaBytes(nativeSodiumProvider, ciphertext, {
+        keyBase64: message.e2eeMediaKeyBase64 as string,
+        nonceBase64: message.e2eeMediaNonceBase64 as string,
+      });
+      const file = new File(Paths.cache, `voice-${message.id}.m4a`);
+      file.create({ overwrite: true });
+      file.write(plaintext);
+      setDecryptedLocalUri(file.uri);
+      toggle(message.id, file.uri);
+      markPlayedIfNeeded();
+    } catch (e) {
+      console.error('VoiceMessageBubble: failed to decrypt voice note:', e);
+      Alert.alert('Could not play voice message', 'This voice message could not be decrypted.');
+    } finally {
+      setIsDecrypting(false);
     }
   };
 
@@ -101,14 +164,14 @@ export function VoiceMessageBubble({
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [barsWidth, isThisPlaying, message.id, mediaUrl.data],
+    [barsWidth, isThisPlaying, message.id, mediaUrl.data, decryptedLocalUri, isDecrypting],
   );
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 220 }}>
       <Pressable
         onPress={handleTogglePlay}
-        disabled={!mediaUrl.data}
+        disabled={!mediaUrl.data || isDecrypting || isUnavailable}
         style={{
           width: 36,
           height: 36,
@@ -119,7 +182,7 @@ export function VoiceMessageBubble({
         }}
       >
         <Ionicons
-          name={isThisPlaying && isPlaying ? 'pause' : 'play'}
+          name={isDecrypting ? 'hourglass-outline' : isThisPlaying && isPlaying ? 'pause' : 'play'}
           size={18}
           color={isOwn ? colors.textInverse : colors.textPrimary}
         />
@@ -179,7 +242,9 @@ export function VoiceMessageBubble({
             color={isOwn ? undefined : 'secondary'}
             style={isOwn ? { color: 'rgba(255,255,255,0.75)' } : undefined}
           >
-            {formatDuration(isThisPlaying ? elapsedSeconds : totalSeconds)}
+            {isUnavailable
+              ? 'Media unavailable'
+              : formatDuration(isThisPlaying ? elapsedSeconds : totalSeconds)}
           </Text>
           {isThisPlaying ? (
             <Pressable onPress={cycleRate} hitSlop={8}>
