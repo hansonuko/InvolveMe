@@ -227,17 +227,32 @@ export function useThreadMessages(
       if (e2eeStatus !== 'active') return visible;
 
       // Real end-to-end encryption (docs/21-E2EE-TECHNICAL-DESIGN.md §5) —
-      // every row here has body: null from the server; decryptThreadMessages
-      // resolves as many as it can (from the durable local plaintext cache,
-      // or by consuming this device's own envelope + ratchet state — see
-      // that function's own header comment for why a cache miss on the
-      // sender's own message is unrecoverable by construction, not a bug).
+      // a message actually needs decrypting only if THIS message's own
+      // body is null, never just because the THREAD's current e2ee_status
+      // is 'active'. e2ee_status is a one-way switch on the thread, not a
+      // per-message fact: a thread's history from before encryption was
+      // turned on is real plaintext with a real (non-null) body, stored
+      // and returned exactly as any other message always has been.
+      // fn_send_message only ever nulls `body` inside its own e2ee branch
+      // (migration 20260926170000), so `body === null` is the reliable,
+      // message-level signal this needs, not the thread-level flag.
+      // Previously this ran decryptThreadMessages over EVERY message once
+      // a thread went active, including years of real plaintext history —
+      // decryptThreadMessages correctly found no envelope for any of it
+      // (there never was one) and every one of those messages rendered as
+      // "🔒 Message unavailable," permanently hiding real conversation
+      // history the moment e2ee was enabled (session 37/38 bug report:
+      // "all messages sent and received are showing message unavailable").
+      const needsDecrypt = visible.filter((m) => m.body === null);
+      if (needsDecrypt.length === 0) return visible;
+
       const decrypted = await decryptThreadMessages(
         threadId as string,
         currentUserId as string,
-        visible,
+        needsDecrypt,
       );
       return visible.map((m) => {
+        if (m.body !== null) return m;
         const raw = decrypted.get(m.id);
         if (raw === undefined) return { ...m, body: '🔒 Message unavailable' };
         if (!m.media_path) return { ...m, body: raw };

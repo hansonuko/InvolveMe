@@ -156,7 +156,16 @@ export function useThreads(currentUserId: string | undefined) {
         const lastMessage = lastMessageByThreadId.get(t.id);
         let lastMessageBody: string | null = null;
         if (lastMessage) {
-          if (t.e2ee_status === 'active') {
+          // `body === null` is the real, per-message signal that this
+          // specific message was actually encrypted (fn_send_message only
+          // ever nulls it inside the e2ee branch) — not `t.e2ee_status`,
+          // which is a one-way switch on the THREAD and says nothing about
+          // when any given message was sent. A thread's history from
+          // before e2ee was turned on is real plaintext with a real body;
+          // mistaking it for ciphertext here previously hid it behind
+          // "🔒 Encrypted message" even though nothing about it was ever
+          // encrypted (session 37/38 bug report).
+          if (lastMessage.body === null) {
             lastMessageBody = '🔒 Encrypted message';
           } else if (lastMessage.media_type === 'image') {
             lastMessageBody = '📷 Photo';
