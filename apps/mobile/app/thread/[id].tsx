@@ -1119,10 +1119,7 @@ export default function ThreadScreen() {
   // until we know the answer (`null`), so it never flashes on and off.
   const [showE2eeNotice, setShowE2eeNotice] = useState<boolean | null>(null);
   useEffect(() => {
-    if (headerInfo?.e2eeStatus !== 'active') {
-      setShowE2eeNotice(false);
-      return;
-    }
+    if (headerInfo?.e2eeStatus !== 'active') return;
     let cancelled = false;
     shouldShowE2eeNotice(id).then((show) => {
       if (cancelled) return;
@@ -1133,6 +1130,12 @@ export default function ThreadScreen() {
       cancelled = true;
     };
   }, [id, headerInfo?.e2eeStatus]);
+  // Gated at read time rather than reset via a synchronous setState in the
+  // effect above (that pattern trips react-hooks/set-state-in-effect) — an
+  // 'off' thread simply never runs the fetch that would set this true, so
+  // masking it here is equivalent, not just a lint workaround (same
+  // approach useSafetyNumberChangeAlert already takes above).
+  const shouldShowE2eeNoticeNow = headerInfo?.e2eeStatus === 'active' && !!showE2eeNotice;
 
   // Floating payer-role icon (session 37) — replaces the old fixed banner
   // pinned above the message list. Collapsed to just the icon by default;
@@ -2259,7 +2262,7 @@ export default function ThreadScreen() {
                    * the bug reported ("not seen anywhere" once the chat
                    * was actually opened). The footer is what's on screen
                    * the moment the chat opens instead. */}
-                  {showE2eeNotice ? (
+                  {shouldShowE2eeNoticeNow ? (
                     <Pressable
                       onPress={() => setSafetyNumberRequestId((n) => n + 1)}
                       style={{ alignItems: 'center', paddingVertical: spacing.md }}
