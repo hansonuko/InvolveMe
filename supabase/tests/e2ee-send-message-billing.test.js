@@ -31,11 +31,22 @@ const { Client } = require('pg');
 const crypto = require('crypto');
 
 const DB_URL = process.env.SUPABASE_DB_URL;
-if (!DB_URL) {
-  console.error(
-    'SUPABASE_DB_URL is not set. Run via `npm run test:e2ee-send-message-billing` from the repo root.',
-  );
-  process.exit(1);
+// Only needed for testE2eeMediaSend's fixture upload (session 37/38 media
+// follow-up) — every other test here is a direct pg.Client/fn_ call, same
+// as this file's own header comment describes.
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+for (const [name, val] of Object.entries({
+  SUPABASE_DB_URL: DB_URL,
+  EXPO_PUBLIC_SUPABASE_URL: SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY,
+})) {
+  if (!val) {
+    console.error(
+      `${name} is not set. Run via \`npm run test:e2ee-send-message-billing\` from the repo root.`,
+    );
+    process.exit(1);
+  }
 }
 
 let pass = 0;
@@ -167,6 +178,35 @@ function makeEnvelope(recipientDeviceId, ciphertextByteLength) {
   };
 }
 
+/** Uploads a real fixture object via the Storage REST API (service-role
+ * key) so `fn_send_message`'s media_not_found existence check has a real
+ * `storage.objects` row to find — same pattern as chat-media-storage-
+ * rls.test.js's own `uploadFixtureImage`, generalized to accept arbitrary
+ * bytes/content-type since an e2ee attachment's real upload is opaque
+ * ciphertext (`application/octet-stream`, migration 20260929100000), not a
+ * real JPEG. */
+async function uploadFixtureObject(userId, bytes, contentType) {
+  const objectPath = `${userId}/${crypto.randomUUID()}.bin`;
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/chat-media/${objectPath}`, {
+    method: 'POST',
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      'Content-Type': contentType,
+    },
+    body: bytes,
+  });
+  if (!res.ok) throw new Error(`uploadFixtureObject failed: ${res.status} ${await res.text()}`);
+  return objectPath;
+}
+
+async function deleteFixtureObject(objectPath) {
+  await fetch(`${SUPABASE_URL}/storage/v1/object/chat-media/${objectPath}`, {
+    method: 'DELETE',
+    headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
+  });
+}
+
 async function setupE2eeThread(admin) {
   const A = await createTestUser(admin);
   const B = await createTestUser(admin);
@@ -188,6 +228,22 @@ async function sendE2ee(admin, threadId, senderId, envelopes, extra = {}) {
        p_envelopes => $4::jsonb, p_reply_to_status_id => $5
      )`,
     [threadId, senderId, '', JSON.stringify(envelopes ?? null), extra.replyToStatusId ?? null],
+  );
+  return r.rows[0];
+}
+
+/** Same as sendE2ee, but carries a media attachment — session 37/38's
+ * e2ee-media follow-up. Separate helper rather than extending sendE2ee's
+ * own signature: every existing caller of sendE2ee is a text-only send and
+ * shouldn't have to thread `undefined`s through for fields that don't
+ * apply to it. */
+async function sendE2eeWithMedia(admin, threadId, senderId, envelopes, mediaPath, mediaType) {
+  const r = await admin.query(
+    `select * from public.fn_send_message(
+       p_thread_id => $1, p_sender_id => $2, p_body => '',
+       p_envelopes => $3::jsonb, p_media_path => $4, p_media_type => $5
+     )`,
+    [threadId, senderId, JSON.stringify(envelopes ?? null), mediaPath, mediaType],
   );
   return r.rows[0];
 }
@@ -360,8 +416,12 @@ async function testEnvelopeRecipientOwnership(admin) {
 }
 
 // ===========================================================================
-// Test 5: media is rejected outright; missing/empty envelopes are rejected;
-// the byte cap is enforced.
+// Test 5: media at a nonexistent path is still rejected (real media, tested
+// separately below, IS now supported on e2ee threads — session 37/38 —
+// this just proves the shared media_not_found existence check, moved out
+// of the non-e2ee-only branch by that same migration, actually runs for
+// e2ee sends too); missing/empty envelopes are rejected; the byte cap is
+// enforced.
 // ===========================================================================
 
 async function testGuardrails(admin) {
@@ -376,8 +436,8 @@ async function testGuardrails(admin) {
     );
     await expectException(
       mediaResult,
-      'e2ee_media_not_supported',
-      'media on an e2ee-active thread is rejected',
+      'media_not_found',
+      'media at a path with no real storage.objects row is rejected',
     );
 
     await expectException(
@@ -400,6 +460,95 @@ async function testGuardrails(admin) {
   } finally {
     await deleteTestThread(admin, threadId);
     await deleteTestUser(admin, A);
+  }
+}
+
+// ===========================================================================
+// Test 5b: a real media send on an e2ee-active thread — session 37/38's
+// actual media-support feature (migration 20260929100000). Verifies the
+// message is created with real media_path/media_type stored, billing is
+// byte-based caption cost PLUS the same flat message_media_credits
+// surcharge non-e2ee media already charges (never based on the envelope's
+// own ciphertext length — that would only measure the tiny
+// {text, mediaKey, mediaNonce} JSON metadata, not the actual attachment,
+// exactly the loophole this migration's own header comment warns about),
+// and that ledger conservation holds across every wallet touched.
+// ===========================================================================
+
+async function testE2eeMediaSendBilling(admin) {
+  const { A, B, deviceA, deviceB, threadId } = await setupE2eeThread(admin);
+  let objectPath = null;
+  try {
+    objectPath = await uploadFixtureObject(
+      A,
+      Buffer.from('fake-ciphertext-bytes'),
+      'application/octet-stream',
+    );
+
+    const blockSize = await pricingConfig(admin, 'message_byte_block_size');
+    const baseCredits = await pricingConfig(admin, 'message_byte_base_credits');
+    const mediaCredits = await pricingConfig(admin, 'message_media_credits');
+
+    // 1 block worth of caption ciphertext (the {text, mediaKey, mediaNonce}
+    // JSON blob, in real client use) plus the attachment itself, already
+    // uploaded above.
+    const envelope = makeEnvelope(deviceB, 16 + blockSize);
+    const result = await sendE2eeWithMedia(admin, threadId, A, [envelope], objectPath, 'image');
+
+    log(
+      'billing is byte-based caption cost plus the flat media surcharge, not envelope-length-based media billing',
+      Number(result.credits_charged) === baseCredits * 1 + mediaCredits,
+      `got ${result.credits_charged}, expected ${baseCredits + mediaCredits}`,
+    );
+    log(
+      'status is escrowed (media never rides the free-status-reply path)',
+      result.status === 'escrowed',
+    );
+
+    const msg = await admin.query(
+      'select media_path, media_type, body from public.messages where id = $1',
+      [result.message_id],
+    );
+    log('media_path is stored', msg.rows[0].media_path === objectPath);
+    log("media_type is stored as 'image'", msg.rows[0].media_type === 'image');
+    log(
+      'body stays null (no server-side plaintext) even for a media message',
+      msg.rows[0].body === null,
+    );
+
+    const envelopes = await envelopesForMessage(admin, result.message_id);
+    log(
+      'the envelope (carrying the caption + attachment key/nonce, client-side) was still stored',
+      envelopes.length === 1,
+    );
+
+    // B replies so A's escrow actually releases, touching every wallet a
+    // real send affects — same shape as testLedgerConservation below.
+    await sendE2ee(admin, threadId, B, [makeEnvelope(deviceA, 64)]);
+
+    let allReconciled = true;
+    const details = [];
+    for (const [userId, kind] of [
+      [A, 'topup_credit'],
+      [B, 'earnings_pending'],
+      [B, 'withdrawable_cash'],
+    ]) {
+      const w = await walletRow(admin, userId, kind);
+      const sum = await ledgerSum(admin, w.id);
+      const ok = sum === Number(w.balance);
+      if (!ok) allReconciled = false;
+      details.push({ userId, kind, balance: w.balance, sum, ok });
+    }
+    log(
+      'ledger conservation holds across every wallet touched by an e2ee media send',
+      allReconciled,
+      JSON.stringify(details.filter((d) => !d.ok)),
+    );
+  } finally {
+    await deleteTestThread(admin, threadId);
+    await deleteTestUser(admin, A);
+    await deleteTestUser(admin, B);
+    if (objectPath) await deleteFixtureObject(objectPath);
   }
 }
 
@@ -659,6 +808,7 @@ async function main() {
     await testMultipleEnvelopesBillFromFirst(admin);
     await testEnvelopeRecipientOwnership(admin);
     await testGuardrails(admin);
+    await testE2eeMediaSendBilling(admin);
     await testFreeStatusReplyStillWorks(admin);
     await testLedgerConservation(admin);
     await testDuplicateContentNeverFlagsE2ee(admin);

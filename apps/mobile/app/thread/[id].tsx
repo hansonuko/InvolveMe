@@ -38,11 +38,14 @@ import {
   useCreateChatMediaUploadUrl,
   useDeleteMessageForEveryone,
   useDeleteMessageForMe,
+  useDecryptedChatImageUri,
   useEditMessage,
   useSendMessage,
   useThreadMessages,
+  readLocalFileBytes,
   uploadChatAudio,
   uploadChatMedia,
+  uploadEncryptedChatMedia,
 } from '@/lib/queries/messages';
 import { useSendGroupMessage } from '@/lib/queries/groups';
 import { useReportUser } from '@/lib/queries/profile';
@@ -55,6 +58,7 @@ import {
 } from '@/lib/queries/threads';
 import { hexToBytes } from '@/lib/e2ee/bytes';
 import { getOrCreateIdentity } from '@/lib/e2ee/identity';
+import { encryptMediaBytes, type MediaKeyMaterial } from '@/lib/e2ee/mediaCrypto';
 import { ensureDeviceRegistered } from '@/lib/e2ee/prekeys';
 import { computeSafetyNumber } from '@/lib/e2ee/safetyNumber';
 import {
@@ -676,6 +680,7 @@ function MessageBubble({
   onOpenActions,
   onToggleSelect,
   onOpenImage,
+  isE2eeThread,
 }: {
   message: Message;
   isOwn: boolean;
@@ -704,11 +709,38 @@ function MessageBubble({
    * resolves its own `media_path` (via `useChatMediaUrl`, below) and hands
    * the ready URL up rather than the modal re-resolving it itself. */
   onOpenImage: (url: string) => void;
+  /** This thread's current e2ee_status, passed down rather than re-derived
+   * (session 37/38 media follow-up) — distinguishes "a normal plaintext
+   * photo message" from "an e2ee photo message whose attachment key this
+   * device couldn't recover," which look identical from `message` alone
+   * once `e2eeMediaKeyBase64` is undefined in both cases. Only the second
+   * case should show a "media unavailable" placeholder instead of
+   * attempting to render the still-encrypted bytes directly. */
+  isE2eeThread: boolean;
 }) {
   const { colors, spacing, radius } = useTheme();
   const isDeleted = message.deleted_for_everyone;
   const dimInverseText = isOwn ? { color: withAlpha(colors.textInverse, 0.75) } : undefined;
   const mediaUrl = useChatMediaUrl(!isDeleted ? message.media_path : null);
+  // Real end-to-end encrypted media (session 37/38) — mediaUrl above is a
+  // signed URL to CIPHERTEXT when e2eeMediaKeyBase64 is set; this decrypts
+  // it into a directly-renderable data: URI. For a non-e2ee message
+  // (e2eeMediaKeyBase64 undefined) this hook stays disabled and
+  // decryptedImageUrl.data is simply never used below — mediaUrl.data (the
+  // plaintext file's own signed URL) renders directly instead, unchanged
+  // from before this feature existed.
+  const isE2eeImage = !isDeleted && message.media_type === 'image' && !!message.e2eeMediaKeyBase64;
+  const decryptedImageUrl = useDecryptedChatImageUri(
+    isE2eeImage ? mediaUrl.data : undefined,
+    message.e2eeMediaKeyBase64,
+    message.e2eeMediaNonceBase64,
+  );
+  const isE2eeMediaUnavailable =
+    isE2eeThread &&
+    !isDeleted &&
+    message.media_type === 'image' &&
+    !!message.media_path &&
+    !message.e2eeMediaKeyBase64;
 
   return (
     <View
@@ -803,39 +835,69 @@ function MessageBubble({
         ) : (
           <>
             {message.media_path && message.media_type === 'audio' ? (
-              <VoiceMessageBubble message={message} isOwn={isOwn} threadId={message.thread_id} />
+              <VoiceMessageBubble
+                message={message}
+                isOwn={isOwn}
+                threadId={message.thread_id}
+                isE2eeThread={isE2eeThread}
+              />
             ) : message.media_path ? (
-              <Pressable
-                onPress={() => mediaUrl.data && onOpenImage(mediaUrl.data)}
-                style={{ marginBottom: message.body.trim() ? spacing.xs : 0 }}
-              >
-                {mediaUrl.data ? (
-                  <Image
-                    source={{ uri: mediaUrl.data }}
-                    style={{ width: 220, height: 220, borderRadius: radius.card }}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View
-                    style={{
-                      width: 220,
-                      height: 220,
-                      borderRadius: radius.card,
-                      backgroundColor: withAlpha(colors.textSecondary, 0.15),
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
+              (() => {
+                // Real end-to-end encrypted media (session 37/38): the
+                // renderable image URL is either the plaintext file's own
+                // signed URL (non-e2ee) or the decrypted data: URI
+                // (e2ee, once decryptedImageUrl resolves) — never the raw
+                // ciphertext's signed URL directly, which would just be
+                // garbage bytes to <Image>.
+                const displayUrl = isE2eeImage ? decryptedImageUrl.data : mediaUrl.data;
+                const isBroken =
+                  isE2eeMediaUnavailable || (isE2eeImage && decryptedImageUrl.isError);
+                return (
+                  <Pressable
+                    onPress={() => displayUrl && onOpenImage(displayUrl)}
+                    style={{ marginBottom: message.body?.trim() ? spacing.xs : 0 }}
+                    disabled={isBroken}
                   >
-                    <Ionicons
-                      name={mediaUrl.isError ? 'image-outline' : 'hourglass-outline'}
-                      size={28}
-                      color={isOwn ? withAlpha(colors.textInverse, 0.6) : colors.textTertiary}
-                    />
-                  </View>
-                )}
-              </Pressable>
+                    {displayUrl ? (
+                      <Image
+                        source={{ uri: displayUrl }}
+                        style={{ width: 220, height: 220, borderRadius: radius.card }}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View
+                        style={{
+                          width: 220,
+                          height: 220,
+                          borderRadius: radius.card,
+                          backgroundColor: withAlpha(colors.textSecondary, 0.15),
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Ionicons
+                          name={
+                            isBroken || mediaUrl.isError ? 'image-outline' : 'hourglass-outline'
+                          }
+                          size={28}
+                          color={isOwn ? withAlpha(colors.textInverse, 0.6) : colors.textTertiary}
+                        />
+                        {isBroken ? (
+                          <Text
+                            variant="caption"
+                            color={isOwn ? undefined : 'secondary'}
+                            style={[{ marginTop: 4 }, dimInverseText]}
+                          >
+                            Media unavailable
+                          </Text>
+                        ) : null}
+                      </View>
+                    )}
+                  </Pressable>
+                );
+              })()
             ) : null}
-            {message.body.trim() ? (
+            {message.body?.trim() ? (
               <Text variant="body" color={isOwn ? 'inverse' : undefined}>
                 {message.body}
               </Text>
@@ -1313,6 +1375,16 @@ export default function ThreadScreen() {
     replyToMessageId?: string;
     mediaPath?: string;
     mediaType?: string;
+    /** Real end-to-end encrypted media (session 37/38) — must survive an
+     * insufficient-credit retry alongside mediaPath/mediaType. Without this,
+     * a retried e2ee photo/voice send would re-encrypt the envelope as a
+     * bare caption string (no {text, mediaKey, mediaNonce} JSON), leaving
+     * the already-uploaded, already-paid-for attachment permanently
+     * undecryptable for both sender and recipient — the upload can't be
+     * redone at retry time since the local file reference isn't kept
+     * either, so the key generated the first time is the only copy that
+     * will ever exist. */
+    e2eeMediaKey?: MediaKeyMaterial;
   } | null>(null);
 
   // Optimistic own-message bubble for a normal online send (WhatsApp shows
@@ -1402,6 +1474,7 @@ export default function ThreadScreen() {
     const replyToMessageId = pendingSend.replyToMessageId;
     const mediaPath = pendingSend.mediaPath;
     const mediaType = pendingSend.mediaType;
+    const mediaKey = pendingSend.e2eeMediaKey;
     const sendKey = Crypto.randomUUID();
     // Deferred one microtask out, not called directly in the effect body —
     // this project's lint gate (`react-hooks/set-state-in-effect`) flags
@@ -1422,6 +1495,7 @@ export default function ThreadScreen() {
         mediaType,
         e2eeStatus: headerInfo?.e2eeStatus,
         partnerId: headerInfo?.partnerId,
+        e2eeMediaKey: mediaKey,
       },
       {
         onSuccess: () => {
@@ -1437,6 +1511,7 @@ export default function ThreadScreen() {
               replyToMessageId,
               mediaPath,
               mediaType,
+              e2eeMediaKey: mediaKey,
             });
           } else {
             setPendingSend(null); // a different failure — don't keep silently retrying
@@ -1526,11 +1601,26 @@ export default function ThreadScreen() {
 
     let mediaPath: string | undefined;
     let mediaType: string | undefined;
+    let mediaKey: MediaKeyMaterial | undefined;
+    const isE2eeActive = headerInfo?.e2eeStatus === 'active';
     if (hasPickedMedia) {
       setIsUploadingMedia(true);
       try {
         const { path, token } = await createChatMediaUploadUrl.mutateAsync();
-        await uploadChatMedia(pickedImage.uri, path, token);
+        if (isE2eeActive) {
+          // Real end-to-end encrypted media (session 37/38) — encrypt the
+          // photo's bytes on-device before they ever leave it; the server
+          // only ever sees ciphertext, same as it already only ever sees
+          // ciphertext for e2ee text. The key/nonce travel to the recipient
+          // inside this same send's envelope (see sendMessage.mutate below),
+          // never through Storage.
+          const plaintextBytes = await readLocalFileBytes(pickedImage.uri);
+          const { ciphertext, keyMaterial } = encryptMediaBytes(sodium, plaintextBytes);
+          await uploadEncryptedChatMedia(ciphertext, path, token);
+          mediaKey = keyMaterial;
+        } else {
+          await uploadChatMedia(pickedImage.uri, path, token);
+        }
         mediaPath = path;
         mediaType = 'image';
       } catch (e) {
@@ -1563,6 +1653,7 @@ export default function ThreadScreen() {
         mediaType,
         e2eeStatus: headerInfo?.e2eeStatus,
         partnerId: headerInfo?.partnerId,
+        e2eeMediaKey: mediaKey,
       },
       {
         onSuccess: () => {
@@ -1580,6 +1671,7 @@ export default function ThreadScreen() {
               replyToMessageId,
               mediaPath,
               mediaType,
+              e2eeMediaKey: mediaKey,
             });
             setBody('');
             setReplyingTo(null);
@@ -1622,7 +1714,15 @@ export default function ThreadScreen() {
     setIsUploadingMedia(true);
     try {
       const { path, token } = await createChatMediaUploadUrl.mutateAsync('audio');
-      await uploadChatAudio(uri, path, token);
+      let mediaKey: MediaKeyMaterial | undefined;
+      if (headerInfo?.e2eeStatus === 'active') {
+        const plaintextBytes = await readLocalFileBytes(uri);
+        const { ciphertext, keyMaterial } = encryptMediaBytes(sodium, plaintextBytes);
+        await uploadEncryptedChatMedia(ciphertext, path, token);
+        mediaKey = keyMaterial;
+      } else {
+        await uploadChatAudio(uri, path, token);
+      }
 
       await sendMessage.mutateAsync({
         threadId: id,
@@ -1633,6 +1733,7 @@ export default function ThreadScreen() {
         waveformSamples,
         e2eeStatus: headerInfo?.e2eeStatus,
         partnerId: headerInfo?.partnerId,
+        e2eeMediaKey: mediaKey,
       });
       scrollToLatest();
     } catch (e) {
@@ -1696,6 +1797,13 @@ export default function ThreadScreen() {
 
     const jobs = forwardMessages.flatMap((message) =>
       targets.map(async (target) => {
+        // A message reaching forwardMessages has already been through
+        // useThreadMessages' own decrypt/fallback path, so this is never
+        // actually null in practice — the type stays honest about the raw
+        // possibility regardless (Message.body's own comment), so this
+        // satisfies it with the same fallback text that path itself uses,
+        // not a fresh, made-up string.
+        const forwardBody = message.body ?? '🔒 Message unavailable';
         // The outbox has no concept of "encrypt this once actually
         // online" (outboxDrain.ts posts body/is_forwarded straight
         // through, docs/13-OFFLINE-MODE-SCOPING.md's own stub state) — a
@@ -1713,7 +1821,7 @@ export default function ThreadScreen() {
             target.kind === '1:1'
               ? {
                   clientMessageId: Crypto.randomUUID(),
-                  body: message.body,
+                  body: forwardBody,
                   createdAt: new Date().toISOString(),
                   senderId: currentUserId,
                   target: { kind: '1:1', threadId: target.id },
@@ -1721,7 +1829,7 @@ export default function ThreadScreen() {
                 }
               : {
                   clientMessageId: Crypto.randomUUID(),
-                  body: message.body,
+                  body: forwardBody,
                   createdAt: new Date().toISOString(),
                   senderId: currentUserId,
                   target: { kind: 'group', groupThreadId: target.id },
@@ -1734,7 +1842,7 @@ export default function ThreadScreen() {
         if (target.kind === '1:1') {
           await sendMessage.mutateAsync({
             threadId: target.id,
-            body: message.body,
+            body: forwardBody,
             isForwarded: true,
             e2eeStatus: target.e2eeStatus,
             partnerId: target.partnerId,
@@ -1742,7 +1850,7 @@ export default function ThreadScreen() {
         } else {
           await sendGroupMessage.mutateAsync({
             groupThreadId: target.id,
-            body: message.body,
+            body: forwardBody,
             isForwarded: true,
           });
         }
@@ -1770,7 +1878,11 @@ export default function ThreadScreen() {
   const handleRequestEdit = (message: Message) => {
     setReplyingTo(null);
     setEditingMessage(message);
-    setBody(message.body);
+    // Never actually null in practice by the time a message is selectable
+    // here (already through useThreadMessages' own decrypt/fallback path,
+    // same reasoning as handleConfirmForward's forwardBody above) — the
+    // type stays honest about the raw possibility regardless.
+    setBody(message.body ?? '');
     composerInputRef.current?.focus();
   };
 
@@ -2123,6 +2235,7 @@ export default function ThreadScreen() {
                     onOpenActions={(m) => enterSelection(m.id)}
                     onToggleSelect={toggleSelected}
                     onOpenImage={setViewingImageUrl}
+                    isE2eeThread={headerInfo?.e2eeStatus === 'active'}
                   />
                 );
               }}

@@ -184,13 +184,6 @@ function mapSendMessageError(pgMessage: string): Response {
       'That status is no longer available to reply to.',
     );
   }
-  if (pgMessage.startsWith('e2ee_media_not_supported')) {
-    return errorResponse(
-      400,
-      'e2ee_media_not_supported',
-      'Media is not yet supported in end-to-end-encrypted conversations.',
-    );
-  }
   if (pgMessage.startsWith('e2ee_envelopes_required')) {
     return errorResponse(
       400,
@@ -374,13 +367,13 @@ Deno.serve(async (req) => {
 
   let envelopes: z.infer<typeof E2eeEnvelopesArraySchema> | null = null;
   if (isE2eeActive) {
-    if (hasMedia) {
-      return errorResponse(
-        400,
-        'e2ee_media_not_supported',
-        'Media is not yet supported in end-to-end-encrypted conversations.',
-      );
-    }
+    // Media is supported on e2ee-active threads (session 37/38) — the
+    // client encrypts the file itself before upload and carries the
+    // attachment key inside this same envelope (see fn_send_message's own
+    // header comment for the full design). This function never needs to
+    // know a request carries media any differently than a text-only one:
+    // hasMedia/media_path/media_type/duration/waveform are already
+    // validated identically for both cases inside fn_send_message itself.
     const envelopesParsed = parseBody(E2eeEnvelopesArraySchema, payload.envelopes);
     if (!envelopesParsed.success) return envelopesParsed.response;
     envelopes = envelopesParsed.data;

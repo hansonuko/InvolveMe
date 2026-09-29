@@ -1,10 +1,61 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as Crypto from 'expo-crypto';
+import { File, Paths } from 'expo-file-system';
 
 import { callEdgeFunction, EdgeFunctionError } from '@/lib/edgeFunctions';
+import { bytesToBase64 } from '@/lib/e2ee/bytes';
+import { decryptMediaBytes, type MediaKeyMaterial } from '@/lib/e2ee/mediaCrypto';
 import { deleteCachedPlaintext, setCachedPlaintext } from '@/lib/e2ee/plaintextCache';
 import { decryptThreadMessages, encryptForThread, type OutgoingEnvelope } from '@/lib/e2ee/session';
+import { nativeSodiumProvider } from '@/lib/e2ee/sodiumProviderNative';
 import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
+
+/** An e2ee media message's plaintext isn't a bare caption string — it's this
+ * JSON shape (`{text, mediaKey, mediaNonce}`), so the attachment's symmetric
+ * key can ride inside the same Double Ratchet envelope that already carries
+ * the caption (see mediaCrypto.ts and fn_send_message's own header comment,
+ * migration 20260929100000). Only ever used for a message that actually has
+ * `media_path` set — a text-only e2ee message's plaintext stays a bare
+ * string exactly as before, so this never risks misreading an existing
+ * (pre-media-feature) message's decrypted body as JSON. */
+interface E2eeMediaPlaintext {
+  text: string;
+  mediaKey: string;
+  mediaNonce: string;
+}
+
+function encodeE2eeMediaPlaintext(text: string, keyMaterial: MediaKeyMaterial): string {
+  return JSON.stringify({
+    text,
+    mediaKey: keyMaterial.keyBase64,
+    mediaNonce: keyMaterial.nonceBase64,
+  });
+}
+
+/** Inverse of encodeE2eeMediaPlaintext — only called once decryption of the
+ * envelope itself already succeeded (never on the "🔒 Message unavailable"
+ * fallback string, which isn't real JSON and shouldn't be parsed as if it
+ * were). A parse failure here means a malformed/corrupt payload, not a
+ * decrypt failure — falls back to an empty caption with no recoverable
+ * media key, which the UI renders as a "media unavailable" state rather
+ * than crashing. */
+function decodeE2eeMediaPlaintext(raw: string): {
+  body: string;
+  mediaKey?: string;
+  mediaNonce?: string;
+} {
+  try {
+    const parsed = JSON.parse(raw) as Partial<E2eeMediaPlaintext>;
+    return {
+      body: typeof parsed.text === 'string' ? parsed.text : '',
+      mediaKey: typeof parsed.mediaKey === 'string' ? parsed.mediaKey : undefined,
+      mediaNonce: typeof parsed.mediaNonce === 'string' ? parsed.mediaNonce : undefined,
+    };
+  } catch {
+    return { body: '' };
+  }
+}
 
 /** `fn_send_message`/`fn_edit_message`'s `p_envelopes` shape (docs/21-E2EE-TECHNICAL-DESIGN.md §3) — the wire/RPC field names, snake_case, distinct from OutgoingEnvelope's camelCase in-app shape. */
 function envelopesForRpc(envelopes: OutgoingEnvelope[]) {
@@ -24,7 +75,15 @@ export interface Message {
   id: string;
   thread_id: string;
   sender_id: string;
-  body: string;
+  /** null-by-design for an e2ee-active thread's message (docs/21 §2) — the
+   * real content lives only in e2ee_message_envelopes. useThreadMessages'
+   * own decrypt path always resolves this to a real string (the decrypted
+   * plaintext, or a "🔒 Message unavailable" fallback) before a Message
+   * ever reaches a component — but the type stays honest about the raw
+   * possibility rather than lying `string`, which is exactly what let a
+   * real crash (MessageBubble's unconditional `.trim()`, session 37) go
+   * uncaught by the type checker. */
+  body: string | null;
   word_count: number;
   credits_charged: number;
   /** `'sent'` (docs/18-CHAT-STATUS-REFINEMENT-BATCH-SCOPING.md §B1) is a
@@ -88,6 +147,17 @@ export interface Message {
    * parallel to (not replacing) the read-receipt double-tick. `null`
    * means unplayed (or not audio at all). */
   audio_played_at: string | null;
+  /** Only ever set for an e2ee-active thread's media message, and only once
+   * this device has successfully decrypted its envelope (docs/21 §5 follow-
+   * up, session 37/38) — the per-attachment symmetric key/nonce
+   * (mediaCrypto.ts) needed to decrypt the ciphertext actually sitting at
+   * `media_path`. `undefined` for every non-e2ee message (the file at
+   * media_path is already plaintext, nothing to decrypt) and for an e2ee
+   * media message this device couldn't decrypt (same "🔒 Message
+   * unavailable" case as a text message's body, extended to media: no key
+   * recovered means no attempt to fetch/decrypt the attachment either). */
+  e2eeMediaKeyBase64?: string;
+  e2eeMediaNonceBase64?: string;
 }
 
 /** Messages in a thread, oldest first, kept live via Realtime — per
@@ -108,7 +178,23 @@ export function useThreadMessages(
   e2eeStatus?: 'off' | 'active',
 ) {
   const queryClient = useQueryClient();
-  const queryKey = ['messages', threadId];
+  // e2eeStatus is part of the key, not just a closure value the queryFn
+  // reads — it resolves asynchronously (useThreadHeaderInfo, a separate,
+  // slower fetch) and typically starts `undefined` on first mount, before
+  // this query's own `enabled` gate (threadId + currentUserId only) lets
+  // it fire. Without e2eeStatus in the key, that first fetch can run with
+  // `e2eeStatus === undefined`, skip the decrypt/fallback branch entirely
+  // (`e2eeStatus !== 'active'` short-circuits it), and cache raw
+  // `body: null` rows for a thread that's actually e2ee-active — which
+  // TanStack Query then has no reason to ever refetch, since nothing
+  // about the key changed once e2eeStatus later resolves to 'active'.
+  // Found live (session 37) as a real crash: MessageBubble assumes
+  // `message.body` is always a string and calls `.trim()` on it
+  // unconditionally, which throws on a null body that slipped through
+  // this exact race. Keying on e2eeStatus forces a genuine refetch (with
+  // the correct decrypt/fallback branch) the moment it resolves, instead
+  // of silently keeping the wrong cached result.
+  const queryKey = ['messages', threadId, e2eeStatus];
 
   const query = useQuery({
     queryKey,
@@ -151,10 +237,13 @@ export function useThreadMessages(
         currentUserId as string,
         visible,
       );
-      return visible.map((m) => ({
-        ...m,
-        body: decrypted.get(m.id) ?? '🔒 Message unavailable',
-      }));
+      return visible.map((m) => {
+        const raw = decrypted.get(m.id);
+        if (raw === undefined) return { ...m, body: '🔒 Message unavailable' };
+        if (!m.media_path) return { ...m, body: raw };
+        const { body, mediaKey, mediaNonce } = decodeE2eeMediaPlaintext(raw);
+        return { ...m, body, e2eeMediaKeyBase64: mediaKey, e2eeMediaNonceBase64: mediaNonce };
+      });
     },
   });
 
@@ -182,7 +271,21 @@ export function useThreadMessages(
           // unreadable while some other re-render happens to trigger a
           // refetch.
           decryptThreadMessages(threadId as string, currentUserId, [row]).then((decrypted) => {
-            const resolvedRow = { ...row, body: decrypted.get(row.id) ?? '🔒 Message unavailable' };
+            const raw = decrypted.get(row.id);
+            const resolvedRow =
+              raw === undefined
+                ? { ...row, body: '🔒 Message unavailable' }
+                : row.media_path
+                  ? (() => {
+                      const { body, mediaKey, mediaNonce } = decodeE2eeMediaPlaintext(raw);
+                      return {
+                        ...row,
+                        body,
+                        e2eeMediaKeyBase64: mediaKey,
+                        e2eeMediaNonceBase64: mediaNonce,
+                      };
+                    })()
+                  : { ...row, body: raw };
             queryClient.setQueryData<Message[]>(queryKey, (old) => {
               if (!old) return old;
               if (old.some((m) => m.id === resolvedRow.id)) return old;
@@ -325,6 +428,15 @@ interface SendMessageRequest {
    * for that case. */
   e2eeStatus?: 'off' | 'active';
   partnerId?: string;
+  /** Set only when this send carries media on an e2ee-active thread — the
+   * key/nonce `encryptMediaBytes` (mediaCrypto.ts) generated for the
+   * attachment, which the caller already used to encrypt the file's bytes
+   * and upload the ciphertext to `mediaPath` via `uploadEncryptedChatMedia`
+   * BEFORE calling this mutation. Embedded into the envelope's own
+   * plaintext alongside `body` (see encodeE2eeMediaPlaintext) rather than
+   * sent any other way — this is the only channel the recipient's key
+   * material ever travels through. */
+  e2eeMediaKey?: MediaKeyMaterial;
 }
 
 interface SendMessageResponse {
@@ -362,7 +474,10 @@ export function useSendMessage() {
         if (!request.threadId || !request.partnerId) {
           throw new Error('useSendMessage: an active-e2ee send needs both threadId and partnerId.');
         }
-        const outgoing = await encryptForThread(request.threadId, request.partnerId, request.body);
+        const plaintext = request.e2eeMediaKey
+          ? encodeE2eeMediaPlaintext(request.body, request.e2eeMediaKey)
+          : request.body;
+        const outgoing = await encryptForThread(request.threadId, request.partnerId, plaintext);
         envelopes = envelopesForRpc(outgoing);
       }
 
@@ -395,7 +510,10 @@ export function useSendMessage() {
         // first regardless, so a loss here just means a one-time "🔒
         // Message unavailable" for this device's own bubble until the
         // next real fetch, never corrupted content.
-        await setCachedPlaintext(data.message_id, variables.body);
+        const cachedPlaintext = variables.e2eeMediaKey
+          ? encodeE2eeMediaPlaintext(variables.body, variables.e2eeMediaKey)
+          : variables.body;
+        await setCachedPlaintext(data.message_id, cachedPlaintext);
       }
 
       // Deliberately no `invalidateQueries(['messages', ...])` here — the
@@ -466,6 +584,63 @@ export async function uploadChatAudio(localUri: string, path: string, token: str
   if (error) throw error;
 }
 
+/** Reads a local capture/pick's raw bytes off-device, before encryption —
+ * the same `fetch(localUri).blob()` step `uploadChatMedia`/`uploadChatAudio`
+ * already do, split out so the e2ee path can encrypt these bytes
+ * (mediaCrypto.ts's encryptMediaBytes) before anything is uploaded, instead
+ * of uploading the plaintext file directly. */
+export async function readLocalFileBytes(localUri: string): Promise<Uint8Array> {
+  const response = await fetch(localUri);
+  const blob = await response.blob();
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+/** Uploads an already-encrypted attachment (mediaCrypto.ts's
+ * encryptMediaBytes output) to a signed upload slot — the e2ee counterpart
+ * to `uploadChatMedia`/`uploadChatAudio`, which upload a file's real bytes
+ * unchanged. `application/octet-stream` is the only honest Content-Type for
+ * opaque ciphertext (migration 20260929100000 widened the bucket's
+ * allowed_mime_types for exactly this) — it is never a valid JPEG/PNG/M4A
+ * once encrypted, so claiming one of those types here would be a lie this
+ * app has no reason to tell since every e2ee attachment is decrypted before
+ * it's ever rendered anyway.
+ *
+ * Routes the ciphertext through a temp file rather than
+ * `new Blob([ciphertext], ...)` directly — React Native's own Blob polyfill
+ * (`BlobManager.createFromParts`) explicitly throws on ArrayBuffer/
+ * ArrayBufferView parts (see uploadStatusMedia's header comment,
+ * lib/queries/status.ts, for the prior real bug this exact constraint
+ * caused); only wrapping an existing Blob works on-device. Writing to a
+ * temp file via expo-file-system's File API and then `fetch(file://...)
+ * .blob()` reuses the identical, already-proven local-file-to-Blob path
+ * every other upload in this app already relies on, rather than a second,
+ * novel construction. */
+export async function uploadEncryptedChatMedia(
+  ciphertext: Uint8Array,
+  path: string,
+  token: string,
+) {
+  const tempFile = new File(Paths.cache, `e2ee-upload-${Crypto.randomUUID()}.bin`);
+  try {
+    tempFile.create({ overwrite: true });
+    tempFile.write(ciphertext);
+    const response = await fetch(tempFile.uri);
+    const original = await response.blob();
+    const blob = new Blob([original], { type: 'application/octet-stream' });
+    const { error } = await supabase.storage
+      .from('chat-media')
+      .uploadToSignedUrl(path, token, blob);
+    if (error) throw error;
+  } finally {
+    try {
+      tempFile.delete();
+    } catch {
+      // Best-effort cleanup — the cache directory is OS-reclaimed anyway,
+      // so a failure here is never worth surfacing over the upload itself.
+    }
+  }
+}
+
 /** Signed read URL for a chat-media object — the bucket is private, so
  * this is the only way to actually display one. Fails (throws) if the
  * caller isn't a participant in the owning message's thread, per
@@ -484,6 +659,39 @@ export function useChatMediaUrl(mediaPath: string | null) {
         .createSignedUrl(mediaPath as string, 3600);
       if (error) throw error;
       return data.signedUrl;
+    },
+  });
+}
+
+/** Real end-to-end encrypted media (session 37/38 follow-up to docs/21) —
+ * decrypts an e2ee thread's photo ciphertext (already downloaded from its
+ * own signed URL, via useChatMediaUrl) into a `data:` URI React Native's
+ * <Image> can render directly. Only enabled once both the signed URL and
+ * the envelope-carried key/nonce (Message.e2eeMediaKeyBase64/
+ * e2eeMediaNonceBase64, resolved by useThreadMessages' own decrypt path)
+ * are available — a non-e2ee thread's photo never calls this, since
+ * useChatMediaUrl's own result is already directly renderable for it.
+ * `image/jpeg` matches uploadChatMedia's own fixed content-type for every
+ * chat photo this app has ever accepted (docs/16 §2's JPEG-over-WebP
+ * choice) — the encrypted bytes carry no format info of their own to read
+ * instead. */
+export function useDecryptedChatImageUri(
+  mediaUrl: string | undefined,
+  mediaKeyBase64: string | undefined,
+  mediaNonceBase64: string | undefined,
+) {
+  return useQuery({
+    queryKey: ['decryptedChatImage', mediaUrl, mediaKeyBase64],
+    enabled: !!mediaUrl && !!mediaKeyBase64 && !!mediaNonceBase64,
+    staleTime: 60 * 60 * 1000,
+    queryFn: async (): Promise<string> => {
+      const response = await fetch(mediaUrl as string);
+      const ciphertext = new Uint8Array(await response.arrayBuffer());
+      const plaintext = decryptMediaBytes(nativeSodiumProvider, ciphertext, {
+        keyBase64: mediaKeyBase64 as string,
+        nonceBase64: mediaNonceBase64 as string,
+      });
+      return `data:image/jpeg;base64,${bytesToBase64(plaintext)}`;
     },
   });
 }
@@ -623,7 +831,14 @@ export function useMarkAudioPlayed() {
     mutationFn: (request) =>
       callEdgeFunction('mark-audio-played', { message_id: request.messageId }),
     onSuccess: (_data, variables) => {
-      queryClient.setQueryData<Message[]>(['messages', variables.threadId], (old) =>
+      // setQueriesData (not setQueryData) — the real cache key is now
+      // ['messages', threadId, e2eeStatus] (useThreadMessages's own
+      // e2eeStatus-keying fix, session 37), and setQueryData only ever
+      // matches an EXACT key, unlike invalidateQueries' default prefix
+      // matching. A plain setQueryData(['messages', threadId], ...) here
+      // would silently patch a cache entry that doesn't exist, a no-op
+      // that never reaches the real displayed data.
+      queryClient.setQueriesData<Message[]>({ queryKey: ['messages', variables.threadId] }, (old) =>
         old?.map((m) =>
           m.id === variables.messageId ? { ...m, audio_played_at: new Date().toISOString() } : m,
         ),
