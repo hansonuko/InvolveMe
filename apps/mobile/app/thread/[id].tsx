@@ -61,6 +61,7 @@ import { getOrCreateIdentity } from '@/lib/e2ee/identity';
 import { encryptMediaBytes, type MediaKeyMaterial } from '@/lib/e2ee/mediaCrypto';
 import { ensureDeviceRegistered } from '@/lib/e2ee/prekeys';
 import { computeSafetyNumber } from '@/lib/e2ee/safetyNumber';
+import { resetSessionWithDevice } from '@/lib/e2ee/session';
 import {
   getKnownIdentityKey,
   setKnownIdentityKey,
@@ -445,6 +446,59 @@ function ThreadOverflowMenu({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSafetyNumberRequestId]);
 
+  /** Manual recovery for a wedged e2ee session (docs/21 — real bug: a
+   * session bootstrapped before 412ffad's crypto fix derived a garbage
+   * root key from the start, so every message in it fails to decrypt,
+   * forever, with no self-repair). `decryptEnvelope` (session.ts) already
+   * auto-drops a session the moment a decrypt fails, but that alone only
+   * heals the RECEIVING half on this device — this button clears this
+   * device's session for every one of the partner's registered devices,
+   * covering the sending half too, so the very next message either side
+   * sends re-does a clean X3DH handshake instead of continuing corrupted
+   * state. Needs both people's devices to end up with no session before
+   * it fully converges (see session.ts's own catch-block comment for why
+   * a lingering one-sided reset can still take one more failed round-trip
+   * to self-heal) — the copy below says so rather than promising an
+   * instant fix. */
+  const handleResetEncryptionSession = () => {
+    onClose();
+    Alert.alert(
+      'Reset encryption session?',
+      'Use this if messages in this chat show "Message unavailable" and won\'t decrypt. This clears your device\'s saved encryption keys for this contact — the next message either of you sends starts a fresh, secure session. If it still happens afterward, ask the other person to do the same on their device.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                const { data, error } = await supabase
+                  .from('e2ee_devices')
+                  .select('id')
+                  .eq('user_id', partnerId)
+                  .is('revoked_at', null);
+                if (error) throw error;
+                for (const device of data ?? []) {
+                  await resetSessionWithDevice(threadId, device.id as string);
+                }
+                Alert.alert(
+                  'Encryption session reset',
+                  'Send a new message to start a fresh, secure session.',
+                );
+              } catch (e) {
+                Alert.alert(
+                  'Could not reset',
+                  e instanceof Error ? e.message : 'Something went wrong.',
+                );
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
   const handleToggleBlock = () => {
     onClose();
     const action = blockedByMe ? 'Unblock' : 'Block';
@@ -530,14 +584,24 @@ function ThreadOverflowMenu({
                 </Text>
               </Pressable>
             ) : (
-              <Pressable
-                style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
-                onPress={handleViewSafetyNumber}
-              >
-                <Text variant="bodyMedium" color="primary">
-                  View safety number
-                </Text>
-              </Pressable>
+              <>
+                <Pressable
+                  style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
+                  onPress={handleViewSafetyNumber}
+                >
+                  <Text variant="bodyMedium" color="primary">
+                    View safety number
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
+                  onPress={handleResetEncryptionSession}
+                >
+                  <Text variant="bodyMedium" color="primary">
+                    Reset encryption session
+                  </Text>
+                </Pressable>
+              </>
             )}
             <Pressable
               style={{ paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}
