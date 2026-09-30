@@ -3,7 +3,7 @@
 // so it's exempt from CLAUDE.md's ledger-conservation/concurrency test
 // requirement (that requirement is scoped to balance-mutating functions).
 // What matters here: no auth is required (it's a public marketing-site
-// endpoint on purpose), and the response is exactly the 6 whitelisted
+// endpoint on purpose), and the response is exactly the whitelisted
 // pricing_config keys — no more (no accidental full-table leak), no less.
 
 const { Client } = require('pg');
@@ -29,6 +29,10 @@ for (const [name, val] of Object.entries({
 
 const FUNCTION_URL = 'http://127.0.0.1:8000';
 const FUNCTION_ENTRY = path.join(__dirname, '..', 'functions', 'get-public-pricing', 'index.ts');
+// Mirrors PUBLIC_KEYS in supabase/functions/get-public-pricing/index.ts —
+// the point of this assertion is that the public endpoint leaks nothing
+// beyond that deliberate whitelist, so this list has to be kept in step with
+// it by hand whenever a key is added there.
 const EXPECTED_KEYS = [
   'credit_unit_kobo',
   'message_base_credits',
@@ -36,6 +40,12 @@ const EXPECTED_KEYS = [
   'message_max_words',
   'platform_topup_fee_bps',
   'platform_earning_take_bps',
+  // Added with the byte-based e2ee billing formula (session 37,
+  // b90f630) — the function started returning these and this mirror was
+  // not updated, which is what left the assertion failing on main.
+  'message_byte_base_credits',
+  'message_byte_block_size',
+  'message_max_bytes',
 ].sort();
 
 let pass = 0;
@@ -98,7 +108,7 @@ async function main() {
 
     const returnedKeys = body ? Object.keys(body).sort() : [];
     log(
-      'response contains exactly the 6 whitelisted keys, nothing else',
+      'response contains exactly the whitelisted keys, nothing else',
       JSON.stringify(returnedKeys) === JSON.stringify(EXPECTED_KEYS),
       `keys=${JSON.stringify(returnedKeys)}`,
     );

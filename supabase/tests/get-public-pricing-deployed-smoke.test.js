@@ -21,6 +21,9 @@ if (!SUPABASE_URL) {
   process.exit(1);
 }
 
+// Mirrors PUBLIC_KEYS in supabase/functions/get-public-pricing/index.ts —
+// see the same list in get-public-pricing-function.test.js for why this is
+// kept in step by hand.
 const EXPECTED_KEYS = [
   'credit_unit_kobo',
   'message_base_credits',
@@ -28,6 +31,9 @@ const EXPECTED_KEYS = [
   'message_max_words',
   'platform_topup_fee_bps',
   'platform_earning_take_bps',
+  'message_byte_base_credits',
+  'message_byte_block_size',
+  'message_max_bytes',
 ].sort();
 
 let pass = 0;
@@ -50,7 +56,7 @@ async function main() {
 
   const returnedKeys = body ? Object.keys(body).sort() : [];
   log(
-    'response contains exactly the 6 whitelisted keys',
+    'response contains exactly the whitelisted keys',
     JSON.stringify(returnedKeys) === JSON.stringify(EXPECTED_KEYS),
     `keys=${JSON.stringify(returnedKeys)}`,
   );
