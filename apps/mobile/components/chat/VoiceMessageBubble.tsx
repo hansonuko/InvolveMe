@@ -15,7 +15,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, PanResponder, Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { PanResponder, Pressable, View, type LayoutChangeEvent } from 'react-native';
 
 import { Text } from '@/components/ui/Text';
 import { usePlaybackStore, type PlaybackRate } from '@/lib/audio/playbackStore';
@@ -23,6 +23,7 @@ import { decryptMediaBytes } from '@/lib/e2ee/mediaCrypto';
 import { nativeSodiumProvider } from '@/lib/e2ee/sodiumProviderNative';
 import { useChatMediaUrl, useMarkAudioPlayed, type Message } from '@/lib/queries/messages';
 import { supabase } from '@/lib/supabase';
+import { showAlert } from '@/lib/ui/alert';
 import { useTheme } from '@/theme';
 
 const BAR_WIDTH = 3;
@@ -135,7 +136,7 @@ export function VoiceMessageBubble({
       markPlayedIfNeeded();
     } catch (e) {
       console.error('VoiceMessageBubble: failed to decrypt voice note:', e);
-      Alert.alert('Could not play voice message', 'This voice message could not be decrypted.');
+      showAlert('Could not play voice message', 'This voice message could not be decrypted.');
     } finally {
       setIsDecrypting(false);
     }

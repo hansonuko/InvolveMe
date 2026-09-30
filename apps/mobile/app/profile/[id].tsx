@@ -3,7 +3,6 @@ import { Contact, requestPermissionsAsync } from 'expo-contacts';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Image,
   Linking,
   Modal,
@@ -30,6 +29,7 @@ import { useStatusFeed } from '@/lib/queries/status';
 import { useSetThreadBlocked, useSetThreadMuted } from '@/lib/queries/threads';
 import { toE164NigerianPhone } from '@/lib/phone';
 import { supabase } from '@/lib/supabase';
+import { showAlert } from '@/lib/ui/alert';
 import { useTheme } from '@/theme';
 
 const COVER_HEIGHT = 140;
@@ -352,7 +352,7 @@ export default function ProfileScreen() {
   const handleToggleBlock = () => {
     if (!threadId || !relation) return;
     const action = relation.blockedByMe ? 'Unblock' : 'Block';
-    Alert.alert(`${action} this contact?`, undefined, [
+    showAlert(`${action} this contact?`, undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: action,
@@ -373,7 +373,7 @@ export default function ProfileScreen() {
       {
         onSuccess: () => {
           setReportOpen(false);
-          Alert.alert('Reported', 'Thanks — our team will review this.');
+          showAlert('Reported', 'Thanks — our team will review this.');
         },
       },
     );

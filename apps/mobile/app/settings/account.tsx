@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 import { useState } from 'react';
-import { Alert, ScrollView, TextInput, View } from 'react-native';
+import { ScrollView, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
@@ -14,6 +14,7 @@ import {
   useRequestAccountDeletion,
 } from '@/lib/queries/profile';
 import { useDisableTwoStep, useSetTwoStepPin } from '@/lib/queries/twoStep';
+import { showAlert } from '@/lib/ui/alert';
 import { useTheme } from '@/theme';
 
 function SectionHeader({ label }: { label: string }) {
@@ -376,7 +377,7 @@ export default function AccountSettingsScreen() {
 
   const handleDeleteAccount = () => {
     if (!userId) return;
-    Alert.alert(
+    showAlert(
       'Delete account',
       'This sends a request to our team for manual review — your wallet balance needs to be handled first, so this is not instant. Continue?',
       [

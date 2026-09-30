@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Image,
   Modal,
@@ -39,6 +38,7 @@ import {
 } from '@/lib/queries/status';
 import { useStartThread } from '@/lib/queries/threads';
 import { formatStatusAge } from '@/lib/statusAge';
+import { showAlert } from '@/lib/ui/alert';
 import { getStatusTextTemplate } from '@/lib/statusTextTemplates';
 import { useTheme } from '@/theme';
 
@@ -287,7 +287,7 @@ function PosterPage({
   // (block, remove group member, leave group, ...), all of which confirm
   // first.
   const handleDeleteStatus = () => {
-    Alert.alert('Delete this status?', 'This cannot be undone.', [
+    showAlert('Delete this status?', 'This cannot be undone.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -344,7 +344,7 @@ function PosterPage({
               router.push(`/thread/${thread.thread_id}`);
             },
             onError: (error) => {
-              Alert.alert(
+              showAlert(
                 'Could not send reply',
                 error.code === 'insufficient_credit'
                   ? 'You need more chat credit to reply to this status.'
@@ -359,7 +359,7 @@ function PosterPage({
       },
       onError: (error) => {
         finish();
-        Alert.alert('Could not send reply', error.message);
+        showAlert('Could not send reply', error.message);
       },
     });
   };

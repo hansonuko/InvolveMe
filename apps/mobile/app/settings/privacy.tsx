@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Modal, Pressable, Switch, TextInput, View } from 'react-native';
+import { Modal, Pressable, Switch, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
@@ -13,6 +13,7 @@ import {
   useSetLastSeenEnabled,
   useSetReadReceiptsEnabled,
 } from '@/lib/queries/profile';
+import { showAlert } from '@/lib/ui/alert';
 import { useBlockedThreads, useSetThreadBlocked } from '@/lib/queries/threads';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/theme';
@@ -157,14 +158,14 @@ function ReportUserModal({
       .eq('phone', phone.replace(/^\+/, ''))
       .maybeSingle();
     if (!found) {
-      Alert.alert('Not found', 'No InvolveMe user has that phone number.');
+      showAlert('Not found', 'No InvolveMe user has that phone number.');
       return;
     }
     reportUser.mutate(
       { reporterId, reportedUserId: found.id, reason, details: details.trim() || undefined },
       {
         onSuccess: () =>
-          Alert.alert('Reported', 'Thanks — our team will review this.', [
+          showAlert('Reported', 'Thanks — our team will review this.', [
             { text: 'OK', onPress: handleClose },
           ]),
       },
