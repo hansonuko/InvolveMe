@@ -35,7 +35,14 @@ async function main() {
   const res = await fetch(`${SUPABASE_URL}/functions/v1/web-send-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: 'https://involveme.com' },
-    body: JSON.stringify({ phone: '+2348012345678', turnstileToken: 'irrelevant' }),
+    // Unique per run for the same reason as web-send-otp-function.test.js:
+    // this assertion needs the request to get PAST the per-phone rate
+    // limiter to reach the captcha check, so a number shared with any other
+    // run in the same 10-minute window turns a captcha assertion into a 429.
+    body: JSON.stringify({
+      phone: `+234${Math.floor(Math.random() * 9_000_000_000 + 1_000_000_000)}`,
+      turnstileToken: 'irrelevant',
+    }),
   });
   const body = await res.json().catch(() => null);
 

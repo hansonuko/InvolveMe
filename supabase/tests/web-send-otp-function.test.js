@@ -36,7 +36,18 @@ for (const [name, val] of Object.entries({
 // Cloudflare's published, public test constants — not secrets.
 const TURNSTILE_TEST_SECRET_ALWAYS_PASSES = '1x0000000000000000000000000000000AA';
 const TURNSTILE_TEST_SECRET_ALWAYS_FAILS = '2x0000000000000000000000000000000AA';
-const TEST_PHONE = '+2348012345678';
+// Unique per run, not a fixed number. web-send-otp rate-limits per phone
+// (`web-send-otp:phone:<phone>`) at OTP_PER_PHONE_MAX = 3 per 10 minutes,
+// and exactly 3 of the calls below get far enough to consume that budget
+// (the rate-limit check sits after phone/token parsing but before captcha
+// verification, so only the calls that carry a token reach it). One run
+// therefore fills the bucket exactly — which was fine in isolation and
+// flaky the moment a second run started inside the same 10-minute window,
+// as a local run and CI overlapping would do: the later run 429s on its
+// third captcha assertion and reports a captcha failure that is really a
+// rate-limit collision. A fresh number per run gives each run its own
+// bucket and keeps the assertions about captcha behavior.
+const TEST_PHONE = `+234${Math.floor(Math.random() * 9_000_000_000 + 1_000_000_000)}`;
 
 const FUNCTION_URL = 'http://127.0.0.1:8000';
 const FUNCTION_ENTRY = path.join(__dirname, '..', 'functions', 'web-send-otp', 'index.ts');
