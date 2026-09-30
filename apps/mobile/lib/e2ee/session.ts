@@ -320,10 +320,33 @@ export async function decryptEnvelope(
       throw new Error('decryptEnvelope: no session and no X3DH bootstrap fields on this envelope.');
     }
 
-    const decrypted = ratchetDecrypt(sodium, session, header, ciphertext, ad);
-    await saveSession(threadId, senderDeviceId, decrypted.nextState);
-
-    return new TextDecoder().decode(decrypted.plaintext);
+    try {
+      const decrypted = ratchetDecrypt(sodium, session, header, ciphertext, ad);
+      await saveSession(threadId, senderDeviceId, decrypted.nextState);
+      return new TextDecoder().decode(decrypted.plaintext);
+    } catch (e) {
+      // Real, live-hit case (not hypothetical): a session bootstrapped
+      // before 412ffad ("e2ee had never worked" — missing crypto_
+      // scalarmult) derived a garbage root key from the start, so
+      // ratchetDecrypt's AEAD auth check fails on every message in that
+      // session, forever — a stale/corrupted session never repairs
+      // itself, and this function had no path back from it (every
+      // message after the poisoned handshake permanently rendered as
+      // "Message unavailable", both before and after the crypto fix).
+      // ratchetDecrypt only ever throws here for a genuine auth failure
+      // or its own "should not happen" invariant (skipped-message/
+      // reordering is already handled without throwing — see its own
+      // header), never for something a retry could fix — so dropping the
+      // session is always the right response, not just a guess. Clearing
+      // it here (rather than leaving the corrupted state saved) means the
+      // next envelope FROM THIS SENDER DEVICE either gets a proper fresh
+      // X3DH bootstrap (if the sender has also reset, see
+      // resetSessionWithDevice's own UI trigger) or fails once more and
+      // re-triggers this same reset — self-converging within a couple of
+      // round-trips instead of wedged forever.
+      await deleteSession(threadId, senderDeviceId);
+      throw e;
+    }
   });
 }
 
