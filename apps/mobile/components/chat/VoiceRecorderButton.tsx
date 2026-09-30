@@ -53,12 +53,13 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, PanResponder, Pressable, View } from 'react-native';
+import { PanResponder, Pressable, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 
 import { withAppLockSuppressed } from '@/lib/appLock';
 import { usePlaybackStore } from '@/lib/audio/playbackStore';
 import { downsampleWaveform, normalizeMetering } from '@/lib/audio/waveform';
+import { showAlert } from '@/lib/ui/alert';
 import { useTheme } from '@/theme';
 import { Text } from '@/components/ui/Text';
 
@@ -177,7 +178,7 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
       granted = requested.granted;
     }
     if (!granted) {
-      Alert.alert(
+      showAlert(
         'Microphone access needed',
         "Turn on microphone access in your phone's Settings app to record voice messages.",
       );

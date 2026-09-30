@@ -1,7 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   AppState,
   FlatList,
   Image,
@@ -31,6 +30,7 @@ import { withAppLockSuppressed } from '@/lib/appLock';
 import { usePhoneContactNames } from '@/lib/contacts';
 import { EdgeFunctionError } from '@/lib/edgeFunctions';
 import { useSession } from '@/lib/hooks/useSession';
+import { showAlert } from '@/lib/ui/alert';
 import {
   type InsufficientCreditDetails,
   type Message,
@@ -386,7 +386,7 @@ function ThreadOverflowMenu({
       await ensureDeviceRegistered();
       await enableE2ee.mutateAsync({ threadId });
       onE2eeStatusChange();
-      Alert.alert(
+      showAlert(
         'Encryption enabled',
         'Messages in this conversation are now end-to-end encrypted.',
       );
@@ -397,7 +397,7 @@ function ThreadOverflowMenu({
           : e instanceof Error
             ? e.message
             : 'Something went wrong.';
-      Alert.alert('Could not enable encryption', message);
+      showAlert('Could not enable encryption', message);
     } finally {
       setEnablingE2ee(false);
     }
@@ -448,7 +448,7 @@ function ThreadOverflowMenu({
   const handleToggleBlock = () => {
     onClose();
     const action = blockedByMe ? 'Unblock' : 'Block';
-    Alert.alert(`${action} this contact?`, undefined, [
+    showAlert(`${action} this contact?`, undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: action,
@@ -472,7 +472,7 @@ function ThreadOverflowMenu({
         onSuccess: () => {
           setReportOpen(false);
           setReason(null);
-          Alert.alert('Reported', 'Thanks — our team will review this.');
+          showAlert('Reported', 'Thanks — our team will review this.');
         },
       },
     );
@@ -1203,13 +1203,13 @@ export default function ThreadScreen() {
         onError: (error) => {
           const code = error instanceof EdgeFunctionError ? error.code : null;
           if (code === 'thread_not_idle_long_enough') {
-            Alert.alert(
+            showAlert(
               'Not yet',
               'This conversation needs to be quiet for a while before you can take over paying.',
             );
             return;
           }
-          Alert.alert('Could not update', error instanceof Error ? error.message : 'Try again.');
+          showAlert('Could not update', error instanceof Error ? error.message : 'Try again.');
         },
       },
     );
@@ -1566,7 +1566,7 @@ export default function ThreadScreen() {
             // failure (edit_would_increase_cost, message_not_editable,
             // edit_window_expired, content_blocked) is best surfaced
             // directly rather than silently retried.
-            Alert.alert('Could not save edit', error.message);
+            showAlert('Could not save edit', error.message);
           },
         },
       );
@@ -1585,7 +1585,7 @@ export default function ThreadScreen() {
     // rather than silently dropping the attachment.
     if (!isOnline && currentUserId) {
       if (hasPickedMedia) {
-        Alert.alert('No connection', "Photos can't be sent while offline yet.");
+        showAlert('No connection', "Photos can't be sent while offline yet.");
         return;
       }
       useOutboxStore.getState().enqueue({
@@ -1627,7 +1627,7 @@ export default function ThreadScreen() {
         mediaPath = path;
         mediaType = 'image';
       } catch (e) {
-        Alert.alert(
+        showAlert(
           'Could not upload photo',
           e instanceof Error ? e.message : 'Something went wrong.',
         );
@@ -1710,7 +1710,7 @@ export default function ThreadScreen() {
     waveformSamples: number[],
   ) => {
     if (!isOnline) {
-      Alert.alert('No connection', "Voice messages can't be sent while offline yet.");
+      showAlert('No connection', "Voice messages can't be sent while offline yet.");
       return;
     }
 
@@ -1757,7 +1757,7 @@ export default function ThreadScreen() {
           : e instanceof Error
             ? e.message
             : `Unrecognized error shape: ${fallbackDetail}`;
-      Alert.alert('Could not send voice message', message);
+      showAlert('Could not send voice message', message);
     } finally {
       setIsUploadingMedia(false);
     }
@@ -1866,7 +1866,7 @@ export default function ThreadScreen() {
 
     const failures = results.filter((r) => r.status === 'rejected').length;
     if (failures > 0) {
-      Alert.alert(
+      showAlert(
         'Some messages could not be forwarded',
         `${failures} of ${results.length} failed to send.`,
       );
@@ -1948,7 +1948,7 @@ export default function ThreadScreen() {
     exitSelection();
     const failures = results.filter((r) => r.status === 'rejected').length;
     if (failures > 0) {
-      Alert.alert(
+      showAlert(
         'Some messages could not be deleted',
         `${failures} of ${ids.length} failed — they may be outside the delete window or already removed.`,
       );
@@ -1957,23 +1957,19 @@ export default function ThreadScreen() {
 
   const handleBatchDelete = () => {
     if (selectedIds.size === 0) return;
-    Alert.alert(
-      `Delete ${selectedIds.size} message${selectedIds.size > 1 ? 's' : ''}?`,
-      undefined,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete for me', style: 'destructive', onPress: () => void runBatchDelete('me') },
-        ...(canBatchDeleteForEveryone
-          ? [
-              {
-                text: 'Delete for everyone',
-                style: 'destructive' as const,
-                onPress: () => void runBatchDelete('everyone'),
-              },
-            ]
-          : []),
-      ],
-    );
+    showAlert(`Delete ${selectedIds.size} message${selectedIds.size > 1 ? 's' : ''}?`, undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete for me', style: 'destructive', onPress: () => void runBatchDelete('me') },
+      ...(canBatchDeleteForEveryone
+        ? [
+            {
+              text: 'Delete for everyone',
+              style: 'destructive' as const,
+              onPress: () => void runBatchDelete('everyone'),
+            },
+          ]
+        : []),
+    ]);
   };
 
   // WhatsApp-style selection-header eligibility (every message action now
