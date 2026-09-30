@@ -117,38 +117,48 @@ async function proposeAndApprove(db, { requester, approver, payload }) {
 }
 
 async function testExecuteGrantsAreLocked(db) {
-  const functions = [
-    'fn_admin_set_message_pricing_strategy(uuid, uuid, text, text)',
-    'fn_price_message_tiered_word_block(integer, text)',
-    'fn_price_message_flat(integer, text)',
-    'fn_price_message_linear(integer, text)',
-    // Signature grew two trailing default params for chat media
-    // (docs/16-CHAT-MEDIA-SCOPING.md, 20260925120000_chat_media_pipeline.sql)
-    // — this string has to match the function's real signature exactly,
-    // `has_function_privilege` does not resolve by name alone.
-    'fn_send_message(uuid, uuid, text, uuid, uuid, boolean, text, text)',
+  // Names only. `has_function_privilege` cannot resolve a function by name
+  // alone, so this list used to carry a hand-written argument list per
+  // function — which silently went stale every time a signature grew a
+  // parameter, and eventually threw "function does not exist" outright
+  // (fn_send_message went from 8 args to 12 across the chat-media,
+  // voice-note and e2ee-envelope migrations). Resolving the oid from
+  // pg_proc instead checks the functions that actually exist right now, and
+  // checks EVERY overload of each rather than the one signature someone
+  // happened to type, so a new overload cannot slip in ungranted.
+  const functionNames = [
+    'fn_admin_set_message_pricing_strategy',
+    'fn_price_message_tiered_word_block',
+    'fn_price_message_flat',
+    'fn_price_message_linear',
+    'fn_send_message',
   ];
-  for (const fn of functions) {
-    const anonRes = await db.query('select has_function_privilege($1, $2, $3) as ok', [
-      'anon',
-      `public.${fn}`,
-      'execute',
-    ]);
-    const authRes = await db.query('select has_function_privilege($1, $2, $3) as ok', [
-      'authenticated',
-      `public.${fn}`,
-      'execute',
-    ]);
-    const serviceRes = await db.query('select has_function_privilege($1, $2, $3) as ok', [
-      'service_role',
-      `public.${fn}`,
-      'execute',
-    ]);
+
+  const overloads = await db.query(
+    `select p.proname,
+            p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as signature,
+            has_function_privilege('anon', p.oid, 'execute') as anon_ok,
+            has_function_privilege('authenticated', p.oid, 'execute') as auth_ok,
+            has_function_privilege('service_role', p.oid, 'execute') as service_ok
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = any($1)
+      order by p.proname, p.pronargs`,
+    [functionNames],
+  );
+
+  // A name that resolves to nothing means the function was renamed or
+  // dropped — that must fail loudly here rather than vacuously passing.
+  for (const name of functionNames) {
     log(
-      `${fn}: anon/authenticated blocked, service_role granted (CLAUDE.md rule #11)`,
-      anonRes.rows[0].ok === false &&
-        authRes.rows[0].ok === false &&
-        serviceRes.rows[0].ok === true,
+      `${name}: exists in public schema`,
+      overloads.rows.some((r) => r.proname === name),
+    );
+  }
+
+  for (const row of overloads.rows) {
+    log(
+      `${row.signature}: anon/authenticated blocked, service_role granted (CLAUDE.md rule #11)`,
+      row.anon_ok === false && row.auth_ok === false && row.service_ok === true,
     );
   }
 
