@@ -11,6 +11,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AnimatedSplash } from '@/components/AnimatedSplash';
 import { AppLockScreen } from '@/components/AppLockScreen';
+import { AppAlertHost } from '@/components/ui/AppAlertHost';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { useAppLock } from '@/lib/appLock';
@@ -260,6 +261,10 @@ export default function RootLayout() {
           <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
             <OutboxDrainEffect userId={session?.user.id} />
             <OfflineBanner />
+            {/* Themed Alert.alert replacement (lib/ui/alert.ts) — mounted
+                once here, same level as AppLockScreen below, so it can
+                overlay any screen regardless of which one triggered it. */}
+            <AppAlertHost />
             {/* The navigator stays mounted at all times — it used to be
                 swapped out for <AppLockScreen> entirely whenever `locked`
                 was true, which meant every re-lock (including the

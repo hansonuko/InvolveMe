@@ -1,10 +1,11 @@
 import { Stack } from 'expo-router';
-import { Alert, Pressable, Switch, View } from 'react-native';
+import { Pressable, Switch, View } from 'react-native';
 
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { useSession } from '@/lib/hooks/useSession';
 import { useSetPushEnabled, usePushEnabled } from '@/lib/queries/notifications';
+import { showAlert } from '@/lib/ui/alert';
 import { useTheme } from '@/theme';
 
 export default function NotificationsSettingsScreen() {
@@ -19,14 +20,14 @@ export default function NotificationsSettingsScreen() {
     if (!userId) return;
     const result = await setPushEnabled.mutateAsync({ userId, enabled });
     if (enabled && result === 'denied') {
-      Alert.alert(
+      showAlert(
         'Notifications off',
         "Notification permission was denied. Turn it on in your phone's Settings app to receive them.",
       );
     } else if (enabled && result === 'unsupported') {
-      Alert.alert('Not available', 'Push notifications need a real device, not a simulator.');
+      showAlert('Not available', 'Push notifications need a real device, not a simulator.');
     } else if (enabled && result === 'error') {
-      Alert.alert(
+      showAlert(
         "Couldn't turn on notifications",
         'Something went wrong reaching the notification service — check your connection and try again.',
       );

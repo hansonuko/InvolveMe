@@ -1,7 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   AppState,
   FlatList,
   Image,
@@ -31,6 +30,7 @@ import { withAppLockSuppressed } from '@/lib/appLock';
 import { usePhoneContactNames } from '@/lib/contacts';
 import { EdgeFunctionError } from '@/lib/edgeFunctions';
 import { useSession } from '@/lib/hooks/useSession';
+import { showAlert } from '@/lib/ui/alert';
 import {
   type InsufficientCreditDetails,
   type Message,
@@ -387,7 +387,7 @@ function ThreadOverflowMenu({
       await ensureDeviceRegistered();
       await enableE2ee.mutateAsync({ threadId });
       onE2eeStatusChange();
-      Alert.alert(
+      showAlert(
         'Encryption enabled',
         'Messages in this conversation are now end-to-end encrypted.',
       );
@@ -398,7 +398,7 @@ function ThreadOverflowMenu({
           : e instanceof Error
             ? e.message
             : 'Something went wrong.';
-      Alert.alert('Could not enable encryption', message);
+      showAlert('Could not enable encryption', message);
     } finally {
       setEnablingE2ee(false);
     }
@@ -502,7 +502,7 @@ function ThreadOverflowMenu({
   const handleToggleBlock = () => {
     onClose();
     const action = blockedByMe ? 'Unblock' : 'Block';
-    Alert.alert(`${action} this contact?`, undefined, [
+    showAlert(`${action} this contact?`, undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: action,
@@ -526,7 +526,7 @@ function ThreadOverflowMenu({
         onSuccess: () => {
           setReportOpen(false);
           setReason(null);
-          Alert.alert('Reported', 'Thanks — our team will review this.');
+          showAlert('Reported', 'Thanks — our team will review this.');
         },
       },
     );
@@ -1267,13 +1267,13 @@ export default function ThreadScreen() {
         onError: (error) => {
           const code = error instanceof EdgeFunctionError ? error.code : null;
           if (code === 'thread_not_idle_long_enough') {
-            Alert.alert(
+            showAlert(
               'Not yet',
               'This conversation needs to be quiet for a while before you can take over paying.',
             );
             return;
           }
-          Alert.alert('Could not update', error instanceof Error ? error.message : 'Try again.');
+          showAlert('Could not update', error instanceof Error ? error.message : 'Try again.');
         },
       },
     );
@@ -1630,7 +1630,7 @@ export default function ThreadScreen() {
             // failure (edit_would_increase_cost, message_not_editable,
             // edit_window_expired, content_blocked) is best surfaced
             // directly rather than silently retried.
-            Alert.alert('Could not save edit', error.message);
+            showAlert('Could not save edit', error.message);
           },
         },
       );
@@ -1649,7 +1649,7 @@ export default function ThreadScreen() {
     // rather than silently dropping the attachment.
     if (!isOnline && currentUserId) {
       if (hasPickedMedia) {
-        Alert.alert('No connection', "Photos can't be sent while offline yet.");
+        showAlert('No connection', "Photos can't be sent while offline yet.");
         return;
       }
       useOutboxStore.getState().enqueue({
@@ -1681,6 +1681,17 @@ export default function ThreadScreen() {
           // ciphertext for e2ee text. The key/nonce travel to the recipient
           // inside this same send's envelope (see sendMessage.mutate below),
           // never through Storage.
+          // encryptMediaBytes' sync sodium.randomBytes/aeadEncrypt calls go
+          // straight to the native react-native-libsodium bindings — unlike
+          // encryptForThread (session.ts), which always awaits sodium.ready()
+          // first, nothing on this call path did until now. It happened to
+          // work whenever some earlier action in the same app session (a
+          // text send, e2ee setup) had already warmed the module up, and
+          // threw "undefined is not a function" the moment media was the
+          // very first e2ee crypto operation in a fresh session (real bug
+          // report, voice-note send — same class of gap this file's own
+          // sodiumProviderNative.ts header already documents twice over).
+          await sodium.ready();
           const plaintextBytes = await readLocalFileBytes(pickedImage.uri);
           const { ciphertext, keyMaterial } = encryptMediaBytes(sodium, plaintextBytes);
           await uploadEncryptedChatMedia(ciphertext, path, token);
@@ -1691,7 +1702,7 @@ export default function ThreadScreen() {
         mediaPath = path;
         mediaType = 'image';
       } catch (e) {
-        Alert.alert(
+        showAlert(
           'Could not upload photo',
           e instanceof Error ? e.message : 'Something went wrong.',
         );
@@ -1774,23 +1785,41 @@ export default function ThreadScreen() {
     waveformSamples: number[],
   ) => {
     if (!isOnline) {
-      Alert.alert('No connection', "Voice messages can't be sent while offline yet.");
+      showAlert('No connection', "Voice messages can't be sent while offline yet.");
       return;
     }
 
     setIsUploadingMedia(true);
+    // Named per-stage, not just wrapped in one big try — a prior failure
+    // here surfaced only "undefined is not a function" with no way to tell
+    // which of five very different calls actually threw it. Tracked so the
+    // next failure (if any) names its own stage instead of being a mystery
+    // again.
+    let stage = 'requesting an upload slot';
     try {
       const { path, token } = await createChatMediaUploadUrl.mutateAsync('audio');
       let mediaKey: MediaKeyMaterial | undefined;
       if (headerInfo?.e2eeStatus === 'active') {
+        stage = 'encrypting the recording';
+        // Same root cause as handleSend's own photo branch (see its
+        // comment): encryptMediaBytes' sync sodium calls go straight to
+        // the native react-native-libsodium bindings, which need
+        // sodium.ready() awaited first — nothing on this path did until
+        // now, and this was likely the first e2ee crypto operation this
+        // app session, unlike text sends (which always go through
+        // encryptForThread's own sodium.ready() first).
+        await sodium.ready();
         const plaintextBytes = await readLocalFileBytes(uri);
         const { ciphertext, keyMaterial } = encryptMediaBytes(sodium, plaintextBytes);
+        stage = 'uploading the encrypted recording';
         await uploadEncryptedChatMedia(ciphertext, path, token);
         mediaKey = keyMaterial;
       } else {
+        stage = 'uploading the recording';
         await uploadChatAudio(uri, path, token);
       }
 
+      stage = 'sending the message';
       await sendMessage.mutateAsync({
         threadId: id,
         body: '',
@@ -1810,7 +1839,7 @@ export default function ThreadScreen() {
       // (this whole pipeline has never been exercised on a real device
       // before, docs/17 §11) so the next failure is diagnosable instead
       // of a dead end.
-      console.error('handleSendVoiceNote failed:', e);
+      console.error(`handleSendVoiceNote failed while ${stage}:`, e);
       const fallbackDetail =
         e && typeof e === 'object' && 'message' in e && typeof e.message === 'string'
           ? e.message
@@ -1821,7 +1850,7 @@ export default function ThreadScreen() {
           : e instanceof Error
             ? e.message
             : `Unrecognized error shape: ${fallbackDetail}`;
-      Alert.alert('Could not send voice message', message);
+      showAlert('Could not send voice message', `While ${stage}: ${message}`);
     } finally {
       setIsUploadingMedia(false);
     }
@@ -1930,7 +1959,7 @@ export default function ThreadScreen() {
 
     const failures = results.filter((r) => r.status === 'rejected').length;
     if (failures > 0) {
-      Alert.alert(
+      showAlert(
         'Some messages could not be forwarded',
         `${failures} of ${results.length} failed to send.`,
       );
@@ -2012,7 +2041,7 @@ export default function ThreadScreen() {
     exitSelection();
     const failures = results.filter((r) => r.status === 'rejected').length;
     if (failures > 0) {
-      Alert.alert(
+      showAlert(
         'Some messages could not be deleted',
         `${failures} of ${ids.length} failed — they may be outside the delete window or already removed.`,
       );
@@ -2021,23 +2050,19 @@ export default function ThreadScreen() {
 
   const handleBatchDelete = () => {
     if (selectedIds.size === 0) return;
-    Alert.alert(
-      `Delete ${selectedIds.size} message${selectedIds.size > 1 ? 's' : ''}?`,
-      undefined,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete for me', style: 'destructive', onPress: () => void runBatchDelete('me') },
-        ...(canBatchDeleteForEveryone
-          ? [
-              {
-                text: 'Delete for everyone',
-                style: 'destructive' as const,
-                onPress: () => void runBatchDelete('everyone'),
-              },
-            ]
-          : []),
-      ],
-    );
+    showAlert(`Delete ${selectedIds.size} message${selectedIds.size > 1 ? 's' : ''}?`, undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete for me', style: 'destructive', onPress: () => void runBatchDelete('me') },
+      ...(canBatchDeleteForEveryone
+        ? [
+            {
+              text: 'Delete for everyone',
+              style: 'destructive' as const,
+              onPress: () => void runBatchDelete('everyone'),
+            },
+          ]
+        : []),
+    ]);
   };
 
   // WhatsApp-style selection-header eligibility (every message action now

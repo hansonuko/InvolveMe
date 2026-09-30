@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { useRef, useState } from 'react';
-import { Alert, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ActionSheet, type ActionSheetAction } from '@/components/ui/ActionSheet';
 import { Avatar } from '@/components/ui/Avatar';
@@ -16,6 +16,7 @@ import { useSession } from '@/lib/hooks/useSession';
 import { pickAndPrepareImage } from '@/lib/media';
 import { useIsOnline } from '@/lib/network';
 import { useOutboxStore } from '@/lib/outboxStore';
+import { showAlert } from '@/lib/ui/alert';
 import { useShallow } from 'zustand/react/shallow';
 import { type MatchedContactUser } from '@/lib/queries/contacts';
 import { uploadProfileMedia } from '@/lib/queries/profileMedia';
@@ -257,7 +258,7 @@ function GroupInfoScreen({
           destructive: true,
           onPress: () => {
             if (!groupThreadId) return;
-            Alert.alert(`Remove ${actionSheetMember.display_name ?? 'this member'}?`, undefined, [
+            showAlert(`Remove ${actionSheetMember.display_name ?? 'this member'}?`, undefined, [
               { text: 'Cancel', style: 'cancel' },
               {
                 text: 'Remove',
@@ -274,13 +275,13 @@ function GroupInfoScreen({
   const handleExitGroup = () => {
     if (!groupThreadId) return;
     if (isOwner) {
-      Alert.alert(
+      showAlert(
         "You can't leave yet",
         "As the group owner, you can't leave a group yet — ownership transfer isn't built.",
       );
       return;
     }
-    Alert.alert('Leave this group?', undefined, [
+    showAlert('Leave this group?', undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Leave',
