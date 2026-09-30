@@ -57,6 +57,39 @@ function decodeE2eeMediaPlaintext(raw: string): {
   }
 }
 
+/** Shown in place of an e2ee message this device cannot decrypt.
+ *
+ * Matches WhatsApp's own wording for the same state, deliberately: the
+ * padlock-prefixed "🔒 Message unavailable" this used to render read as a
+ * permanent failure and, worse, made ordinary encrypted chats look broken to
+ * both people in them (real user report). A message lands here when its
+ * ratchet keys are genuinely gone for this device — one-shot by construction,
+ * so nothing is retried behind this string; it names the situation plainly
+ * instead of implying a fault with the conversation. */
+const UNDECRYPTABLE_MESSAGE_PLACEHOLDER = 'Waiting for this message. This may take a while.';
+
+/** Turns this device's locally-cached plaintext for an e2ee message into the
+ * one-line preview the chat list shows, mirroring how a plaintext thread's
+ * own last message is summarized there.
+ *
+ * Lives here, next to encodeE2eeMediaPlaintext, because the cached string for
+ * a media message is that function's JSON envelope rather than bare caption
+ * text — the chat list has no business knowing that shape, so it asks for a
+ * preview instead of parsing one. Returns `null` when there is nothing
+ * meaningful to show, which the caller renders as the generic encrypted
+ * placeholder. */
+export function previewFromCachedPlaintext(
+  cached: string,
+  mediaType: string | null,
+): string | null {
+  if (mediaType === 'image' || mediaType === 'audio') {
+    const label = mediaType === 'image' ? '📷 Photo' : '🎤 Voice message';
+    const caption = decodeE2eeMediaPlaintext(cached).body.trim();
+    return caption ? `${label}: ${caption}` : label;
+  }
+  return cached.trim() || null;
+}
+
 /** `fn_send_message`/`fn_edit_message`'s `p_envelopes` shape (docs/21-E2EE-TECHNICAL-DESIGN.md §3) — the wire/RPC field names, snake_case, distinct from OutgoingEnvelope's camelCase in-app shape. */
 function envelopesForRpc(envelopes: OutgoingEnvelope[]) {
   return envelopes.map((e) => ({
@@ -254,7 +287,7 @@ export function useThreadMessages(
       return visible.map((m) => {
         if (m.body !== null) return m;
         const raw = decrypted.get(m.id);
-        if (raw === undefined) return { ...m, body: '🔒 Message unavailable' };
+        if (raw === undefined) return { ...m, body: UNDECRYPTABLE_MESSAGE_PLACEHOLDER };
         if (!m.media_path) return { ...m, body: raw };
         const { body, mediaKey, mediaNonce } = decodeE2eeMediaPlaintext(raw);
         return { ...m, body, e2eeMediaKeyBase64: mediaKey, e2eeMediaNonceBase64: mediaNonce };
@@ -289,7 +322,7 @@ export function useThreadMessages(
             const raw = decrypted.get(row.id);
             const resolvedRow =
               raw === undefined
-                ? { ...row, body: '🔒 Message unavailable' }
+                ? { ...row, body: UNDECRYPTABLE_MESSAGE_PLACEHOLDER }
                 : row.media_path
                   ? (() => {
                       const { body, mediaKey, mediaNonce } = decodeE2eeMediaPlaintext(raw);
@@ -599,15 +632,21 @@ export async function uploadChatAudio(localUri: string, path: string, token: str
   if (error) throw error;
 }
 
-/** Reads a local capture/pick's raw bytes off-device, before encryption —
- * the same `fetch(localUri).blob()` step `uploadChatMedia`/`uploadChatAudio`
- * already do, split out so the e2ee path can encrypt these bytes
- * (mediaCrypto.ts's encryptMediaBytes) before anything is uploaded, instead
- * of uploading the plaintext file directly. */
+/** Reads a local capture/pick's raw bytes off-device, before encryption, so
+ * the e2ee path can encrypt them (mediaCrypto.ts's encryptMediaBytes) instead
+ * of uploading the plaintext file directly.
+ *
+ * Uses expo-file-system's `File` rather than the `fetch(localUri).blob()`
+ * shape the plaintext upload helpers above use, because React Native's Blob
+ * is a polyfill (`Libraries/Blob/Blob.js`) that implements only `slice()` —
+ * it has no `arrayBuffer()` and no `text()`, unlike a web Blob. Calling
+ * `blob.arrayBuffer()` here therefore threw a bare "undefined is not a
+ * function" on every single e2ee media send, voice notes and photos alike
+ * (real bug report; the generic error text is why it read as a crypto
+ * failure rather than a file-read one). `File` is a real native-backed
+ * implementation and its `arrayBuffer()` actually exists. */
 export async function readLocalFileBytes(localUri: string): Promise<Uint8Array> {
-  const response = await fetch(localUri);
-  const blob = await response.blob();
-  return new Uint8Array(await blob.arrayBuffer());
+  return new Uint8Array(await new File(localUri).arrayBuffer());
 }
 
 /** Uploads an already-encrypted attachment (mediaCrypto.ts's
