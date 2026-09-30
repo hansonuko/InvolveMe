@@ -462,7 +462,7 @@ function ThreadOverflowMenu({
    * instant fix. */
   const handleResetEncryptionSession = () => {
     onClose();
-    Alert.alert(
+    showAlert(
       'Reset encryption session?',
       'Use this if messages in this chat show "Message unavailable" and won\'t decrypt. This clears your device\'s saved encryption keys for this contact — the next message either of you sends starts a fresh, secure session. If it still happens afterward, ask the other person to do the same on their device.',
       [
@@ -482,12 +482,12 @@ function ThreadOverflowMenu({
                 for (const device of data ?? []) {
                   await resetSessionWithDevice(threadId, device.id as string);
                 }
-                Alert.alert(
+                showAlert(
                   'Encryption session reset',
                   'Send a new message to start a fresh, secure session.',
                 );
               } catch (e) {
-                Alert.alert(
+                showAlert(
                   'Could not reset',
                   e instanceof Error ? e.message : 'Something went wrong.',
                 );
