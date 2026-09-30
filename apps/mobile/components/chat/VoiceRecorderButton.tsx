@@ -341,12 +341,27 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
     typeof recorderState.metering === 'number' ? normalizeMetering(recorderState.metering) : 0;
 
   if (phase === 'idle') {
+    // Matches the send button's own 44x44 circular treatment (thread/[id]
+    // .tsx's styles.sendButton) — a bare 24px icon here read as "tiny and
+    // easy to miss at the bottom of the screen" next to that prominent
+    // filled circle (real user report). WhatsApp's own idle mic control is
+    // the same size/prominence as its send button, not a smaller sibling.
     return (
-      <View {...panResponder.panHandlers} style={{ paddingBottom: 6 }}>
+      <View
+        {...panResponder.panHandlers}
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: disabled ? colors.bgSurfaceAlt : colors.brandPrimary,
+        }}
+      >
         <Ionicons
-          name="mic-outline"
-          size={24}
-          color={disabled ? colors.textTertiary : colors.textSecondary}
+          name="mic"
+          size={22}
+          color={disabled ? colors.textTertiary : colors.textInverse}
         />
       </View>
     );

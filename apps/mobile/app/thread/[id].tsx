@@ -1617,6 +1617,17 @@ export default function ThreadScreen() {
           // ciphertext for e2ee text. The key/nonce travel to the recipient
           // inside this same send's envelope (see sendMessage.mutate below),
           // never through Storage.
+          // encryptMediaBytes' sync sodium.randomBytes/aeadEncrypt calls go
+          // straight to the native react-native-libsodium bindings — unlike
+          // encryptForThread (session.ts), which always awaits sodium.ready()
+          // first, nothing on this call path did until now. It happened to
+          // work whenever some earlier action in the same app session (a
+          // text send, e2ee setup) had already warmed the module up, and
+          // threw "undefined is not a function" the moment media was the
+          // very first e2ee crypto operation in a fresh session (real bug
+          // report, voice-note send — same class of gap this file's own
+          // sodiumProviderNative.ts header already documents twice over).
+          await sodium.ready();
           const plaintextBytes = await readLocalFileBytes(pickedImage.uri);
           const { ciphertext, keyMaterial } = encryptMediaBytes(sodium, plaintextBytes);
           await uploadEncryptedChatMedia(ciphertext, path, token);
@@ -1715,18 +1726,36 @@ export default function ThreadScreen() {
     }
 
     setIsUploadingMedia(true);
+    // Named per-stage, not just wrapped in one big try — a prior failure
+    // here surfaced only "undefined is not a function" with no way to tell
+    // which of five very different calls actually threw it. Tracked so the
+    // next failure (if any) names its own stage instead of being a mystery
+    // again.
+    let stage = 'requesting an upload slot';
     try {
       const { path, token } = await createChatMediaUploadUrl.mutateAsync('audio');
       let mediaKey: MediaKeyMaterial | undefined;
       if (headerInfo?.e2eeStatus === 'active') {
+        stage = 'encrypting the recording';
+        // Same root cause as handleSend's own photo branch (see its
+        // comment): encryptMediaBytes' sync sodium calls go straight to
+        // the native react-native-libsodium bindings, which need
+        // sodium.ready() awaited first — nothing on this path did until
+        // now, and this was likely the first e2ee crypto operation this
+        // app session, unlike text sends (which always go through
+        // encryptForThread's own sodium.ready() first).
+        await sodium.ready();
         const plaintextBytes = await readLocalFileBytes(uri);
         const { ciphertext, keyMaterial } = encryptMediaBytes(sodium, plaintextBytes);
+        stage = 'uploading the encrypted recording';
         await uploadEncryptedChatMedia(ciphertext, path, token);
         mediaKey = keyMaterial;
       } else {
+        stage = 'uploading the recording';
         await uploadChatAudio(uri, path, token);
       }
 
+      stage = 'sending the message';
       await sendMessage.mutateAsync({
         threadId: id,
         body: '',
@@ -1746,7 +1775,7 @@ export default function ThreadScreen() {
       // (this whole pipeline has never been exercised on a real device
       // before, docs/17 §11) so the next failure is diagnosable instead
       // of a dead end.
-      console.error('handleSendVoiceNote failed:', e);
+      console.error(`handleSendVoiceNote failed while ${stage}:`, e);
       const fallbackDetail =
         e && typeof e === 'object' && 'message' in e && typeof e.message === 'string'
           ? e.message
@@ -1757,7 +1786,7 @@ export default function ThreadScreen() {
           : e instanceof Error
             ? e.message
             : `Unrecognized error shape: ${fallbackDetail}`;
-      showAlert('Could not send voice message', message);
+      showAlert('Could not send voice message', `While ${stage}: ${message}`);
     } finally {
       setIsUploadingMedia(false);
     }
