@@ -29,6 +29,7 @@ import {
   initRatchetAsBob,
   ratchetDecrypt,
   ratchetEncrypt,
+  type RatchetState,
 } from './doubleRatchet';
 import { getOrCreateIdentity } from './identity';
 import { getCachedPlaintextBatch, setCachedPlaintext } from './plaintextCache';
@@ -74,7 +75,13 @@ async function getActiveDeviceIds(userId: string): Promise<string[]> {
     .from('e2ee_devices')
     .select('id')
     .eq('user_id', userId)
-    .is('revoked_at', null);
+    .is('revoked_at', null)
+    // Explicitly ordered: decryptEnvelope resolves "the sender's device" as
+    // element [0], and an unordered select gives Postgres licence to return
+    // rows in any order — so with more than one registered device the session
+    // key could differ between two calls on the same device, silently pointing
+    // at a different ratchet state each time.
+    .order('registered_at', { ascending: true });
   if (error) throw error;
   return (data ?? []).map((d) => d.id as string);
 }
@@ -288,65 +295,84 @@ export async function decryptEnvelope(
     messageNumber: envelope.messageNumber,
   };
 
-  return withDeviceLock(`${threadId}:${senderDeviceId}`, async () => {
-    let session = await loadSession(threadId, senderDeviceId);
+  const hasBootstrap = !!envelope.x3dhSenderIdentityKey && !!envelope.x3dhSenderEphemeralKey;
 
-    if (!session && envelope.x3dhSenderIdentityKey && envelope.x3dhSenderEphemeralKey) {
-      const identity = await getOrCreateIdentity();
-      const signedPrekey = await getSignedPrekey();
-      if (!signedPrekey) {
-        throw new Error('decryptEnvelope: this device has not completed E2EE setup yet.');
-      }
-
-      const oneTimePrekeyPrivate = envelope.x3dhOneTimePrekeyId
-        ? await takeLocalOneTimePrekey(envelope.x3dhOneTimePrekeyId)
-        : null;
-
-      const rootKey = x3dhRespond(sodium, {
-        ownIdentityPrivateKeyX25519: identity.identityX25519.privateKey,
-        ownSignedPrekeyPrivateKey: signedPrekey.privateKey,
-        ownOneTimePrekeyPrivateKey: oneTimePrekeyPrivate,
-        peerIdentityPublicKeyX25519: base64ToBytes(envelope.x3dhSenderIdentityKey),
-        peerEphemeralPublicKey: base64ToBytes(envelope.x3dhSenderEphemeralKey),
-      });
-
-      session = initRatchetAsBob(sodium, rootKey, {
-        publicKey: signedPrekey.publicKey,
-        privateKey: signedPrekey.privateKey,
-      });
+  /** Builds a brand-new receiving session from this envelope's X3DH fields,
+   * discarding whatever session this device currently holds for the sender.
+   * Consumes the one-time prekey, so it only runs when the existing session
+   * genuinely couldn't read the message. */
+  const bootstrapFromEnvelope = async (): Promise<RatchetState> => {
+    const identity = await getOrCreateIdentity();
+    const signedPrekey = await getSignedPrekey();
+    if (!signedPrekey) {
+      throw new Error('decryptEnvelope: this device has not completed E2EE setup yet.');
     }
 
-    if (!session) {
+    const oneTimePrekeyPrivate = envelope.x3dhOneTimePrekeyId
+      ? await takeLocalOneTimePrekey(envelope.x3dhOneTimePrekeyId)
+      : null;
+
+    const rootKey = x3dhRespond(sodium, {
+      ownIdentityPrivateKeyX25519: identity.identityX25519.privateKey,
+      ownSignedPrekeyPrivateKey: signedPrekey.privateKey,
+      ownOneTimePrekeyPrivateKey: oneTimePrekeyPrivate,
+      peerIdentityPublicKeyX25519: base64ToBytes(envelope.x3dhSenderIdentityKey as string),
+      peerEphemeralPublicKey: base64ToBytes(envelope.x3dhSenderEphemeralKey as string),
+    });
+
+    return initRatchetAsBob(sodium, rootKey, {
+      publicKey: signedPrekey.publicKey,
+      privateKey: signedPrekey.privateKey,
+    });
+  };
+
+  return withDeviceLock(`${threadId}:${senderDeviceId}`, async () => {
+    const existing = await loadSession(threadId, senderDeviceId);
+
+    // Try the session this device already holds. `ratchetDecrypt` is pure
+    // (it returns nextState rather than mutating), so a failure here costs
+    // nothing and leaves the stored session untouched for the retry below.
+    if (existing) {
+      try {
+        const decrypted = ratchetDecrypt(sodium, existing, header, ciphertext, ad);
+        await saveSession(threadId, senderDeviceId, decrypted.nextState);
+        return new TextDecoder().decode(decrypted.plaintext);
+      } catch (e) {
+        // No bootstrap to fall back on: the session is unusable for this
+        // message and nothing in this envelope can rebuild it. Drop it so
+        // this device's next SEND starts a fresh X3DH handshake, which the
+        // peer will now honor (see below) — that is what re-converges the
+        // two sides.
+        if (!hasBootstrap) {
+          await deleteSession(threadId, senderDeviceId);
+          throw e;
+        }
+      }
+    }
+
+    if (!hasBootstrap) {
       throw new Error('decryptEnvelope: no session and no X3DH bootstrap fields on this envelope.');
     }
 
-    try {
-      const decrypted = ratchetDecrypt(sodium, session, header, ciphertext, ad);
-      await saveSession(threadId, senderDeviceId, decrypted.nextState);
-      return new TextDecoder().decode(decrypted.plaintext);
-    } catch (e) {
-      // Real, live-hit case (not hypothetical): a session bootstrapped
-      // before 412ffad ("e2ee had never worked" — missing crypto_
-      // scalarmult) derived a garbage root key from the start, so
-      // ratchetDecrypt's AEAD auth check fails on every message in that
-      // session, forever — a stale/corrupted session never repairs
-      // itself, and this function had no path back from it (every
-      // message after the poisoned handshake permanently rendered as
-      // "Message unavailable", both before and after the crypto fix).
-      // ratchetDecrypt only ever throws here for a genuine auth failure
-      // or its own "should not happen" invariant (skipped-message/
-      // reordering is already handled without throwing — see its own
-      // header), never for something a retry could fix — so dropping the
-      // session is always the right response, not just a guess. Clearing
-      // it here (rather than leaving the corrupted state saved) means the
-      // next envelope FROM THIS SENDER DEVICE either gets a proper fresh
-      // X3DH bootstrap (if the sender has also reset, see
-      // resetSessionWithDevice's own UI trigger) or fails once more and
-      // re-triggers this same reset — self-converging within a couple of
-      // round-trips instead of wedged forever.
-      await deleteSession(threadId, senderDeviceId);
-      throw e;
-    }
+    // An envelope carrying X3DH fields is the sender declaring "I have no
+    // session with you and am starting a new one" — so it must be honored
+    // even when this device still holds an older session, exactly as a
+    // Signal PreKeyWhisperMessage always establishes a fresh session.
+    //
+    // Gating this on `!session` (as this function used to) is what made a
+    // desynced pair permanently unrecoverable, and it was the live cause of
+    // "Message unavailable" on every new message in a real thread: once the
+    // two devices' root keys diverged, the peer who still had a session
+    // ignored every bootstrap the other sent and kept decrypting against the
+    // dead session, while its own sends carried no bootstrap for the other
+    // side to pick up. Neither direction could ever recover. Trying the
+    // existing session first (above) keeps normal ratcheting and
+    // out-of-order delivery working, so this only fires when the stored
+    // session genuinely cannot read the message.
+    const fresh = await bootstrapFromEnvelope();
+    const decrypted = ratchetDecrypt(sodium, fresh, header, ciphertext, ad);
+    await saveSession(threadId, senderDeviceId, decrypted.nextState);
+    return new TextDecoder().decode(decrypted.plaintext);
   });
 }
 

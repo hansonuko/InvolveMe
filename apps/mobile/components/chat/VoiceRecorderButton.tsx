@@ -69,8 +69,17 @@ const METERING_POLL_MS = 100;
 const MIN_SENDABLE_SECONDS = 1;
 const PREVIEW_BAR_WIDTH = 3;
 const PREVIEW_BAR_GAP = 2;
-const PREVIEW_BAR_MAX_HEIGHT = 28;
+const PREVIEW_BAR_MAX_HEIGHT = 32;
 const PREVIEW_BAR_MIN_HEIGHT = 3;
+// Sizing for the active-recording panel. The recorder used to render inline
+// in the composer row at icon size, which put every control — cancel, lock,
+// pause, send — into a ~24px strip pinned to the very bottom edge of the
+// screen; real user report: "a very tiny bar on the far bottom with tiny
+// options, difficult to use". These follow WhatsApp's own recording sheet:
+// a full-width panel with 44pt+ targets, comfortably above the screen edge.
+const PANEL_MIN_HEIGHT = 56;
+const PANEL_CONTROL = 44;
+const PANEL_SEND = 52;
 // The shared player (playbackStore.ts) is keyed by message id everywhere
 // else — a not-yet-sent recording has no message id yet, so this sentinel
 // fills that slot. Never collides with a real message id (those are
@@ -108,6 +117,15 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
   const phaseRef = useRef<RecorderPhase>('idle');
   const rawSamplesRef = useRef<number[]>([]);
   const startedAtRef = useRef<number>(0);
+  /** Pause/resume while locked — WhatsApp's own locked recorder has this, and
+   * the previous inline toolbar had no way to reach it at all. */
+  const [isPaused, setIsPaused] = useState(false);
+  /** The recorder's own reported duration, mirrored so `finishRecording` can
+   * read it without waiting on the next poll. Wall-clock (`Date.now()` minus
+   * the start time) would over-report by however long the recording sat
+   * paused, which is exactly the number the sent message is billed and
+   * rendered against. */
+  const recordedMillisRef = useRef<number>(0);
   // The just-stopped recording, staged for playback review before it's
   // actually sent (docs/17's own recorder never had this step — added by
   // explicit request to match WhatsApp's locked-recording toolbar, which
@@ -163,10 +181,23 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
   // hook's own state, not a second independent timer duplicating it.
   useEffect(() => {
     if (phaseRef.current !== 'recording' && phaseRef.current !== 'locked') return;
+    recordedMillisRef.current = recorderState.durationMillis;
+    // A paused recorder reports no new audio, so sampling it would paint a
+    // flat run of bars into the waveform for however long it sat paused.
+    if (isPaused) return;
     if (typeof recorderState.metering === 'number') {
       rawSamplesRef.current.push(normalizeMetering(recorderState.metering));
     }
-  }, [recorderState.metering, recorderState.durationMillis]);
+  }, [recorderState.metering, recorderState.durationMillis, isPaused]);
+
+  const togglePause = useCallback(() => {
+    if (phaseRef.current !== 'locked') return;
+    setIsPaused((wasPaused) => {
+      if (wasPaused) recorder.record();
+      else recorder.pause();
+      return !wasPaused;
+    });
+  }, [recorder]);
 
   const beginRecording = useCallback(async () => {
     if (disabled || phaseRef.current !== 'idle') return;
@@ -193,6 +224,8 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
       });
       rawSamplesRef.current = [];
       startedAtRef.current = Date.now();
+      recordedMillisRef.current = 0;
+      setIsPaused(false);
       await recorder.prepareToRecordAsync();
       recorder.record();
       setPhaseBoth('recording');
@@ -229,9 +262,17 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
       }
 
       const uri = recorder.uri;
-      const durationSeconds = Math.round((Date.now() - startedAtRef.current) / 1000);
+      // The recorder's own duration, not wall-clock: a recording that was
+      // paused would otherwise report the time the panel was open rather than
+      // the audio actually captured. Falls back to wall-clock only if the
+      // recorder never reported one.
+      const durationSeconds = Math.round(
+        (recordedMillisRef.current || Date.now() - startedAtRef.current) / 1000,
+      );
       const waveformSamples = downsampleWaveform(rawSamplesRef.current);
       rawSamplesRef.current = [];
+      recordedMillisRef.current = 0;
+      setIsPaused(false);
 
       if (outcome === 'discard' || !uri || durationSeconds < MIN_SENDABLE_SECONDS) {
         // A too-short recording can't be previewed either — same floor
@@ -367,55 +408,105 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
     );
   }
 
+  // Shared chrome for every active phase: a full-width panel with real tap
+  // targets, rather than the icon-sized inline strip this used to be.
+  const panelStyle = {
+    flex: 1,
+    minHeight: PANEL_MIN_HEIGHT,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.bgSurfaceAlt,
+    borderRadius: radius.card,
+  };
+  const roundButton = (background: string) => ({
+    width: PANEL_CONTROL,
+    height: PANEL_CONTROL,
+    borderRadius: PANEL_CONTROL / 2,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    backgroundColor: background,
+  });
+  const sendButton = {
+    width: PANEL_SEND,
+    height: PANEL_SEND,
+    borderRadius: PANEL_SEND / 2,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    backgroundColor: colors.brandPrimary,
+  };
+
   if (phase === 'locked') {
     return (
-      <View
-        style={{
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: spacing.sm,
-        }}
-      >
-        <Pressable onPress={() => void finishRecording('discard')} hitSlop={8}>
-          <Ionicons name="trash-outline" size={22} color={colors.textSecondary} />
+      <View style={panelStyle}>
+        <Pressable
+          onPress={() => void finishRecording('discard')}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Delete recording"
+          style={roundButton('transparent')}
+        >
+          <Ionicons name="trash-outline" size={24} color={colors.danger} />
         </Pressable>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger }} />
+
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+          {/* Steady while paused, so the panel reads as stopped rather than
+           * still capturing — the dot is the only always-visible recording
+           * indicator once the timer freezes. */}
+          <View
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 4,
+              backgroundColor: isPaused ? colors.textTertiary : colors.danger,
+            }}
+          />
           <Text variant="body">{formatTimer(elapsedSeconds)}</Text>
-          <AmplitudeBars level={meterLevel} color={colors.textSecondary} />
+          {isPaused ? (
+            <Text variant="caption" color="secondary">
+              Paused
+            </Text>
+          ) : (
+            <AmplitudeBars level={meterLevel} color={colors.textSecondary} />
+          )}
         </View>
-        {/* Stops recording and shows a real playback preview instead of
-         * sending outright — WhatsApp's own locked-recording toolbar lets
-         * you listen back before committing, not just trash-or-send blind. */}
+
+        <Pressable
+          onPress={togglePause}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={isPaused ? 'Resume recording' : 'Pause recording'}
+          style={roundButton(colors.bgSurface)}
+        >
+          <Ionicons
+            name={isPaused ? 'mic' : 'pause'}
+            size={22}
+            color={isPaused ? colors.brandPrimary : colors.textPrimary}
+          />
+        </Pressable>
+
+        {/* Stops recording and opens the listen-back preview rather than
+         * sending outright — WhatsApp lets you review before committing. */}
         <Pressable
           onPress={() => void finishRecording('preview')}
           hitSlop={8}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: colors.bgSurfaceAlt,
-          }}
+          accessibilityRole="button"
+          accessibilityLabel="Review recording"
+          style={roundButton(colors.bgSurface)}
         >
-          <Ionicons name="pause" size={18} color={colors.textSecondary} />
+          <Ionicons name="stop" size={20} color={colors.textPrimary} />
         </Pressable>
+
         <Pressable
           onPress={() => void finishRecording('send')}
           hitSlop={8}
-          style={{
-            backgroundColor: colors.brandPrimary,
-            borderRadius: radius.pill,
-            width: 40,
-            height: 40,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
+          accessibilityRole="button"
+          accessibilityLabel="Send voice message"
+          style={sendButton}
         >
-          <Ionicons name="send" size={18} color={colors.textInverse} />
+          <Ionicons name="send" size={22} color={colors.textInverse} />
         </Pressable>
       </View>
     );
@@ -429,26 +520,29 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
     const samples = preview.waveformSamples;
 
     return (
-      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-        <Pressable onPress={discardPreview} hitSlop={8}>
-          <Ionicons name="trash-outline" size={22} color={colors.textSecondary} />
+      <View style={panelStyle}>
+        <Pressable
+          onPress={discardPreview}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Discard recording"
+          style={roundButton('transparent')}
+        >
+          <Ionicons name="trash-outline" size={24} color={colors.danger} />
         </Pressable>
         <Pressable
           onPress={() => togglePreviewPlayback(PREVIEW_PLAYBACK_ID, preview.uri)}
           hitSlop={8}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: colors.bgSurfaceAlt,
-          }}
+          accessibilityRole="button"
+          accessibilityLabel={
+            isPreviewThisPlaying && previewIsPlaying ? 'Pause playback' : 'Play recording'
+          }
+          style={roundButton(colors.bgSurface)}
         >
           <Ionicons
             name={isPreviewThisPlaying && previewIsPlaying ? 'pause' : 'play'}
-            size={18}
-            color={colors.textPrimary}
+            size={22}
+            color={colors.brandPrimary}
           />
         </Pressable>
         <View style={{ flex: 1, gap: 2 }}>
@@ -498,34 +592,65 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
         <Pressable
           onPress={sendPreview}
           hitSlop={8}
-          style={{
-            backgroundColor: colors.brandPrimary,
-            borderRadius: radius.pill,
-            width: 40,
-            height: 40,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
+          accessibilityRole="button"
+          accessibilityLabel="Send voice message"
+          style={sendButton}
         >
-          <Ionicons name="send" size={18} color={colors.textInverse} />
+          <Ionicons name="send" size={22} color={colors.textInverse} />
         </Pressable>
       </View>
     );
   }
 
-  // recording | cancelling — held state, hands still on the mic.
+  // recording | cancelling — held state, the finger is still on the mic.
+  //
+  // Two rows rather than the single cramped line this used to be: the live
+  // meter reads at a glance, and the slide hint gets room to state both
+  // gestures instead of being clipped. The mic stays bottom-right, exactly
+  // where the finger already is — the PanResponder tracks that one view, so
+  // it must not move when the panel grows around it.
   return (
-    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger }} />
-      <Text variant="body">{formatTimer(elapsedSeconds)}</Text>
-      <AmplitudeBars level={meterLevel} color={colors.textSecondary} />
-      <Animated.View style={[{ flex: 1, alignItems: 'flex-end' }, animatedHintStyle]}>
-        <Text variant="caption" color={phase === 'cancelling' ? 'danger' : 'secondary'}>
-          {phase === 'cancelling' ? 'Release to cancel' : '◁ Slide to cancel · ▲ Slide up to lock'}
-        </Text>
-      </Animated.View>
-      <View {...panResponder.panHandlers} style={{ paddingBottom: 6 }}>
-        <Ionicons name="mic" size={24} color={colors.brandPrimary} />
+    <View
+      style={{
+        flex: 1,
+        minHeight: PANEL_MIN_HEIGHT,
+        gap: spacing.xs,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.xs,
+        backgroundColor: colors.bgSurfaceAlt,
+        borderRadius: radius.card,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger }} />
+        <Text variant="body">{formatTimer(elapsedSeconds)}</Text>
+        <AmplitudeBars level={meterLevel} color={colors.textSecondary} />
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+        <Animated.View style={[{ flex: 1 }, animatedHintStyle]}>
+          <Text variant="caption" color={phase === 'cancelling' ? 'danger' : 'secondary'}>
+            {phase === 'cancelling'
+              ? 'Release to cancel'
+              : '◁ Slide to cancel · ▲ Slide up to lock'}
+          </Text>
+        </Animated.View>
+        <View
+          {...panResponder.panHandlers}
+          style={{
+            width: PANEL_CONTROL,
+            height: PANEL_CONTROL,
+            borderRadius: PANEL_CONTROL / 2,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: phase === 'cancelling' ? colors.bgSurface : colors.brandPrimary,
+          }}
+        >
+          <Ionicons
+            name="mic"
+            size={24}
+            color={phase === 'cancelling' ? colors.danger : colors.textInverse}
+          />
+        </View>
       </View>
     </View>
   );

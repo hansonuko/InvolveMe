@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { getCachedPlaintextBatch } from '@/lib/e2ee/plaintextCache';
 import { callEdgeFunction } from '@/lib/edgeFunctions';
+import { previewFromCachedPlaintext } from '@/lib/queries/messages';
 import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 
@@ -113,7 +115,7 @@ export function useThreads(currentUserId: string | undefined) {
       const threadIds = threads.map((t) => t.id);
       const { data: recentMessages, error: messagesError } = await supabase
         .from('messages')
-        .select('thread_id, body, media_type, created_at')
+        .select('id, thread_id, body, media_type, created_at')
         .in('thread_id', threadIds)
         .order('created_at', { ascending: false });
 
@@ -126,13 +128,36 @@ export function useThreads(currentUserId: string | undefined) {
       // `threads.map` below runs.
       const lastMessageByThreadId = new Map<
         string,
-        { body: string | null; media_type: string | null }
+        { id: string; body: string | null; media_type: string | null }
       >();
       for (const m of recentMessages ?? []) {
         if (!lastMessageByThreadId.has(m.thread_id)) {
-          lastMessageByThreadId.set(m.thread_id, { body: m.body, media_type: m.media_type });
+          lastMessageByThreadId.set(m.thread_id, {
+            id: m.id,
+            body: m.body,
+            media_type: m.media_type,
+          });
         }
       }
+
+      // Real preview text for encrypted last-messages, read from this
+      // device's own decrypted-plaintext cache.
+      //
+      // The server only ever holds ciphertext for these, so a chat list
+      // rendered purely from server data can never show anything but a
+      // padlock — which is what it used to do, for every e2ee thread, no
+      // matter how many of those messages this device had already read
+      // (real user report: "the users' last sent or received messages are
+      // supposed to show"). WhatsApp shows real previews because it renders
+      // them from its own local decrypted store, which is exactly what this
+      // cache is: the sender writes its own plaintext on send, and the
+      // recipient writes it the first time the message decrypts. One batched
+      // read (no per-thread round trip, no ratchet state touched, so nothing
+      // here can consume a message key or disturb decryption ordering).
+      const encryptedLastMessageIds = [...lastMessageByThreadId.values()]
+        .filter((m) => m.body === null)
+        .map((m) => m.id);
+      const cachedPlaintextById = await getCachedPlaintextBatch(encryptedLastMessageIds);
 
       // Unread counts: a separate query against the view rather than a
       // PostgREST embed, same reasoning as the two joins above — no FK
@@ -166,7 +191,15 @@ export function useThreads(currentUserId: string | undefined) {
           // "🔒 Encrypted message" even though nothing about it was ever
           // encrypted (session 37/38 bug report).
           if (lastMessage.body === null) {
-            lastMessageBody = '🔒 Encrypted message';
+            // Encrypted on the wire — show the real text if this device has
+            // already decrypted it (see the cache read above). The padlock is
+            // the honest fallback for the genuinely-not-yet-readable case
+            // (message arrived while the app was closed and its thread hasn't
+            // been opened since), not the default for every e2ee message.
+            const cached = cachedPlaintextById.get(lastMessage.id);
+            lastMessageBody =
+              (cached ? previewFromCachedPlaintext(cached, lastMessage.media_type) : null) ??
+              '🔒 Encrypted message';
           } else if (lastMessage.media_type === 'image') {
             lastMessageBody = '📷 Photo';
           } else if (lastMessage.media_type === 'audio') {

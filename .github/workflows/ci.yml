@@ -58,6 +58,37 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+  # The pure-crypto half of the e2ee suite: HKDF vectors, the Double Ratchet
+  # core, media key wrapping, and the three regression tests for bugs that
+  # each wedged real conversations (bootstrap replay, concurrent bootstrap,
+  # session convergence). No DB, no network, no secrets — just the crypto in
+  # apps/mobile/lib/e2ee, exercised against itself.
+  #
+  # Deliberately its own job rather than a step in test-wallet-code: that one
+  # is gated on `changes.outputs.wallet`, whose paths-filter covers
+  # supabase/** and packages/payments/** but NOT apps/mobile/lib/e2ee/**. A PR
+  # editing only the ratchet — exactly the change these tests exist to catch —
+  # would skip them entirely. This job is unconditional for the same reason
+  # lint-and-typecheck is.
+  #
+  # Node 22, not the 20 the other jobs pin: these tests are .ts run directly,
+  # which needs the type-stripping that only landed unflagged in 22.18.
+  e2ee-crypto-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: E2EE crypto tests (no DB, no secrets)
+        run: npm run test:e2ee-crypto:ci
+
   # Added 2026-09-15 (docs/00-SESSION-HANDOFF.md session 12) after a bug in
   # the webhook-flutterwave <-> buy-credit path recurred three times across
   # separate sessions, each time only caught because someone happened to run
