@@ -178,6 +178,96 @@ function divergedBobSession(bob: Identity): RatchetState {
   return initRatchetAsBob(sodium, init.rootKey, bob.signedPrekey);
 }
 
+/** A one-slot stand-in for sessionStore.ts's SecureStore-backed load/save/
+ * delete, so these tests can observe exactly what a replayed backlog does to
+ * the stored session across multiple decryptEnvelope-style calls. */
+class SessionSlot {
+  state: RatchetState | null;
+  constructor(initial: RatchetState | null) {
+    this.state = initial;
+  }
+}
+
+/** Mirrors decryptEnvelope as it stood through #213/#214: ANY decrypt
+ * failure with no bootstrap on the envelope deletes the stored session,
+ * regardless of whether the failing message belongs to the session's own
+ * current epoch or to some older, unrelated one. */
+function receiveWithAutoHealOld(self: Identity, slot: SessionSlot, envelope: Envelope): string {
+  const hasBootstrap = !!envelope.x3dhSenderIdentityKey && !!envelope.x3dhSenderEphemeralKey;
+  const existing = slot.state;
+
+  if (existing) {
+    try {
+      const d = ratchetDecrypt(sodium, existing, envelope.header, envelope.ciphertext, ad);
+      slot.state = d.nextState;
+      return dec(d.plaintext);
+    } catch (e) {
+      if (!hasBootstrap) {
+        slot.state = null;
+        throw e;
+      }
+    }
+  }
+  if (!hasBootstrap) {
+    throw new Error('no session and no X3DH bootstrap fields on this envelope');
+  }
+  const rootKey = x3dhRespond(sodium, {
+    ownIdentityPrivateKeyX25519: self.identityX25519.privateKey,
+    ownSignedPrekeyPrivateKey: self.signedPrekey.privateKey,
+    ownOneTimePrekeyPrivateKey: null,
+    peerIdentityPublicKeyX25519: envelope.x3dhSenderIdentityKey as Uint8Array,
+    peerEphemeralPublicKey: envelope.x3dhSenderEphemeralKey as Uint8Array,
+  });
+  const fresh = initRatchetAsBob(sodium, rootKey, self.signedPrekey);
+  const d = ratchetDecrypt(sodium, fresh, envelope.header, envelope.ciphertext, ad);
+  slot.state = d.nextState;
+  return dec(d.plaintext);
+}
+
+/** The fix: only auto-heal (delete) when the failing envelope's ratchet key
+ * matches the session's OWN current remote key — i.e. this session's own
+ * chain failed to decrypt its own next message, the #213 "poisoned from
+ * birth" case this mechanism exists for. A message under a different
+ * (typically older) ratchet key is left alone: it is expected to be
+ * permanently unreadable by design, and must not cost the session its
+ * ability to read everything that comes after it. */
+function receiveWithAutoHealFixed(self: Identity, slot: SessionSlot, envelope: Envelope): string {
+  const hasBootstrap = !!envelope.x3dhSenderIdentityKey && !!envelope.x3dhSenderEphemeralKey;
+  const existing = slot.state;
+
+  if (existing) {
+    try {
+      const d = ratchetDecrypt(sodium, existing, envelope.header, envelope.ciphertext, ad);
+      slot.state = d.nextState;
+      return dec(d.plaintext);
+    } catch (e) {
+      const isSameEpoch =
+        !!existing.dhRemotePublicKey &&
+        Buffer.from(existing.dhRemotePublicKey).equals(
+          Buffer.from(envelope.header.ratchetPublicKey),
+        );
+      if (!hasBootstrap && isSameEpoch) {
+        slot.state = null;
+      }
+      if (!hasBootstrap) throw e;
+    }
+  }
+  if (!hasBootstrap) {
+    throw new Error('no session and no X3DH bootstrap fields on this envelope');
+  }
+  const rootKey = x3dhRespond(sodium, {
+    ownIdentityPrivateKeyX25519: self.identityX25519.privateKey,
+    ownSignedPrekeyPrivateKey: self.signedPrekey.privateKey,
+    ownOneTimePrekeyPrivateKey: null,
+    peerIdentityPublicKeyX25519: envelope.x3dhSenderIdentityKey as Uint8Array,
+    peerEphemeralPublicKey: envelope.x3dhSenderEphemeralKey as Uint8Array,
+  });
+  const fresh = initRatchetAsBob(sodium, rootKey, self.signedPrekey);
+  const d = ratchetDecrypt(sodium, fresh, envelope.header, envelope.ciphertext, ad);
+  slot.state = d.nextState;
+  return dec(d.plaintext);
+}
+
 async function main() {
   await sodium.ready();
   console.log('\ne2ee session convergence\n');
@@ -313,6 +403,83 @@ async function main() {
       threw = true;
     }
     log('an envelope with neither a session nor a bootstrap throws', threw && !!got);
+  }
+
+  // ---------------------------------------------------------------------
+  // Live bug, confirmed in the dev DB 2026-10-01: a thread's backlog
+  // contains an old message from before the current session existed
+  // (permanently unrecoverable by design, per the test above). The old
+  // auto-heal path deleted the CURRENT, healthy session the moment it hit
+  // that unrelated old message — breaking every newer message that
+  // followed it in the same oldest-first replay, even though those newer
+  // messages belong to the session that was just destroyed. The real
+  // second-device symptom was "Waiting for this message" recurring forever
+  // on otherwise-decryptable messages.
+  console.log('\nan old, unrelated, unrecoverable message must not break newer messages behind it');
+  {
+    const alice = makeIdentity();
+    const bob = makeIdentity();
+
+    // Bob's CURRENT, perfectly healthy session — established just now.
+    const first = send(alice, bundleFor(bob), null, 'current session: hello');
+    const got0 = receiveFixed(bob, null, first.envelope);
+    let aliceSession = first.nextState;
+    const bobSlot = new SessionSlot(got0.nextState);
+
+    // The next message in THIS session's own chain — should decrypt fine.
+    const next = send(alice, bundleFor(bob), aliceSession, 'current session: new message');
+    aliceSession = next.nextState;
+
+    // An old envelope from a completely unrelated, earlier epoch (a
+    // stranger's handshake standing in for "a message sent before this
+    // session existed") — permanently unrecoverable, no bootstrap, exactly
+    // like a real pre-#214 historical message replayed from the backlog.
+    const strangerAlice = makeIdentity();
+    const oldEnvelope = send(strangerAlice, bundleFor(bob), null, 'old: unreadable').envelope;
+    const oldNonBootstrapEnvelope: Envelope = {
+      ...oldEnvelope,
+      x3dhSenderIdentityKey: null,
+      x3dhSenderEphemeralKey: null,
+    };
+
+    // --- OLD behavior: replay oldest-first, exactly like decryptThreadMessages ---
+    {
+      const slot = new SessionSlot(bobSlot.state);
+      let oldFailed = false;
+      try {
+        receiveWithAutoHealOld(bob, slot, oldNonBootstrapEnvelope);
+      } catch {
+        oldFailed = true;
+      }
+      let newFailedToo = false;
+      try {
+        receiveWithAutoHealOld(bob, slot, next.envelope);
+      } catch {
+        newFailedToo = true;
+      }
+      log(
+        'reproduced: the old auto-heal path lets an unrelated old message break a newer, healthy one',
+        oldFailed && newFailedToo,
+      );
+    }
+
+    // --- FIXED behavior: same replay, same two envelopes ---
+    {
+      const slot = new SessionSlot(bobSlot.state);
+      let oldFailed = false;
+      try {
+        receiveWithAutoHealFixed(bob, slot, oldNonBootstrapEnvelope);
+      } catch {
+        oldFailed = true;
+      }
+      log('the old message still correctly fails on its own', oldFailed);
+
+      const plaintext = receiveWithAutoHealFixed(bob, slot, next.envelope);
+      log(
+        'fixed: the newer message in the still-healthy session decrypts fine right behind it',
+        plaintext === 'current session: new message',
+      );
+    }
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

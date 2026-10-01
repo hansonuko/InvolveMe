@@ -22,7 +22,7 @@
 import { callEdgeFunction } from '@/lib/edgeFunctions';
 import { supabase } from '@/lib/supabase';
 
-import { bytesToBase64, base64ToBytes, hexToBytes } from './bytes';
+import { bytesToBase64, base64ToBytes, hexToBytes, constantTimeEqual } from './bytes';
 import { withDeviceLock } from './deviceLock';
 import {
   initRatchetAsAlice,
@@ -338,13 +338,34 @@ export async function decryptEnvelope(
         await saveSession(threadId, senderDeviceId, decrypted.nextState);
         return new TextDecoder().decode(decrypted.plaintext);
       } catch (e) {
-        // No bootstrap to fall back on: the session is unusable for this
-        // message and nothing in this envelope can rebuild it. Drop it so
-        // this device's next SEND starts a fresh X3DH handshake, which the
-        // peer will now honor (see below) — that is what re-converges the
-        // two sides.
-        if (!hasBootstrap) {
+        // Only auto-heal (drop the session so this device's next SEND
+        // starts a fresh X3DH handshake) when the failing message was
+        // encrypted under the ratchet key this session itself currently
+        // considers "current" — i.e. the chain this session is actually on
+        // failed to decrypt its own next message, the #213 "poisoned from
+        // birth" case this was built for.
+        //
+        // A message whose ratchet key does NOT match (isNewRatchetKey,
+        // mirroring ratchetDecrypt's own check) is from a DIFFERENT,
+        // typically older, epoch this session was never going to be able
+        // to read — expected and permanent by design (docs/21, #214's "a
+        // message sent before the current session cannot be recovered").
+        // Deleting the session for THAT is the actual bug behind "Waiting
+        // for this message" recurring on messages that otherwise decrypt
+        // fine: decryptThreadMessages replays a sender's whole backlog
+        // oldest-first on every refresh, so the first old, unrecoverable
+        // message would wipe an otherwise-healthy session before the
+        // newer, perfectly-decryptable messages behind it ever got a turn
+        // — confirmed live, 2026-10-01: the second real-device tester
+        // re-bootstrapped twice 85 seconds apart, the second time right
+        // after a reply its session should have read fine.
+        const isSameEpoch =
+          !!existing.dhRemotePublicKey &&
+          constantTimeEqual(existing.dhRemotePublicKey, header.ratchetPublicKey);
+        if (!hasBootstrap && isSameEpoch) {
           await deleteSession(threadId, senderDeviceId);
+        }
+        if (!hasBootstrap) {
           throw e;
         }
       }
