@@ -54,9 +54,11 @@ async function insertTestAdmin(db, { email, roleNames = [] }) {
 
 async function deleteTestAdmin(db, id) {
   await db.query('delete from admin_user_roles where admin_user_id = $1', [id]);
+  await db.query('begin');
   await db.query('alter table admin_audit_log disable trigger admin_audit_log_no_delete');
   await db.query('delete from admin_audit_log where admin_user_id = $1', [id]);
   await db.query('alter table admin_audit_log enable trigger admin_audit_log_no_delete');
+  await db.query('commit');
   await db.query('delete from admin_users where id = $1', [id]);
 }
 
@@ -72,12 +74,14 @@ async function createTestUser(db) {
 }
 
 async function deleteTestUser(db, id) {
+  await db.query('begin');
   await db.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await db.query(
     `delete from public.ledger_entries where wallet_id in (select id from public.wallets where user_id = $1)`,
     [id],
   );
   await db.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
+  await db.query('commit');
   await db.query('delete from public.fraud_signals where user_id = $1 or related_user_id = $1', [
     id,
   ]);

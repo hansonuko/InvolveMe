@@ -78,9 +78,11 @@ async function deleteTestAdmin(db, id) {
     [id],
   );
   await db.query('delete from admin_user_roles where admin_user_id = $1', [id]);
+  await db.query('begin');
   await db.query('alter table admin_audit_log disable trigger admin_audit_log_no_delete');
   await db.query('delete from admin_audit_log where admin_user_id = $1', [id]);
   await db.query('alter table admin_audit_log enable trigger admin_audit_log_no_delete');
+  await db.query('commit');
   await db.query('delete from admin_users where id = $1', [id]);
 }
 
@@ -115,11 +117,13 @@ async function cleanupFixtures(db) {
   const wallets = await db.query(`select id from wallets where currency = $1 and user_id is null`, [
     QA_CURRENCY,
   ]);
+  await db.query('begin');
   await db.query('alter table ledger_entries disable trigger ledger_entries_no_delete');
   for (const w of wallets.rows) {
     await db.query('delete from ledger_entries where wallet_id = $1', [w.id]);
   }
   await db.query('alter table ledger_entries enable trigger ledger_entries_no_delete');
+  await db.query('commit');
   await db.query('delete from platform_withdrawals where currency = $1', [QA_CURRENCY]);
   await db.query('delete from wallets where currency = $1 and user_id is null', [QA_CURRENCY]);
   await db.query('delete from platform_bank_accounts where currency = $1', [QA_CURRENCY]);

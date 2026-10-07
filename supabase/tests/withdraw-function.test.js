@@ -98,12 +98,14 @@ async function createTestUser() {
 // wallet can't cascade-delete through auth.users otherwise (ledger_entries
 // is append-only, CLAUDE.md rule #4).
 async function deleteTestUser(admin, id) {
+  await admin.query('begin');
   await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (select id from public.wallets where user_id = $1)`,
     [id],
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
+  await admin.query('commit');
   await admin.query('delete from public.withdrawals where user_id = $1', [id]);
   await admin.query('delete from public.bank_accounts where user_id = $1', [id]);
   await admin.query('delete from public.topups where user_id = $1', [id]);

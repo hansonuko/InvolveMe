@@ -109,7 +109,8 @@ async function walletBalance(admin, userId, kind) {
 }
 
 async function deleteTestUser(admin, id) {
-  admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
+  await admin.query('begin');
+  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (
        select id from public.wallets where user_id = $1
@@ -117,6 +118,7 @@ async function deleteTestUser(admin, id) {
     [id],
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
+  await admin.query('commit');
   await admin.query(
     'delete from public.credit_transfers where sender_id = $1 or recipient_id = $1',
     [id],

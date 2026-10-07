@@ -69,9 +69,11 @@ async function deleteTestAdmin(db, id) {
   // itself. admin_users.id is FK-referenced by admin_audit_log with no ON
   // DELETE clause (RESTRICT) — deliberately, so the same disable/delete/
   // re-enable is required here before a test admin_users row can go away.
+  await db.query('begin');
   await db.query('alter table admin_audit_log disable trigger admin_audit_log_no_delete');
   await db.query('delete from admin_audit_log where admin_user_id = $1', [id]);
   await db.query('alter table admin_audit_log enable trigger admin_audit_log_no_delete');
+  await db.query('commit');
   await db.query('delete from admin_users where id = $1', [id]);
 }
 

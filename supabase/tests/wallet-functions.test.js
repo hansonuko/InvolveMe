@@ -67,7 +67,8 @@ async function deleteTestUser(admin, id) {
   // behavior worth knowing": no ON DELETE CASCADE from users to
   // threads/messages/escrows/withdrawals, by design. Any thread this user
   // was part of must already be gone via deleteTestThread by this point.
-  admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
+  await admin.query('begin');
+  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (
        select id from public.wallets where user_id = $1
@@ -75,6 +76,7 @@ async function deleteTestUser(admin, id) {
     [id],
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
+  await admin.query('commit');
   await admin.query('delete from public.withdrawals where user_id = $1', [id]);
   await admin.query('delete from public.bank_accounts where user_id = $1', [id]);
   await admin.query('delete from public.topups where user_id = $1', [id]);

@@ -49,7 +49,8 @@ async function createTestUser(admin) {
 }
 
 async function deleteTestUser(admin, id) {
-  admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
+  await admin.query('begin');
+  await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (
        select id from public.wallets where user_id = $1
@@ -57,6 +58,7 @@ async function deleteTestUser(admin, id) {
     [id],
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
+  await admin.query('commit');
   await admin.query('delete from auth.users where id = $1', [id]);
 }
 
