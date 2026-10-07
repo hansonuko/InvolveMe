@@ -2,6 +2,32 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Where we stopped (session 39 — five more e2ee/UX fixes merged and OTA-shipped, both real-device-confirmed; stale PR #71 closed; the long-standing cross-file test-cleanup contention bug finally fixed — 2026-10-07) — start here next session
+
+**Part A — catching the doc up on work this doc never recorded.** Five PRs merged and shipped (#212–#216, 2026-09-30/10-01) in the session right after session 38, with no handoff entry written for them until now:
+
+- **#212** — replaced native `Alert.alert` with a themed in-app dialog, matching the rest of the app's design system.
+- **#213** — recovery from a wedged e2ee session: auto-heal plus a manual reset path.
+- **#215** (`fix(escrow)`) — restored a duplicate-content payer guard that had been dropped.
+- **#214** — e2ee sessions could never actually re-converge, and e2ee media was never sending; both fixed. Also: chat-list previews, recorder panel polish.
+- **#216** — the real explanation for the above never fully healing: `decryptEnvelope`'s auto-heal (from #213) deleted a device's _entire_ session the moment _any_ message failed to decrypt, including an old, by-design-unrecoverable message that predates the session. Since a sender's backlog replays oldest-first on every refresh, the first such message wiped an otherwise-healthy session before newer, perfectly-decryptable messages behind it got a turn — this never self-resolved on its own. Fixed by only auto-healing when the failing envelope's ratchet key matches the session's own current remote key (the real #213 case); an older/different-epoch envelope is left alone and the session survives.
+
+All five shipped OTA to both `preview` and `production` (runtime `0.1.0`, android+ios) in two update groups — confirmed live via `eas update:list`. **Real-device confirmation, this session**: both #214 (session re-convergence, media send) and #216 (backlog-replay no longer wipes sessions) checked on a real device and confirmed working — closes out the "four real-device checks" item session 37/38 had carried as open.
+
+**Part B — stale PR closed.** PR #71 (`docs: session 18 handoff update`) was a session-18-era doc update, branched before 20+ subsequent sessions' worth of real handoff entries superseded everything it touched. Closed without merging (would have regressed this doc), remote branch deleted.
+
+**Part C — the cross-file test-cleanup contention bug, finally fixed ([[test-concurrency-db-contention]]).** Every `supabase/tests/*.test.js` file that needs to delete a user with real `ledger_entries`/`admin_audit_log` rows does its own `disable trigger` → `delete` → `enable trigger` dance to get past the append-only guard (CLAUDE.md rule #4) — but as three separate autocommit statements, not one transaction. `ALTER TABLE ... DISABLE TRIGGER` takes an `ACCESS EXCLUSIVE` lock held until commit; issuing it outside a transaction releases that lock immediately, so two processes' disable→delete→enable sequences (two local suites, a local run vs. a CI run, two overlapping CI runs) could genuinely interleave and trip a completely unrelated file's cleanup with a spurious "is append-only — DELETE is not permitted" crash. This had been flagged as a known fragility for several sessions, always deferred as "its own PR, never a drive-by."
+
+Fixed across **32 files, 39 disable/enable blocks** (`grep -rl "disable trigger" supabase/tests/*.test.js`) by wrapping every block in an explicit `begin`/`commit`, so the lock is held for the whole sequence and concurrent cleanups serialize instead of interleaving. Five call sites also had a bare (non-awaited) `disable trigger` query, fixed to `await` while touching the same line. One file, `webhook-flutterwave-function.test.js`, already had a hand-rolled `begin`/`try`/`commit`/`catch→rollback` wrapper around one of its three blocks from earlier work — the mechanical pass initially double-wrapped it (nested `begin`/`commit`, harmless in Postgres but sloppy), caught during review and collapsed back into the single pre-existing wrapper. Every modified file syntax-checked clean; `npm run test:fraud` (the suite most recently documented as having unexplained failures) run twice in isolation, 35/35 both times.
+
+**A real, unplanned finding from that verification**: the two `fraud-functions.test.js` failures recorded in memory `fraud-functions-test-pricing-config-leak` as "unexplained, not config corruption" ("the payer A's own textually similar opening message still releases" and "a genuinely varied back-and-forth releases every escrow, none flagged as duplicate") **both pass now**, and all three relevant `pricing_config` values (`escrow_release_earnings_per_hour_cap=100`, `duplicate_content_similarity_threshold_bps=8200`, `duplicate_content_lookback_messages=20`) match their seeded defaults with no corruption present. Strong circumstantial evidence these were the same class of cross-file contention, not a real `fn_release_escrow` logic bug — not proven with certainty (the original failures were seen in a differently-composed run), but the right prior going forward is "probably fixed by this," confirmed properly by one more clean CI run before fully closing that memory out.
+
+**What's still genuinely open:**
+
+- The `e2ee-schema-functions.test.js` flake (prekey-bundle test, intermittent only under full-suite runs, reproduces clean in isolation) — untouched this session, still needs a real look.
+- Whether the two fraud-functions.test.js failures above are fully closed, or just not reproduced yet — treat as probably-fixed-by-the-transaction-wrap, confirm on the next CI run that exercises that file.
+- Everything else carried forward from session 35–38 (multi-device, group chat, independent e2ee security review, offline+e2ee outbox gap) — unchanged, see below.
+
 ## Where we stopped (session 38 — two real e2ee/voice-note bugs fixed, WhatsApp-parity voice-note listen-back preview shipped, notice copy corrected, a pre-existing CI failure caught and fixed properly, shipped live via OTA — 2026-09-29) — start here next session
 
 **User-reported starting point: recently sent/received messages in e2ee-active threads were showing "Message unavailable," and the in-chat encryption notices didn't match real WhatsApp copy or (in one case) real WhatsApp semantics.**
