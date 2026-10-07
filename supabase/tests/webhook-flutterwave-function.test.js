@@ -104,12 +104,14 @@ async function createTestUser() {
 }
 
 async function deleteTestUser(admin, id) {
+  await admin.query('begin');
   await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (select id from public.wallets where user_id = $1)`,
     [id],
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
+  await admin.query('commit');
   await admin.query('delete from public.withdrawals where user_id = $1', [id]);
   await admin.query('delete from public.bank_accounts where user_id = $1', [id]);
   await admin.query('delete from public.topups where user_id = $1', [id]);
@@ -470,11 +472,13 @@ async function cleanupPlatformWithdrawalFixture(admin, fixture) {
     await admin.query('delete from admin_user_roles where admin_user_id = $1', [
       fixture.secondAdminId,
     ]);
+    await admin.query('begin');
     await admin.query('alter table admin_audit_log disable trigger admin_audit_log_no_delete');
     await admin.query('delete from admin_audit_log where admin_user_id = $1', [
       fixture.secondAdminId,
     ]);
     await admin.query('alter table admin_audit_log enable trigger admin_audit_log_no_delete');
+    await admin.query('commit');
     await admin.query('delete from admin_users where id = $1', [fixture.secondAdminId]);
   }
   await admin.query('begin');

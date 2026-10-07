@@ -118,6 +118,7 @@ async function createTestUser() {
 // deleteTestUser already established; mirrored here rather than
 // reinvented, now that this suite has real ledger activity to clean up.
 async function deleteTestUser(admin, id) {
+  await admin.query('begin');
   await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (
@@ -126,6 +127,7 @@ async function deleteTestUser(admin, id) {
     [id],
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
+  await admin.query('commit');
   await admin.query('delete from public.withdrawals where user_id = $1', [id]);
   await admin.query('delete from public.bank_accounts where user_id = $1', [id]);
   await admin.query('delete from public.topups where user_id = $1', [id]);

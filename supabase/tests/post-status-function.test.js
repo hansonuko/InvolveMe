@@ -96,12 +96,14 @@ async function createTestUser() {
 // through auth.users otherwise (ledger_entries is append-only, CLAUDE.md
 // rule #4).
 async function deleteTestUser(admin, id) {
+  await admin.query('begin');
   await admin.query('alter table public.ledger_entries disable trigger ledger_entries_no_delete');
   await admin.query(
     `delete from public.ledger_entries where wallet_id in (select id from public.wallets where user_id = $1)`,
     [id],
   );
   await admin.query('alter table public.ledger_entries enable trigger ledger_entries_no_delete');
+  await admin.query('commit');
   await admin.query('delete from public.status_updates where user_id = $1', [id]);
   await admin.query('delete from public.fraud_signals where user_id = $1', [id]);
   await admin.query('delete from auth.users where id = $1', [id]);
