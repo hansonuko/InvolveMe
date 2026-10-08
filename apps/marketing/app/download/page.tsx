@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { Card, Eyebrow, Section } from '@/components/Section';
+import { VerifiedBanner } from '@/components/VerifiedBanner';
 
 export const metadata: Metadata = {
   title: 'Download',
@@ -20,22 +22,14 @@ const ANDROID_STEPS = [
   "Once InvolveMe is on the Play Store, this step won't be needed, updates will just work like any other app.",
 ];
 
-export default async function DownloadPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ verified?: string }>;
-}) {
-  const { verified } = await searchParams;
-
+export default function DownloadPage() {
   return (
     <>
       <Section className="pb-10 pt-16 text-center">
         <AnimatedSection>
-          {verified === '1' ? (
-            <p className="mx-auto mb-6 inline-block rounded-pill bg-surface-alt px-5 py-2 text-caption font-semibold text-success">
-              ✓ Your number is confirmed
-            </p>
-          ) : null}
+          <Suspense fallback={null}>
+            <VerifiedBanner />
+          </Suspense>
           <Eyebrow>Download</Eyebrow>
           <h1 className="mx-auto mt-4 max-w-2xl text-display font-extrabold text-foreground">
             Get InvolveMe

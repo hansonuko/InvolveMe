@@ -2,6 +2,26 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Where we stopped (session 41 — realtime migrated to Broadcast; hosting decided and marketing site live on Cloudflare — 2026-10-08) — start here next session
+
+**Part A — Realtime scaling fix.** `postgres_changes` (Postgres logical replication, re-authorizes every row change against every active subscriber individually) migrated to Supabase's Broadcast primitive for `messages`, `group_messages`, `wallets`, `topups`, `threads`, and `users` (last_seen presence) — see `supabase/migrations/20261008120000_realtime_broadcast_migration.sql`, PR #221, merged, CI green. `docs/01-ARCHITECTURE.md` §4 and `docs/05-API-REALTIME-SPEC.md` §3 updated. Six new RLS policies on `realtime.messages`, each verified to mirror the underlying table's existing SELECT policy exactly (checked both the allow and deny case for all six, post-apply, by simulating Realtime's own authorization check). 111 real Edge Function test assertions re-run across every affected table, zero regressions.
+
+**Part B — Hosting decided, and partially live.** Real domain is **`involveme.net`** (registered, not yet pointed at Cloudflare/live). Decision: Marketing site + the future web PWA → **Cloudflare Pages** (both are purely static — zero API routes/middleware in marketing, Expo's `output: "single"` static export for the PWA). Admin dashboard → **Coolify on a DigitalOcean droplet**, deferred until the user sets up the droplet themselves — it's the one actual Node server (service-role key, session middleware), so it needs a real runtime a static CDN can't give it. `docs/14` §3 and `docs/15` §7 updated to match; both still referenced the original Netlify plan before this.
+
+**What's actually live right now, from this session:**
+
+- `apps/marketing` converted to a static export (`output: 'export'` in `next.config.ts`) to deploy on Cloudflare Pages — required two real fixes, not just a config flip: `/download` used an `await searchParams` server prop (incompatible with static export, moved to a `useSearchParams()` client component, `components/VerifiedBanner.tsx`), and `getPublicPricing()` (`lib/pricing.ts`) used Next's ISR (`revalidate: 3600`), which doesn't exist without a server — a static export would have baked pricing permanently at build time, the exact "stale numbers" failure docs/15 §2 exists to prevent, just introduced a different way. Moved to a client-side fetch (`lib/usePublicPricing.ts`, consumed by new `components/PricingContent.tsx`/`HowItWorksContent.tsx`) so pricing stays genuinely live regardless of how old the static deploy is. `netlify.toml` removed (superseded).
+- Deployed and verified serving real content: **`involveme-marketing.pages.dev`** (the actual site, confirmed live pricing fallback renders correctly pre-hydration).
+- Reserved and deployed an honest placeholder (not the real app — that hasn't been built yet): **`involveme-web.pages.dev`**.
+- Coolify/DigitalOcean for admin: **explicitly not set up** — marked down for when the user is ready, no action taken beyond recording the decision above.
+
+**What's still genuinely open:**
+
+- `involveme.net` DNS was never pointed at Cloudflare — both Pages projects are reachable only at their `*.pages.dev` URLs until that happens.
+- The actual Expo web (PWA) production build has never been attempted — flagged explicitly as its own separate, first-ever effort (RN-web shims, e2ee crypto polyfills, etc.), not something to rush inside a hosting-setup pass. `involveme-web.pages.dev` is a placeholder, not the real app.
+- Admin's Coolify/DigitalOcean setup: fully deferred, no droplet exists yet.
+- Everything carried forward from session 35-40 (multi-device, group chat, independent e2ee security review, offline+e2ee outbox gap) — unchanged.
+
 ## Where we stopped (session 40 — the e2ee-schema-functions.test.js prekey flake fixed and closed out — 2026-10-08) — start here next session
 
 Picked up the one item session 39 explicitly left open: "the `e2ee-schema-functions.test.js` flake (prekey-bundle test, intermittent only under full-suite runs, reproduces clean in isolation) — untouched this session, still needs a real look."
