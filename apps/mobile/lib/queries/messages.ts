@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Crypto from 'expo-crypto';
 import { File, Paths } from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import { callEdgeFunction, EdgeFunctionError } from '@/lib/edgeFunctions';
 import { bytesToBase64 } from '@/lib/e2ee/bytes';
@@ -646,8 +647,21 @@ export async function uploadChatAudio(localUri: string, path: string, token: str
  * function" on every single e2ee media send, voice notes and photos alike
  * (real bug report; the generic error text is why it read as a crypto
  * failure rather than a file-read one). `File` is a real native-backed
- * implementation and its `arrayBuffer()` actually exists. */
+ * implementation and its `arrayBuffer()` actually exists.
+ *
+ * On web, `expo-file-system`'s `File`/`Directory` classes are an explicit
+ * unimplemented stub (confirmed live: `new File(uri).arrayBuffer()` throws
+ * `this.validatePath is not a function`, a real crash on every e2ee photo/
+ * voice-note send) — but the real browser `fetch(...).arrayBuffer()` this
+ * native workaround exists to avoid is exactly what a real `Response`
+ * actually supports there, no polyfill involved at all, so web uses it
+ * directly instead of routing through a native-only module with no web
+ * implementation. */
 export async function readLocalFileBytes(localUri: string): Promise<Uint8Array> {
+  if (Platform.OS === 'web') {
+    const response = await fetch(localUri);
+    return new Uint8Array(await response.arrayBuffer());
+  }
   return new Uint8Array(await new File(localUri).arrayBuffer());
 }
 
@@ -670,12 +684,28 @@ export async function readLocalFileBytes(localUri: string): Promise<Uint8Array> 
  * temp file via expo-file-system's File API and then `fetch(file://...)
  * .blob()` reuses the identical, already-proven local-file-to-Blob path
  * every other upload in this app already relies on, rather than a second,
- * novel construction. */
+ * novel construction.
+ *
+ * On web this whole dance is unnecessary *and* unavailable (same stub as
+ * `readLocalFileBytes` above — confirmed live, `new File(...)` there
+ * throws immediately): a real browser `Blob` constructor accepts a
+ * `Uint8Array` part natively, which is exactly the RN-only limitation this
+ * function's native path exists to work around, so web constructs the
+ * Blob directly with no temp file at all. */
 export async function uploadEncryptedChatMedia(
   ciphertext: Uint8Array,
   path: string,
   token: string,
 ) {
+  if (Platform.OS === 'web') {
+    const blob = new Blob([ciphertext], { type: 'application/octet-stream' });
+    const { error } = await supabase.storage
+      .from('chat-media')
+      .uploadToSignedUrl(path, token, blob);
+    if (error) throw error;
+    return;
+  }
+
   const tempFile = new File(Paths.cache, `e2ee-upload-${Crypto.randomUUID()}.bin`);
   try {
     tempFile.create({ overwrite: true });
