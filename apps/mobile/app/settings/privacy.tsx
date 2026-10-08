@@ -1,6 +1,7 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Stack } from 'expo-router';
 import { useState } from 'react';
-import { Modal, Pressable, Switch, TextInput, View } from 'react-native';
+import { Modal, Platform, Pressable, Switch, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { KeyboardAvoidingScreen } from '@/components/ui/KeyboardAvoidingScreen';
@@ -264,6 +265,46 @@ function ReportUserModal({
   );
 }
 
+/** Web-only, permanent (not dismissible) info note — docs/22-FULL-PWA-
+ * SCOPING.md §4/§9 Phase B item 1. `lib/appLock.ts`'s biometric re-lock
+ * gate degrades sensibly on web (confirmed live: expo-local-authentication
+ * unconditionally reports no enrolled lock there, so the gate's own
+ * existing "nothing to protect, skip it" branch fires — no crash, no hard
+ * block), but that also means it provides zero actual re-lock protection
+ * on an installed PWA that ships full money-moving parity. No new PIN-
+ * reprompt mechanism was built for this (the only existing PIN check,
+ * `two_step_pin_hash`/the two-step screen, is explicitly a once-per-login
+ * check, not a per-foreground re-lock — see lib/twoStepGateStore.ts's own
+ * header comment) — this is a disclosure, not a workaround, so "protected"
+ * is never silently a lie on a shared/public computer. Same honest-
+ * unavailable-state posture Turnstile.tsx/the push-notifications-on-web
+ * gap already established, placed in Settings since that's somewhere a
+ * user could plausibly go looking, same reasoning other platforms use for
+ * "where does a security note like this actually belong." */
+function WebAppLockNotice() {
+  const { colors, spacing, radius } = useTheme();
+  if (Platform.OS !== 'web') return null;
+
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        gap: spacing.sm,
+        backgroundColor: colors.bgSurfaceAlt,
+        borderRadius: radius.card,
+        padding: spacing.md,
+        marginBottom: spacing.md,
+      }}
+    >
+      <Ionicons name="information-circle-outline" size={18} color={colors.textTertiary} />
+      <Text variant="caption" color="tertiary" style={{ flex: 1 }}>
+        The web app doesn’t re-lock behind your device’s screen lock the way the mobile app does. On
+        a shared or public computer, sign out instead of just closing the tab.
+      </Text>
+    </View>
+  );
+}
+
 export default function PrivacySettingsScreen() {
   const { colors } = useTheme();
   const { session } = useSession();
@@ -288,6 +329,7 @@ export default function PrivacySettingsScreen() {
         }}
       />
       <Screen edges={['right', 'bottom', 'left']}>
+        <WebAppLockNotice />
         <SettingsRow
           label="Read receipts"
           right={
