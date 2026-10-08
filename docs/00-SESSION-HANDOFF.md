@@ -2,6 +2,18 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Where we stopped (session 43 continued — Phase B item 3 done, a real e2ee-media crash found and fixed on web — 2026-10-08) — start here next session
+
+**Phase B item 3 — `expo-image-picker`/camera capture on web** (`docs/22` §4/§9). The picker itself and `expo-image-manipulator`'s resize/compress both have genuine web implementations, confirmed live end-to-end (temporary diagnostic route, deleted before commit): a synthetic picked file's `blob:` URI survived resize/compress and re-wrapped into a correctly-typed, correctly-sized `Blob`, matching `uploadStatusMedia`/`uploadChatMedia`'s own pattern exactly.
+
+**A real crash found and fixed, not just a verification pass**: e2ee-active threads encrypt media client-side before upload (`lib/queries/messages.ts`'s `readLocalFileBytes`/`uploadEncryptedChatMedia`), and both route through `expo-file-system`'s `File`/`Paths` — whose web module turned out to be a complete unimplemented stub (confirmed live: `new File(uri).arrayBuffer()` throws `this.validatePath is not a function`). This meant **every e2ee-active photo send on the web PWA would crash outright**, not degrade — a real, reachable bug, not a dormant one like item 2's outbox finding. Fixed with a `Platform.OS === 'web'` branch in both functions, using the equivalent real browser APIs instead (`fetch(...).arrayBuffer()`; a direct `new Blob([bytes], ...)` with no temp file) — the exact RN-polyfill limitation the native path's temp-file workaround exists for doesn't apply on a real browser at all, so the web branch is actually simpler than native's. Re-verified live after the fix: `readLocalFileBytes` returns the correct byte length, and `uploadEncryptedChatMedia` reaches the real Supabase network call (rejecting only on a deliberately-fake auth token — proof the crash is gone, not proof of a successful upload, which needs a real session).
+
+**Side effect, not separately built**: voice notes (item 4) share these same two functions, so their e2ee upload path is fixed too — but item 4 itself is still open, since `expo-audio`'s recording step (does it actually reach the browser's `MediaRecorder` at all?) is a separate, still-unverified question this fix doesn't touch.
+
+**Not verified this session**: the real OS file-picker dialog and the `capture` attribute's actual on-device behavior (desktop vs. mobile browser) — same "can't safely drive a blocking native dialog from automation" boundary as the WebAuthn prompt in item 1. `npx tsc --noEmit`/`npx eslint`/full-repo `npx expo lint` all clean.
+
+**What's still open in Phase B**: item 4 (voice notes) — `expo-audio` recording itself on web is unverified; item 5 (LiveKit) remains explicitly excluded per direct instruction.
+
 ## Where we stopped (session 43 continued — Phase B item 1 verified live and disclosed; item 5 explicitly out of scope — 2026-10-08) — start here next session
 
 **Phase A (below) merged**: PR #227, CI green pre- and post-merge on `main`. Nothing deployed anywhere still — that remains its own explicit go-ahead.
