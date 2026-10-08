@@ -1,6 +1,8 @@
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
+
+import { attemptWebAuthnUnlock, isWebAuthnLockAvailable } from '@/lib/webAuthnAppLock';
 
 export type AppLockState = 'unlocked' | 'locked';
 
@@ -77,15 +79,60 @@ export async function withAppLockSuppressed<T>(action: () => Promise<T>): Promis
  * would reintroduce a server round-trip the same spec calls unnecessary
  * elsewhere: "no new server-side auth concept needed, purely a
  * client-side gate.")
+ *
+ * On web, `expo-local-authentication` always reports `SecurityLevel.NONE`
+ * (confirmed live — it has no real implementation there), so the actual
+ * delegation happens through `lib/webAuthnAppLock.ts`'s WebAuthn platform-
+ * authenticator check instead — still "whatever lock the device already
+ * has," just a different API to reach it. A browser/device with no
+ * platform authenticator available gets the exact same "nothing to
+ * delegate to, skip the gate" treatment as native's `SecurityLevel.NONE`.
  */
 export function useAppLock(hasSession: boolean) {
   const [state, setState] = useState<AppLockState>('unlocked');
   const checkingRef = useRef(false);
 
+  // Cold start / session just became available (or just went away) ->
+  // locked until proven otherwise, or unlocked with nothing to protect.
+  // Adjusted here, during render, rather than in an effect — this is
+  // exactly React's own documented "adjusting state when a prop changes"
+  // escape hatch (a conditional setState call guarded by comparing against
+  // the prop's previous render), not a `react-hooks/set-state-in-effect`
+  // violation, since it isn't inside a `useEffect` at all. Needed so
+  // `locked` is already correct the instant `hasSession` flips — in
+  // particular, sign-out must clear `locked` on the very same render, or
+  // app/_layout.tsx's `<AppLockScreen>` (which trusts this hook's `locked`
+  // fully, with no session check of its own) would overlay the sign-out
+  // transition for one extra frame.
+  const [prevHasSession, setPrevHasSession] = useState(hasSession);
+  if (hasSession !== prevHasSession) {
+    setPrevHasSession(hasSession);
+    setState(hasSession ? 'locked' : 'unlocked');
+  }
+
   const attemptUnlock = useCallback(async () => {
     if (checkingRef.current) return;
     checkingRef.current = true;
     try {
+      // expo-local-authentication has no real web implementation (its
+      // own web stub always reports no enrolled lock, confirmed live) —
+      // lib/webAuthnAppLock.ts delegates to the actual browser-native
+      // equivalent instead (WebAuthn's platform authenticator), rather
+      // than silently never re-locking a PWA that ships full
+      // money-moving parity. See that file's own header comment for why
+      // this is still a purely client-side, server-unaware gate, same
+      // trust tier as the native path below.
+      if (Platform.OS === 'web') {
+        const available = await isWebAuthnLockAvailable();
+        if (!available) {
+          setState('unlocked');
+          return;
+        }
+        const unlocked = await withAppLockSuppressed(() => attemptWebAuthnUnlock());
+        setState(unlocked ? 'unlocked' : 'locked');
+        return;
+      }
+
       const level = await LocalAuthentication.getEnrolledLevelAsync();
       if (level === LocalAuthentication.SecurityLevel.NONE) {
         setState('unlocked');
@@ -113,16 +160,22 @@ export function useAppLock(hasSession: boolean) {
     }
   }, []);
 
-  // Cold start / session just became available -> locked until proven
-  // otherwise. Nothing to protect (and nothing shown) before there's a
-  // session at all.
+  // `state` is already correctly set to 'locked' by the render-time
+  // adjustment above by the time this runs (it commits before effects do)
+  // — this effect's only remaining job is kicking off the actual async
+  // verification. Wrapped in its own async IIFE rather than called
+  // directly: `attemptUnlock` performs its own setState once it resolves,
+  // and `react-hooks/set-state-in-effect` only recognizes that as the
+  // legitimate "callback function" case (vs. a direct synchronous call)
+  // when it's inside a nested closure like this one, not a bare
+  // `void attemptUnlock()` — same distinction the AppState listener below
+  // already gets for free, since its setState already lives inside a
+  // real subscription callback.
   useEffect(() => {
-    if (!hasSession) {
-      setState('unlocked');
-      return;
-    }
-    setState('locked');
-    void attemptUnlock();
+    if (!hasSession) return;
+    (async () => {
+      await attemptUnlock();
+    })();
   }, [hasSession, attemptUnlock]);
 
   useEffect(() => {
