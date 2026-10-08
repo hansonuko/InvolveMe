@@ -2,6 +2,16 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Where we stopped (session 40 — the e2ee-schema-functions.test.js prekey flake fixed and closed out — 2026-10-08) — start here next session
+
+Picked up the one item session 39 explicitly left open: "the `e2ee-schema-functions.test.js` flake (prekey-bundle test, intermittent only under full-suite runs, reproduces clean in isolation) — untouched this session, still needs a real look."
+
+**Root cause, not a server bug.** The expired-device fixture set `signedPrekeyExpiresAt` to `Date.now() - 1000` (1 second in the past). Under full-suite load, event-loop/connection-queueing jitter between capturing `Date.now()` in the test and the DB-side `expires_at > now()` comparison actually running was large enough, often enough, to land on the wrong side of that 1-second window — flaking the "B has 2 devices but only the one with a valid signed prekey is returned" assertion. Nothing wrong with `fn_fetch_prekey_bundles`/`fn_register_e2ee_device`; the test fixture's own margin was just too tight for full-suite contention. (Second flake in a row that turned out to be a test-timing artifact, not real logic — see also the cross-file trigger-disable contention from session 39's Part C. When a test is full-suite-only-flaky and isolation-clean, check the fixture's own timing assumptions before assuming the production logic is wrong.)
+
+**Fix:** widened the margin to 24 hours in the past, removing any realistic chance of the race regardless of load. `npm run test:e2ee-schema` 30/30 in isolation (unchanged — isolation was never the failing case). Shipped as PR #218, CI green on the PR itself and confirmed green again on the post-merge push to `main` before considering this closed, per the session-38 discipline. Memory: `e2ee-schema-functions-flake-fixed`.
+
+**What's still genuinely open, not silently dropped:** everything carried forward from session 35–39 — multi-device, group chat, independent (non-AI) e2ee security review, offline+e2ee outbox gap. Unchanged, see below.
+
 ## Where we stopped (session 39 — five more e2ee/UX fixes merged and OTA-shipped, both real-device-confirmed; stale PR #71 closed; the long-standing cross-file test-cleanup contention bug finally fixed — 2026-10-07) — start here next session
 
 **Part A — catching the doc up on work this doc never recorded.** Five PRs merged and shipped (#212–#216, 2026-09-30/10-01) in the session right after session 38, with no handoff entry written for them until now:
