@@ -255,7 +255,15 @@ async function testExpiredPrekeySkippedMultiDevice(admin) {
   try {
     const expiredDevice = await registerDevice(admin, B, {
       label: 'expired device',
-      signedPrekeyExpiresAt: new Date(Date.now() - 1000).toISOString(), // already expired
+      // A 1000ms margin was the original value here and is the real root
+      // cause of this test's full-suite-only flake (memory
+      // e2ee-schema-functions-flake-fixed): under full-suite load, Node
+      // event-loop/connection-queueing jitter between capturing Date.now()
+      // here and the DB-side `expires_at > now()` comparison actually
+      // running was large enough, often enough, to land on the wrong side
+      // of a 1-second window. A day-wide margin removes any realistic
+      // chance of that regardless of load.
+      signedPrekeyExpiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // well in the past
     });
     const freshDevice = await registerDevice(admin, B, { label: 'fresh device' });
 
