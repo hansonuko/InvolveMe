@@ -626,11 +626,25 @@ export async function uploadChatMedia(localUri: string, path: string, token: str
  * `create-chat-media-upload-url`'s own `kind: 'audio'` extension choice
  * and the bucket's widened `allowed_mime_types`
  * (20260926110000_chat_audio_messages_pipeline.sql) — expo-audio's
- * default recording preset produces an `.m4a`/AAC container. */
+ * default recording preset produces an `.m4a`/AAC container **on native**.
+ *
+ * On web this assumption is simply false — confirmed live against the
+ * actual installed `expo-audio` source
+ * (`RecordingPresets.HIGH_QUALITY.web.mimeType`): the real browser
+ * `MediaRecorder` records `audio/webm`, not m4a/AAC, and which exact
+ * container/codec a given browser actually produces can vary (Safari's
+ * own `MediaRecorder` support is narrower and untested here). Hardcoding
+ * `audio/m4a` on web would silently lie in the stored Content-Type — this
+ * app has an explicit standing rule against exactly that (see the e2ee
+ * media migration's own header comment) — so web trusts the real
+ * recorded Blob's own `.type` instead of assuming one, which self-adapts
+ * to whatever the browser actually produced rather than guessing.
+ * `chat-media`'s `allowed_mime_types` was widened accordingly (migration
+ * 20261008190000_chat_audio_web_mime_types.sql). */
 export async function uploadChatAudio(localUri: string, path: string, token: string) {
   const response = await fetch(localUri);
   const original = await response.blob();
-  const blob = new Blob([original], { type: 'audio/m4a' });
+  const blob = new Blob([original], { type: Platform.OS === 'web' ? original.type : 'audio/m4a' });
   const { error } = await supabase.storage.from('chat-media').uploadToSignedUrl(path, token, blob);
   if (error) throw error;
 }
