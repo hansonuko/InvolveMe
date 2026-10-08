@@ -100,7 +100,9 @@ Worked example: A sends a 30-word message (2 credits, escrowed). B replies with 
 
 ## 7. Status updates
 
-Spending credit on a status upload debits `topup_credit` directly (no escrow, no earning — nobody "responds" to a status the same way), per `status_upload_credits_text` / `status_upload_credits_media` in `pricing_config`. Status media has its own client-side resize/compress pipeline (Batch F, session 18 — `docs/02-DATA-MODEL.md` §10), built and live; chat media has no pipeline of any kind yet, so "follows the same pipeline as chat media" (this line's older wording) was never accurate and is corrected here — the two are unrelated, independently-scoped pieces of work, photo status only, no video (`docs/01-ARCHITECTURE.md` §5).
+**Status postings are free, non-chargeable** (`status_upload_credits_text` / `status_upload_credits_media` in `pricing_config` both set to 0, decided and shipped 2026-10-08 — `fn_post_status` itself is unchanged, it already read these keys at call time rather than hardcoding a price, per rule #9). `fn_post_status` still debits `topup_credit` directly when either key is nonzero (no escrow, no earning — nobody "responds" to a status the same way), so raising the price back above 0 via `pricing_config` alone is enough to reinstate paid status uploads without a code change, same as any other `pricing_config` tune. Status media has its own client-side resize/compress pipeline (Batch F, session 18 — `docs/02-DATA-MODEL.md` §10), built and live; chat media has no pipeline of any kind yet, so "follows the same pipeline as chat media" (this line's older wording) was never accurate and is corrected here — the two are unrelated, independently-scoped pieces of work, photo status only, no video (`docs/01-ARCHITECTURE.md` §5).
+
+A status's first reply is a separate, already-free mechanism (`docs/18` §B1) scoped to the sender's genuine first-ever message in that thread — unrelated to the status-posting price above, and unchanged by this decision.
 
 ## 8. Revenue summary (the fee lines, and only these)
 
