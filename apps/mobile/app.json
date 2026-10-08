@@ -23,7 +23,9 @@
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "themeColor": "#5F1B31",
+      "backgroundColor": "#FDFFF7"
     },
     "plugins": [
       "expo-router",
