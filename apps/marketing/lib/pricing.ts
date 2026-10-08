@@ -1,12 +1,18 @@
-// Server-side fetch of the public pricing figures shown on the Pricing and
+// Client-side fetch of the public pricing figures shown on the Pricing and
 // How it works pages — never hand-copied numbers (docs/15 §2), always read
 // from the get-public-pricing Edge Function, which itself whitelists a few
 // safe fields out of `pricing_config` (see that function's header comment).
 //
-// SUPABASE_URL is the same server-only env var apps/admin already uses
-// (see apps/admin/lib/supabase-admin.ts) — this fetch runs on the server
-// (Server Component, ISR-revalidated), never in the browser, so no
-// NEXT_PUBLIC_* var is needed here.
+// Runs in the browser, via usePublicPricing() (lib/usePublicPricing.ts) —
+// not a Server Component fetch. This app deploys as a Cloudflare Pages
+// static export (`output: 'export'`, next.config.ts), which has no server
+// to run Next's ISR revalidation on; a server-side fetch here would bake
+// whatever pricing was live at build time into the static HTML permanently,
+// silently going stale the moment pricing_config changes — exactly the
+// "hand-copied numbers that go stale" failure mode docs/15 §2 exists to
+// prevent, just introduced a different way. Fetching client-side keeps
+// pricing genuinely live on every page load regardless of how old the
+// static deploy is.
 
 export interface PublicPricing {
   credit_unit_kobo: number;
@@ -27,7 +33,7 @@ export interface PublicPricing {
   message_max_bytes: number;
 }
 
-const FALLBACK: PublicPricing = {
+export const FALLBACK: PublicPricing = {
   // Matches supabase/migrations/20260912072744_seed_pricing_config.sql's
   // v1 defaults — used only if the live endpoint is unreachable at build
   // time, so the site still renders something correct-as-of-today rather
@@ -45,16 +51,16 @@ const FALLBACK: PublicPricing = {
 };
 
 export async function getPublicPricing(): Promise<PublicPricing> {
-  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!supabaseUrl) {
-    console.error('getPublicPricing: SUPABASE_URL is not set, serving fallback figures.');
+    console.error(
+      'getPublicPricing: NEXT_PUBLIC_SUPABASE_URL is not set, serving fallback figures.',
+    );
     return FALLBACK;
   }
 
   try {
-    const res = await fetch(`${supabaseUrl}/functions/v1/get-public-pricing`, {
-      next: { revalidate: 3600 },
-    });
+    const res = await fetch(`${supabaseUrl}/functions/v1/get-public-pricing`);
     if (!res.ok) throw new Error(`get-public-pricing returned ${res.status}`);
     return (await res.json()) as PublicPricing;
   } catch (e) {
