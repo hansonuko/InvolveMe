@@ -13,6 +13,7 @@ import { AnimatedSplash } from '@/components/AnimatedSplash';
 import { AppLockScreen } from '@/components/AppLockScreen';
 import { AppAlertHost } from '@/components/ui/AppAlertHost';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { InstallPwaPrompt } from '@/components/InstallPwaPrompt';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { useAppLock } from '@/lib/appLock';
 import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
@@ -261,6 +262,7 @@ export default function RootLayout() {
           <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
             <OutboxDrainEffect userId={session?.user.id} />
             <OfflineBanner />
+            <InstallPwaPrompt />
             {/* Themed Alert.alert replacement (lib/ui/alert.ts) — mounted
                 once here, same level as AppLockScreen below, so it can
                 overlay any screen regardless of which one triggered it. */}
