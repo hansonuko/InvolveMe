@@ -1,11 +1,25 @@
-import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useEffect, useRef } from 'react';
 
 import { supabase } from '@/lib/supabase';
 
-type ChangeHandler = (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
+/**
+ * The fields every existing call site actually reads off a change payload
+ * (confirmed by checking each one, not assumed) — a deliberately narrower
+ * shape than supabase-js's own `RealtimePostgresChangesPayload`, since this
+ * hook no longer gets real `postgres_changes` payloads (see below) and has
+ * no reason to fabricate the extra fields (`schema`, `table`,
+ * `commit_timestamp`, `errors`) that type carries and nothing here reads.
+ */
+interface ChangePayload {
+  eventType: 'INSERT' | 'UPDATE' | 'DELETE';
+  new: Record<string, unknown>;
+  old: Record<string, unknown>;
+}
 
-interface PostgresChangesConfig {
+type ChangeHandler = (payload: ChangePayload) => void;
+
+interface BroadcastConfig {
   event: '*' | 'INSERT' | 'UPDATE' | 'DELETE';
   schema: string;
   table: string;
@@ -56,12 +70,49 @@ interface RegistryEntry {
 const registry = new Map<string, RegistryEntry>();
 
 /**
- * Subscribes to `postgres_changes` on a shared channel for `topic`,
- * fanning out to every hook instance currently interested in it. `config`
- * is assumed identical across every caller for a given `topic` in this
- * app (true in practice — the topic string itself already encodes the
- * specific row/user/thread being watched, so nothing here needs to
- * reconcile differing filters for the same topic).
+ * Subscribes to Supabase Realtime **Broadcast** on a shared, private
+ * channel for `topic`, fanning out to every hook instance currently
+ * interested in it.
+ *
+ * This used to subscribe to `postgres_changes` directly — migrated
+ * 2026-10-08 (docs/01-ARCHITECTURE.md §4) because `postgres_changes`
+ * authorizes every single row change against every active subscriber
+ * individually (Supabase's own documented scaling ceiling: throughput
+ * degrades with subscriber count, not write rate, and changes are
+ * processed on one thread to preserve ordering). Every table this hook
+ * ever subscribes to (`messages`, `group_messages`, `wallets`, `topups`,
+ * `threads`, `users`) now has a trigger (see
+ * `supabase/migrations/20261008120000_realtime_broadcast_migration.sql`)
+ * that calls `realtime.broadcast_changes()` to push to this exact topic
+ * string instead, authorized via RLS on `realtime.messages` rather than
+ * the underlying table's own RLS — each policy was written to be the
+ * precise equivalent of that table's existing SELECT policy, verified
+ * directly against the live policies, not assumed.
+ *
+ * `{ config: { private: true } }` is required for a channel whose access
+ * is gated by Realtime Authorization (RLS) rather than left open — see the
+ * migration's own header for why this project's topic strings are already
+ * exactly the authorization boundary (one user, one thread, one group, or
+ * one topup per topic).
+ *
+ * The broadcast payload's shape (`{ type, event, payload: { operation,
+ * record, old_record, table, schema } }`) is translated back into the same
+ * `{ eventType, new, old }` shape `postgres_changes` always delivered, so
+ * every existing caller (`messages.ts`, `threads.ts`, `groups.ts`,
+ * `wallet.ts`, `thread/[id].tsx`) needed zero changes.
+ *
+ * `config` is assumed identical across every caller for a given `topic` in
+ * this app (true in practice — the topic string itself already encodes the
+ * specific row/user/thread/group/topup being watched, so nothing here
+ * needs to reconcile differing filters for the same topic). `config.event`
+ * still drives which broadcast event(s) this subscribes to — `'*'` is a
+ * genuinely supported wildcard for broadcast too (confirmed directly
+ * against `realtime-js`'s own dispatch logic, not just its docs' examples,
+ * which only ever show per-event-name `.on()` calls). `config.schema`/
+ * `.table`/`.filter` are no longer meaningful (the topic alone fully scopes
+ * a broadcast subscription; there is no equivalent of a postgres_changes
+ * row filter) but are kept in the call-site signature rather than touching
+ * every caller just to drop now-unused fields.
  *
  * `onChange` is read via a ref, not a `useEffect` dependency — every
  * existing call site passes a fresh inline closure each render (e.g.
@@ -73,7 +124,7 @@ const registry = new Map<string, RegistryEntry>();
  */
 export function useRealtimeTableChanges(
   topic: string | undefined,
-  config: PostgresChangesConfig,
+  config: BroadcastConfig,
   onChange: ChangeHandler,
 ) {
   const onChangeRef = useRef(onChange);
@@ -86,13 +137,28 @@ export function useRealtimeTableChanges(
 
     let entry = registry.get(topic);
     if (!entry) {
-      const channel = supabase.channel(topic);
+      const channel = supabase.channel(topic, { config: { private: true } });
       const newEntry: RegistryEntry = { channel, refCount: 0, listeners: new Set() };
       registry.set(topic, newEntry);
       channel
-        .on('postgres_changes', config, (payload) => {
-          for (const l of newEntry.listeners) l(payload);
-        })
+        .on(
+          'broadcast',
+          { event: config.event },
+          (raw: {
+            payload: {
+              operation: 'INSERT' | 'UPDATE' | 'DELETE';
+              record: Record<string, unknown> | null;
+              old_record: Record<string, unknown> | null;
+            };
+          }) => {
+            const payload: ChangePayload = {
+              eventType: raw.payload.operation,
+              new: raw.payload.record ?? {},
+              old: raw.payload.old_record ?? {},
+            };
+            for (const l of newEntry.listeners) l(payload);
+          },
+        )
         .subscribe();
       entry = newEntry;
     }

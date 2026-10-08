@@ -14,13 +14,15 @@ export interface Wallet {
   updated_at: string;
 }
 
-/** All three of the current user's wallets, kept live via Realtime — per
- * docs/05-API-REALTIME-SPEC.md §3 (`postgres_changes` on `wallets` filtered
- * by `user_id`, driving the balance-update motion spec in
- * docs/04-DESIGN-SYSTEM.md — the motion itself isn't implemented here,
- * just the live data it would react to). Balances are exactly what the
- * server returns; nothing here computes or adjusts them, per CLAUDE.md
- * rule #1. */
+/** All three of the current user's wallets, kept live via Realtime
+ * Broadcast — per docs/05-API-REALTIME-SPEC.md §3 and
+ * docs/01-ARCHITECTURE.md §4 (topic `wallets:<user_id>`, authorized via
+ * RLS on `realtime.messages` rather than a postgres_changes filter — see
+ * 20261008120000_realtime_broadcast_migration.sql — driving the
+ * balance-update motion spec in docs/04-DESIGN-SYSTEM.md — the motion
+ * itself isn't implemented here, just the live data it would react to).
+ * Balances are exactly what the server returns; nothing here computes or
+ * adjusts them, per CLAUDE.md rule #1. */
 export function useWallets(userId: string | undefined) {
   const queryClient = useQueryClient();
   const queryKey = ['wallets', userId];
@@ -235,13 +237,16 @@ export function useLedgerEntries(userId: string | undefined, limit = 50) {
     },
   });
 
-  // ledger_entries itself isn't on the supabase_realtime publication (only
-  // messages/wallets/topups are) — every ledger entry has a corresponding
-  // wallets.balance change, so piggybacking on useWallets' own realtime
-  // channel (same table/filter) keeps this live without adding a second
-  // table to the publication for one more subscriber.
+  // ledger_entries has no broadcast trigger of its own — every ledger entry
+  // has a corresponding wallets.balance change, so this piggybacks on the
+  // exact same `wallets:${userId}` topic useWallets subscribes to, rather
+  // than a separate `ledger-entries-via-wallets:${userId}` one (that used
+  // to exist purely to avoid sharing a postgres_changes publication
+  // subscription across two consumers — moot under Broadcast, which has no
+  // publication to share; collapsing this halves the broadcasts a wallet
+  // change fires, see 20261008120000_realtime_broadcast_migration.sql).
   useRealtimeTableChanges(
-    userId ? `ledger-entries-via-wallets:${userId}` : undefined,
+    userId ? `wallets:${userId}` : undefined,
     { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` },
     () => queryClient.invalidateQueries({ queryKey }),
   );
