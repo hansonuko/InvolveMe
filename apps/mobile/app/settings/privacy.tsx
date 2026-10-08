@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Platform, Pressable, Switch, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
@@ -18,6 +18,7 @@ import { showAlert } from '@/lib/ui/alert';
 import { useBlockedThreads, useSetThreadBlocked } from '@/lib/queries/threads';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/theme';
+import { isWebAuthnLockAvailable } from '@/lib/webAuthnAppLock';
 
 function SettingsRow({
   label,
@@ -265,25 +266,28 @@ function ReportUserModal({
   );
 }
 
-/** Web-only, permanent (not dismissible) info note — docs/22-FULL-PWA-
- * SCOPING.md §4/§9 Phase B item 1. `lib/appLock.ts`'s biometric re-lock
- * gate degrades sensibly on web (confirmed live: expo-local-authentication
- * unconditionally reports no enrolled lock there, so the gate's own
- * existing "nothing to protect, skip it" branch fires — no crash, no hard
- * block), but that also means it provides zero actual re-lock protection
- * on an installed PWA that ships full money-moving parity. No new PIN-
- * reprompt mechanism was built for this (the only existing PIN check,
- * `two_step_pin_hash`/the two-step screen, is explicitly a once-per-login
- * check, not a per-foreground re-lock — see lib/twoStepGateStore.ts's own
- * header comment) — this is a disclosure, not a workaround, so "protected"
- * is never silently a lie on a shared/public computer. Same honest-
- * unavailable-state posture Turnstile.tsx/the push-notifications-on-web
- * gap already established, placed in Settings since that's somewhere a
- * user could plausibly go looking, same reasoning other platforms use for
- * "where does a security note like this actually belong." */
+/** Web-only, shown only when there's genuinely nothing for the app-lock
+ * gate to delegate to — docs/22-FULL-PWA-SCOPING.md §4/§9 Phase B item 1.
+ * `lib/appLock.ts` re-locks on web via `lib/webAuthnAppLock.ts` (the
+ * browser's own platform authenticator — Windows Hello, Touch ID, Android
+ * biometric — the real equivalent of native's OS-level lock), so most
+ * browsers/devices need no disclosure at all: the gate genuinely works.
+ * This only renders for the one case left honestly unprotected — no
+ * platform authenticator available at all (old browser, or a device with
+ * no OS lock configured) — same "nothing to delegate to, skip the gate"
+ * case `useAppLock`'s own header comment already documents for native's
+ * `SecurityLevel.NONE`. Never a silent gap: same honest-unavailable-state
+ * posture Turnstile.tsx/the push-notifications-on-web gap established. */
 function WebAppLockNotice() {
   const { colors, spacing, radius } = useTheme();
-  if (Platform.OS !== 'web') return null;
+  const [lockUnavailable, setLockUnavailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    void isWebAuthnLockAvailable().then((available) => setLockUnavailable(!available));
+  }, []);
+
+  if (Platform.OS !== 'web' || !lockUnavailable) return null;
 
   return (
     <View
@@ -298,8 +302,9 @@ function WebAppLockNotice() {
     >
       <Ionicons name="information-circle-outline" size={18} color={colors.textTertiary} />
       <Text variant="caption" color="tertiary" style={{ flex: 1 }}>
-        The web app doesn’t re-lock behind your device’s screen lock the way the mobile app does. On
-        a shared or public computer, sign out instead of just closing the tab.
+        This browser has no device lock (like Windows Hello or Touch ID) for InvolveMe to use, so
+        the web app can’t re-lock itself the way the mobile app does. On a shared or public
+        computer, sign out instead of just closing the tab.
       </Text>
     </View>
   );
