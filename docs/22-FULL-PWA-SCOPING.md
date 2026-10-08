@@ -1,0 +1,75 @@
+# 22 — Full PWA (Standalone Web App): Scoping
+
+**Status: scoping only, 2026-10-08.** Nothing in this document is built yet, except the preliminary feasibility probes described in §2 — real, run this session, not assumed. Same discipline `docs/11`/`docs/12`/`docs/14` already established: scope first, build in explicitly-approved phases.
+
+## 1. What this is, and what it is explicitly NOT
+
+**The ask, restated precisely:** InvolveMe isn't listed on the Play Store or App Store yet. iOS in particular has no sideloading path at all (unlike Android, which can at least install an APK outside the Play Store) — so until the app is actually listed, iOS users and any Android user who won't sideload have no way to use InvolveMe at all. The fix: a **full, standalone Progressive Web App that mirrors 100% of the mobile app's features**, installable and fully usable from a phone's browser, serving as a genuine substitute for the native app until app-store listing exists. Once the native Android app is actually listed (`docs/08-BUILD-PHASES-ROADMAP.md` Phase 7), Android users get steered toward it via the marketing site's Download page (§7) — the PWA was always the bridge, not the permanent primary path for a platform that can get the real native app.
+
+**This is explicitly NOT `docs/12-LINKED-DEVICES-WEB-SCOPING.md`'s feature.** That document scopes a different, separate thing: a QR-code-paired **desktop/PC companion session**, authenticated by scanning from an already-logged-in phone, mirroring WhatsApp Web's own linked-device model — reduced-trust, chat-and-status-only, no wallet actions. This document's PWA is the opposite shape: a **full-trust, standalone primary client** with its own phone-OTP login, because for an iOS user specifically it effectively _is_ "the app," not a companion to one they already have running elsewhere. The two features are independent, were explicitly distinguished by the user (2026-10-08) before this doc was written, and `docs/12` remains exactly as it was — scoping-only, untouched, for whenever a desktop-companion feature is actually wanted later.
+
+## 2. Feasibility findings from this session's real probes — ground truth, not assumptions
+
+Three concrete things were tested live before this doc was written, specifically because this codebase has a real history of silent, catastrophic bugs slipping past a clean build (the e2ee native-crypto incident, session 37) — "it compiles" was treated as the start of verification, not the end of it:
+
+- **`npx expo export --platform web` succeeds, first attempt, no errors.** 1751 modules bundled, including a real WASM-backed `libsodium-wrappers` build for e2ee crypto (Metro's web platform resolution correctly swapped away from `react-native-libsodium`'s native binding, which `sodiumProviderNative.ts`'s own header comment already documents as missing real functions in its native build — the web/WASM build is the _complete_ official libsodium port, not the same incomplete one).
+- **The actual app loads and renders correctly in a real browser** — confirmed visually (screenshot), not just "no console error." The real phone-entry auth screen rendered with correct styling, design tokens, and layout.
+- **E2EE's core crypto primitives were verified byte-correct, not just "loads without throwing."** A direct probe (same module resolution path Metro's web target uses) ran: X25519 keypair generation + Diffie-Hellman agreement (Alice's shared secret == Bob's), Ed25519 sign/verify round-trip, XChaCha20-Poly1305 AEAD encrypt/decrypt round-trip, and a tamper check (wrong AAD correctly rejected, not silently decrypted). All passed. This is the single highest-risk area given this project's history and was treated accordingly.
+- **Realtime chat delivery is already confirmed platform-independent** (prior session) — the client opens its own `wss://` connection straight to Supabase, regardless of what serves the page.
+- **Push notifications are confirmed broken on web**, not theoretically — `expo-notifications` throws (`getLastNotificationResponse is not available on web`) the moment the app tries to check for a notification response on load. Real, not hypothetical; scoped out below (§4, §9 Phase D).
+
+## 3. Auth model
+
+Full parity with the native app's own trust level — **no QR pairing, no reduced-privilege session, no new RLS/claim distinction.** The PWA calls `supabase.auth.signInWithOtp` directly from the browser, the exact same call the native app already makes (`apps/mobile/app/(auth)/index.tsx`), against the same Supabase project, using the same `EXPO_PUBLIC_SUPABASE_URL`/`EXPO_PUBLIC_SUPABASE_ANON_KEY` values Expo's bundler already bakes in at build time for the web target too (confirmed — these are the same env vars the successful web export in §2 already used). No new Edge Function, no new backend logic — the marketing site's own `web-send-otp` function was a _separate_ guard built specifically because that endpoint's caller is the lead-capture form, not an authenticated session continuation; the PWA doesn't need that function at all, it's a direct `signInWithOtp` call exactly like native.
+
+**Money-moving actions (buy-credit, withdraw, transfer) ship live from v1**, per explicit confirmation (2026-10-08) — full feature parity from day one is the actual goal here, not a staged trust ramp. Session storage uses `AsyncStorage`'s existing web shim (confirmed working via `react-native-web`, already relied on by `lib/supabase.ts` today) — the same rough security tier the native app itself already accepts (mobile uses `AsyncStorage`, not `SecureStore`, per that file's own documented tradeoff: `SecureStore`'s ~2KB limit can't hold a session JWT). The PWA introduces no new storage-security tier below what native already ships.
+
+## 4. Native-only modules needing a real, explicit per-feature decision — not silent no-ops
+
+Each of these needs a genuine web behavior decided and verified, same posture `docs/12` §1 already established for its own (different) web client:
+
+| Module                                   | Native use                                                 | Web status                                                                                                                                    | Plan                                                                                                                                                                                                                                                          |
+| ---------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `expo-notifications`                     | Push notifications                                         | **Confirmed broken** (§2)                                                                                                                     | Phase D (separate Web Push project). Until then: an explicit "notifications aren't available in the web app yet" state, matching the honest-unavailable-state pattern `Turnstile.tsx` already established — never a silent failure.                           |
+| `expo-local-authentication`              | Biometric app-lock gate                                    | Unverified — no browser biometric API equivalent exists in general                                                                            | Fall back to PIN-only (`two_step_pin_hash` already exists in this app's data model) or an explicit "use your PIN" state. **Phase B item**: verify `useAppLock`'s actual behavior on web today — does it hard-block with no path forward, or degrade sensibly? |
+| `expo-sqlite`                            | Offline message outbox (`docs/13-OFFLINE-MODE-SCOPING.md`) | Unverified — `expo-sqlite` has experimental web (WASM) support in recent SDKs, but untested against this app's actual schema/usage            | **Phase B item**: real test. If genuinely incompatible, ship with an honest "offline queueing isn't available in the web app yet" disclosure rather than silently dropping queued messages — never the latter.                                                |
+| `expo-image-picker` / camera capture     | Status/profile photos, chat media                          | Unverified — partial web support exists (browser file input, `capture` attribute on mobile browsers)                                          | **Phase B item**: real test on both a desktop browser and a mobile browser (behavior differs).                                                                                                                                                                |
+| Voice notes (`expo-audio` or equivalent) | Record/playback                                            | Unverified — browser `MediaRecorder` exists; whether Expo's wrapper correctly routes to it on web is untested                                 | **Phase B item**: real record→encrypt→send→playback round trip in a browser.                                                                                                                                                                                  |
+| LiveKit calls                            | Voice/video (`docs/11-VOICE-VIDEO-CALLS-SCOPING.md`)       | Unverified — LiveKit ships an official browser SDK, so this is plausibly the smallest gap, but untested against this app's actual integration | **Phase B item**: real token-mint + join test in a browser.                                                                                                                                                                                                   |
+
+## 5. PWA installability — doesn't exist in this codebase at all yet
+
+This is real, unbuilt work, not a config flip:
+
+- **`manifest.json`**: name, icon set (multiple sizes — iOS and Android have different real requirements), theme colors from `docs/04-DESIGN-SYSTEM.md`'s own tokens (never a hand-picked color), `display: "standalone"`, correct `start_url`.
+- **Service worker**: app-shell caching only, deferring all data-freshness/outbox behavior to the exact same TanStack-Query-persisted-cache + outbox mechanism `docs/13-OFFLINE-MODE-SCOPING.md` already designed for native — one offline strategy, reused, not two competing caches that can disagree about what "up to date" means (this exact requirement is already written down in `docs/15` §8, just never built).
+- **Versioned cache-busting on every deploy** — an already-installed PWA must always pick up the latest version, not serve a stale cached build indefinitely. This matters more here than for a typical PWA, given this whole product's "ship fixes fast" culture (OTA updates on native exist for exactly this reason).
+- **iOS**: no native install-prompt API exists in Safari — needs real, illustrated "Add to Home Screen" instructions. The Download page already has placeholder copy for this (`apps/marketing/app/download/page.tsx`, currently "Installable web app, coming soon") — needs real screenshots/steps once the PWA exists to point at.
+- **Android**: a real `beforeinstallprompt`-driven install button (Chrome supports this natively) — not just a link.
+
+## 6. Hosting
+
+Already decided and partially live (`docs/15` §7, session 41): **Cloudflare Pages**, project `involveme-web` (currently `involveme-web.pages.dev`, an honest "coming soon" placeholder, not the real app). Once this phase actually ships a real build, deploy there for real and wire CI to redeploy on every merge to `main` that touches `apps/mobile` (or shared web-relevant packages) — `docs/15` §7 already specifies this trigger, just never wired, since there was nothing to deploy until now.
+
+## 7. Marketing site Download page — real wiring, not placeholders
+
+`/download` currently shows honest "coming soon" placeholders for both platforms. Once this phase ships:
+
+- **iOS**: replace the placeholder with a real link to the installed PWA's URL + real, illustrated "Add to Home Screen" steps (Safari-specific, since there's no install-prompt API to hook).
+- **Android**: replace the placeholder with a real install button/instructions for the PWA. **Explicit future follow-up, not built now**: once the native Android app is actually listed on the Play Store (`docs/08` Phase 7), this copy changes again to steer Android users toward the native app instead — the PWA was always the bridge for Android, not the permanent path, exactly as the user framed it. Flagging this now so it isn't forgotten, not scoping it today.
+
+## 8. Explicit non-goals for this effort
+
+- `docs/12`'s QR-paired desktop "Linked Devices" companion — separate, untouched, remains scoping-only.
+- A native desktop app (Electron or otherwise) — the browser PWA is the whole of "the web client."
+- Full offline parity if §4's SQLite check genuinely fails — ship with an honest disclosure instead of blocking the whole phase on it.
+- Push notifications (§4, §9 Phase D) — explicitly deferred, not silently dropped.
+
+## 9. Phased build plan
+
+Each phase ships only with explicit go-ahead before the next starts — same discipline every other major feature in this codebase has followed (calls, linked devices, admin dashboard).
+
+1. **Phase A — PWA installability.** `manifest.json`, service worker (app-shell caching only, per §5), icon set, versioned cache-busting, iOS/Android install UX.
+2. **Phase B — Verify and fix the native-only gaps, one at a time** (§4 table): biometric→PIN fallback, offline outbox web compatibility, camera/media picker, voice notes, LiveKit calls. Each gets a real test before being marked done — this codebase's own history (three prior undetected crypto bugs) is the reason "assumed to work" is never good enough here.
+3. **Phase C — Wire real install links + instructions into the marketing site's Download page** (§7).
+4. **Phase D — Push notifications via Web Push.** Separate, materially larger effort (a new integration, not a fallback) — deferred, not blocking the rest of this plan.
