@@ -698,7 +698,16 @@ export async function uploadEncryptedChatMedia(
   token: string,
 ) {
   if (Platform.OS === 'web') {
-    const blob = new Blob([ciphertext], { type: 'application/octet-stream' });
+    // `.slice()` rather than passing `ciphertext` directly: TypeScript
+    // 5.7's generic `Uint8Array<TArrayBuffer>` types this parameter as
+    // `Uint8Array<ArrayBufferLike>`, which `Blob`'s `BlobPart` (needing
+    // `ArrayBufferView<ArrayBuffer>` specifically, not the wider
+    // `ArrayBufferLike` that also admits `SharedArrayBuffer`) rejects —
+    // `.slice()` always returns a fresh, plain-`ArrayBuffer`-backed copy,
+    // which satisfies the narrower type. A real byte-for-byte copy here
+    // is also correct regardless of the type error: this ciphertext must
+    // never be mutated after encryption anyway.
+    const blob = new Blob([ciphertext.slice()], { type: 'application/octet-stream' });
     const { error } = await supabase.storage
       .from('chat-media')
       .uploadToSignedUrl(path, token, blob);
