@@ -11,7 +11,16 @@
 // only reflecting a known-good Origin back is the more conservative
 // choice than a wildcard.
 
-const ALLOWED_ORIGINS = ['https://involveme.com', 'https://www.involveme.com'];
+// involveme.net is the real domain (registered 2026-10-08, DNS not yet
+// live); involveme-marketing.pages.dev is where the site actually serves
+// from right now (docs/15-MARKETING-SITE-PWA-SCOPING.md §7) — both are
+// listed so the live deployed signup form's own Origin header is actually
+// allowed, not just the eventual production domain.
+const ALLOWED_ORIGINS = [
+  'https://involveme.net',
+  'https://www.involveme.net',
+  'https://involveme-marketing.pages.dev',
+];
 
 function isAllowedOrigin(origin: string | null): boolean {
   if (!origin) return false;

@@ -7,12 +7,17 @@
 // Requires web-send-otp to have been deployed with `--no-verify-jwt` (see
 // that function's own header comment).
 //
-// This test deliberately does NOT configure a real Turnstile secret and
-// asserts the function correctly fails CLOSED in production today — real
-// Cloudflare credentials are a external-service dependency the user hasn't
-// set up yet. If this test starts asserting a 200 "sent" response instead,
-// that's a signal TURNSTILE_SECRET_KEY has been configured in production —
-// update this test deliberately at that point, don't just relax it.
+// A real Turnstile widget + TURNSTILE_SECRET_KEY went live in production
+// 2026-10-08 (session 41) — per this file's own prior instruction ("if
+// this test starts asserting a 200 'sent' response instead... update this
+// test deliberately, don't just relax it"), updated deliberately rather
+// than left asserting the old pre-Cloudflare-account fail-closed state.
+// This now asserts the REAL check runs: a bogus token reaches Cloudflare's
+// siteverify and is correctly rejected (400 captcha_failed), not that
+// captcha is unconfigured. It does NOT assert a 200 "sent" response — this
+// test has no way to produce a real, human-verified Turnstile token, so
+// "the check genuinely rejects a fake token" is the correct, strongest
+// claim an automated smoke test can make here.
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 
@@ -34,7 +39,10 @@ function log(label, ok, detail) {
 async function main() {
   const res = await fetch(`${SUPABASE_URL}/functions/v1/web-send-otp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'https://involveme.com' },
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: 'https://involveme-marketing.pages.dev',
+    },
     // Unique per run for the same reason as web-send-otp-function.test.js:
     // this assertion needs the request to get PAST the per-phone rate
     // limiter to reach the captcha check, so a number shared with any other
@@ -53,14 +61,14 @@ async function main() {
   );
 
   log(
-    'fails CLOSED in production today — no TURNSTILE_SECRET_KEY configured yet (503 captcha_not_configured), not a silent bypass',
-    res.status === 503 && body?.error === 'captcha_not_configured',
+    'the real Turnstile check runs in production — a bogus token is genuinely rejected (400 captcha_failed), not silently accepted or stuck fail-closed-unconfigured (503)',
+    res.status === 400 && body?.error === 'captcha_failed',
     `status=${res.status} body=${JSON.stringify(body)}`,
   );
 
   log(
     'CORS header reflects an allowed Origin',
-    res.headers.get('access-control-allow-origin') === 'https://involveme.com',
+    res.headers.get('access-control-allow-origin') === 'https://involveme-marketing.pages.dev',
     `access-control-allow-origin=${res.headers.get('access-control-allow-origin')}`,
   );
 

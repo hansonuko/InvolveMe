@@ -39,10 +39,14 @@ function loadTurnstileScript(): Promise<void> {
 
 // Bot-abuse guard in front of the OTP-send call (docs/15-MARKETING-SITE-
 // PWA-SCOPING.md §4.4, non-negotiable — ships in the same phase as the
-// signup form). Renders a clear "unavailable" state rather than crashing
-// when NEXT_PUBLIC_TURNSTILE_SITE_KEY isn't set (true until the user sets
-// up a real Cloudflare account) — Send stays disabled in that case, which
-// is the correct fail-closed posture, not a bypass.
+// signup form). A real Turnstile widget (sitekey 0x4AAAAAAFRCZapP4N0Af8Lf,
+// scoped to involveme.net/www.involveme.net/involveme-marketing.pages.dev)
+// has been live since 2026-10-08 — NEXT_PUBLIC_TURNSTILE_SITE_KEY is no
+// longer Cloudflare's published always-pass test key. Still renders a
+// clear "unavailable" state rather than crashing if the env var is ever
+// unset again (a misconfigured future deploy, a different environment) —
+// Send stays disabled in that case, which is the correct fail-closed
+// posture, not a bypass.
 export function Turnstile({ onVerify }: { onVerify: (token: string) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
