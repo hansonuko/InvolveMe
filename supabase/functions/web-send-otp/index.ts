@@ -16,11 +16,14 @@
 // `signInWithOtp` makes internally — GoTrue's own captcha setting stays
 // off, mobile is completely unaffected.
 //
-// FAILS CLOSED: if TURNSTILE_SECRET_KEY isn't configured (true today —
-// Cloudflare Turnstile is a new external service the user hasn't set up
-// yet, same as Termii/Flutterwave were at various points), this returns
-// 503 rather than silently skipping the captcha check. Never treat a
-// missing secret as "captcha not required."
+// FAILS CLOSED: if TURNSTILE_SECRET_KEY isn't configured, this returns 503
+// rather than silently skipping the captcha check. Never treat a missing
+// secret as "captcha not required." A real secret has been set via
+// `supabase secrets set` since 2026-10-08 (verified live: a bogus token
+// now gets a real 400 captcha_failed from Cloudflare's siteverify, not the
+// 503 this branch used to return before a real Cloudflare account/widget
+// existed) — this fail-closed path is now a defensive fallback for a
+// future misconfiguration, not the normal state.
 //
 // Uses only the anon key to call GoTrue — no service_role needed, this is
 // exactly what an anonymous browser client is already allowed to do.
