@@ -193,11 +193,13 @@ export interface Message {
   e2eeMediaNonceBase64?: string;
 }
 
-/** Messages in a thread, oldest first, kept live via Realtime — per
- * docs/05-API-REALTIME-SPEC.md §3 (`postgres_changes` on `messages`
- * filtered by `thread_id`). Presence/typing-indicator/read-receipt
- * channels from that same section aren't implemented here — flagged as a
- * deliberate v1 gap, not an oversight.
+/** Messages in a thread, oldest first, kept live via Realtime Broadcast —
+ * per docs/05-API-REALTIME-SPEC.md §3 and docs/01-ARCHITECTURE.md §4
+ * (topic `messages:<thread_id>`, authorized via RLS on
+ * `realtime.messages` rather than a postgres_changes filter — see
+ * 20261008120000_realtime_broadcast_migration.sql). Presence/typing-
+ * indicator/read-receipt channels from that same section aren't
+ * implemented here — flagged as a deliberate v1 gap, not an oversight.
  *
  * `currentUserId` filters out anything the caller has personally deleted
  * (message_deletions, punch-list item 5) — a second, separate query

@@ -70,11 +70,14 @@ export interface ThreadWithPartner {
  * list — preview text, ordering, and unread counts all live inside this
  * query's own `queryFn` and get recomputed together on any invalidation,
  * without a second subscription on `messages` for the same event. No
- * `filter` on the subscription: Realtime enforces `threads_select_participant`
- * RLS on every `postgres_changes` delivery regardless, and that policy
- * already expresses the exact "either participant column" condition a
- * single Realtime `filter` string can't (it only supports one column
- * comparison, not an OR across two).
+ * `filter` on the subscription — broadcast topics carry no filter concept
+ * at all (see realtimeChannel.ts); the "either participant column"
+ * condition `threads_select_participant`'s RLS expresses is instead
+ * handled by the `threads` broadcast trigger itself, which sends to both
+ * `threads:<participant_a>` and `threads:<participant_b>` on every change
+ * (20261008120000_realtime_broadcast_migration.sql) rather than relying on
+ * a single filter string that could never express an OR across two
+ * columns anyway.
  */
 export function useThreads(currentUserId: string | undefined) {
   const queryClient = useQueryClient();
@@ -249,19 +252,17 @@ export function useTotalUnreadCount(userId: string | undefined) {
     },
   });
 
-  // `thread_unread_counts` is a view, not a table — it can't be added to
-  // the publication directly. `threads` now is (punch-list item 4,
-  // 2026-09-19, this same session), and every new message updates a
-  // thread's own `last_message_at` in the same transaction, so
-  // piggybacking on that change is enough to know this count needs
-  // recomputing — same "reuse an already-published table's changes"
-  // idiom useLedgerEntries already established for wallets/ledger_entries.
-  // Own distinct topic (not literally `useThreads`' `threads:${userId}`
-  // topic string) for the same loose-coupling reason that pattern uses a
-  // separate topic from `useWallets`, even though both listen to the same
-  // table/filter.
+  // `thread_unread_counts` is a view, not a table, and has no broadcast
+  // trigger of its own — every new message updates a thread's own
+  // `last_message_at` in the same transaction, so this piggybacks on the
+  // exact same `threads:${userId}` topic useThreads subscribes to, rather
+  // than a separate `unread-count-via-threads:${userId}` one (that used to
+  // exist purely to avoid sharing a postgres_changes publication
+  // subscription across two consumers — moot under Broadcast, which has no
+  // publication to share; collapsing this halves the broadcasts a thread
+  // change fires, see 20261008120000_realtime_broadcast_migration.sql).
   useRealtimeTableChanges(
-    userId ? `unread-count-via-threads:${userId}` : undefined,
+    userId ? `threads:${userId}` : undefined,
     { event: '*', schema: 'public', table: 'threads' },
     () => queryClient.invalidateQueries({ queryKey }),
   );

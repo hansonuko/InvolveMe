@@ -423,11 +423,13 @@ Despite this section's heading, `escrow-expiry-sweep`/`auto-withdraw-sweep`/`rec
 
 ## 3. Realtime channels (Supabase Realtime)
 
-- `postgres_changes` on `messages` filtered by `thread_id=eq.<id>` — chat delivery.
-- `postgres_changes` on `wallets` filtered by `user_id=eq.<self>` — live balance updates driving the motion spec in `docs/04-DESIGN-SYSTEM.md`.
-- `postgres_changes` on `topups` filtered by `id=eq.<topup_id>` — lets the buy-credit screen detect a transfer clearing without the user backing out to check manually.
+**Migrated 2026-10-08 from `postgres_changes` to Broadcast** (`20261008120000_realtime_broadcast_migration.sql`, `docs/01-ARCHITECTURE.md` §4) — `postgres_changes` re-authorizes every row change against every active subscriber individually, so it doesn't scale with subscriber count the way a chat app expecting both mobile and web clients at real concurrency needs. Every channel below is now a private broadcast topic, authorized via RLS on `realtime.messages` rather than a row filter; each policy is the deliberate equivalent of the underlying table's own existing SELECT RLS.
+
+- Broadcast topic `messages:<thread_id>` — chat delivery (was `postgres_changes` filtered by `thread_id=eq.<id>`).
+- Broadcast topic `wallets:<user_id>` — live balance updates driving the motion spec in `docs/04-DESIGN-SYSTEM.md` (was `postgres_changes` filtered by `user_id=eq.<self>`).
+- Broadcast topic `topups:<topup_id>` — lets the buy-credit screen detect a transfer clearing without the user backing out to check manually (was `postgres_changes` filtered by `id=eq.<topup_id>`).
 - Presence channel per thread — typing indicators (still not built; online status below took a different path).
-- **Online/last-seen — built differently than originally spec'd here** (docs/10-UX-REFINEMENT-BACKLOG.md Batch B, `20260917100000_last_seen.sql`): not a Presence channel — a plain `users.last_seen_at` timestamp, updated by the client on a heartbeat, kept live for an open thread via a `postgres_changes` subscription on `users` (same shape as `useThreadMessages`/`useWallets`). "Online" is derived client-side (within ~45s of that timestamp) rather than a separate ephemeral state — avoids a second Realtime primitive's join/leave lifecycle for something that only needs to be this coarse. Gated by `users.last_seen_enabled` (default on), same privacy-toggle posture as `read_receipts_enabled`.
+- **Online/last-seen — built differently than originally spec'd here** (docs/10-UX-REFINEMENT-BACKLOG.md Batch B, `20260917100000_last_seen.sql`): not a Presence channel — a plain `users.last_seen_at` timestamp, updated by the client on a heartbeat, kept live for an open thread via broadcast topic `user-last-seen:<partner_id>` (same shape as `useThreadMessages`/`useWallets`), authorized to the self or any existing thread partner. "Online" is derived client-side (within ~45s of that timestamp) rather than a separate ephemeral state — avoids a second Realtime primitive's join/leave lifecycle for something that only needs to be this coarse. Gated by `users.last_seen_enabled` (default on), same privacy-toggle posture as `read_receipts_enabled`.
 - Broadcast channel per thread — read receipts (ephemeral by design; if a persisted read-receipt audit trail is ever needed for disputes, add a `message_reads` table deliberately rather than repurposing broadcast).
 
 ## 4. Sequence: a full paid exchange
