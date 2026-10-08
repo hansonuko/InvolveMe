@@ -282,17 +282,39 @@ async function testErrorMapping(admin) {
     JSON.stringify(badTextStyle.json),
   );
 
-  // A has zero balance (default state) — insufficient_credit with the
-  // structured credits_required/credits_available shape.
-  const noFunds = await callPostStatus(token, { caption: 'no funds for this' });
+  // Status postings are free by default (status_upload_credits_text/media
+  // = 0, decided 2026-10-08, docs/03 §7) — a zero balance still succeeds.
+  const noFunds = await callPostStatus(token, { caption: 'no funds needed, status is free' });
   log(
-    'zero balance -> 402 insufficient_credit with structured amounts',
-    noFunds.status === 402 &&
-      noFunds.json?.error === 'insufficient_credit' &&
-      noFunds.json?.credits_required === textCredits &&
-      noFunds.json?.credits_available === 0,
+    'zero balance -> 200, free (credits_charged 0)',
+    noFunds.status === 200 && noFunds.json?.credits_charged === 0,
     JSON.stringify(noFunds.json),
   );
+
+  // insufficient_credit's structured error shape is still real code in
+  // fn_post_status, just unreachable at the default free price — guard it
+  // against regressing by temporarily pricing a status above zero (same
+  // flip-and-restore-in-finally pattern fraud-functions.test.js already
+  // uses for escrow_release_earnings_per_hour_cap).
+  await admin.query(
+    "update public.pricing_config set value = 3 where key = 'status_upload_credits_text'",
+  );
+  try {
+    const stillNoFunds = await callPostStatus(token, { caption: 'priced, but no funds' });
+    log(
+      'when priced above zero, zero balance -> 402 insufficient_credit with structured amounts',
+      stillNoFunds.status === 402 &&
+        stillNoFunds.json?.error === 'insufficient_credit' &&
+        stillNoFunds.json?.credits_required === 3 &&
+        stillNoFunds.json?.credits_available === 0,
+      JSON.stringify(stillNoFunds.json),
+    );
+  } finally {
+    await admin.query(
+      "update public.pricing_config set value = $1 where key = 'status_upload_credits_text'",
+      [textCredits],
+    );
+  }
 
   await fundTopupCredit(admin, A, textCredits * 5);
   const wallet = await walletRow(admin, A, 'topup_credit');
