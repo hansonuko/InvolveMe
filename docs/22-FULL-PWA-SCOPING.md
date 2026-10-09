@@ -1,6 +1,8 @@
-# 22 — Full PWA (Standalone Web App): Scoping
+# 22 — Full PWA (Standalone Web App): Scoping — SUPERSEDED, 2026-10-09
 
-**Status: scoping only, 2026-10-08.** Nothing in this document is built yet, except the preliminary feasibility probes described in §2 — real, run this session, not assumed. Same discipline `docs/11`/`docs/12`/`docs/14` already established: scope first, build in explicitly-approved phases.
+**`involveme-web` is not this anymore.** Phases A–C of this doc were built and shipped in session 43 (manifest/service worker, the native-only-gap fixes, the marketing site wiring) with `involveme-web` as a full-trust, standalone, phone-OTP-login PWA — this doc's §9's own explicit framing at the time of "the opposite shape" from `docs/12`. The user corrected that in session 44: `involveme-web` should instead be the reduced-trust, QR-paired companion client **`docs/12-LINKED-DEVICES-WEB-SCOPING.md`** describes — the real WhatsApp Web model — which is now where active development lives. **This doc is kept as a historical record of Phases A–C (the installability plumbing, native-gap fixes, and e2ee/voice-note web bugs found and fixed are all still real and still true of the underlying `apps/mobile` web build) but its own framing of `involveme-web`'s auth model (§1, §3) no longer describes what's being built.** Do not use §1/§3 as current truth; see `docs/12` + `docs/00-SESSION-HANDOFF.md` session 44 instead.
+
+~~**Status: scoping only, 2026-10-08.** Nothing in this document is built yet, except the preliminary feasibility probes described in §2 — real, run this session, not assumed. Same discipline `docs/11`/`docs/12`/`docs/14` already established: scope first, build in explicitly-approved phases.~~
 
 ## 1. What this is, and what it is explicitly NOT
 
