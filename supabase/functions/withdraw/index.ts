@@ -83,9 +83,12 @@ Deno.serve(async (req) => {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
 
+  // blockLinkedDevices: a linked/companion web session is chat-and-status
+  // only (docs/12-LINKED-DEVICES-WEB-SCOPING.md §4) — never wallet
+  // actions, no exceptions.
   let user;
   try {
-    user = await requireAuthenticatedUser(req);
+    user = await requireAuthenticatedUser(req, { blockLinkedDevices: true });
   } catch (e) {
     if (e instanceof AuthError) return errorResponse(e.status, e.code, e.message);
     console.error('withdraw: auth check threw unexpectedly:', e);
