@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import { ThemeProvider } from 'next-themes';
-import { Nav } from '@/components/Nav';
 import { Footer } from '@/components/Footer';
+import { InstallNudgeBanner } from '@/components/InstallNudgeBanner';
+import { Nav } from '@/components/Nav';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Nav />
           <main className="flex-1">{children}</main>
           <Footer />
+          <InstallNudgeBanner />
         </ThemeProvider>
       </body>
     </html>

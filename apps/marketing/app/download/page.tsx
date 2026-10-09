@@ -9,18 +9,121 @@ export const metadata: Metadata = {
   description: 'Get InvolveMe on Android, or as an installable web app for iOS.',
 };
 
+// docs/22-FULL-PWA-SCOPING.md §7 Phase C — the PWA (apps/mobile's web
+// export) is live at this URL, a separate Cloudflare Pages origin from
+// this marketing site. Swap the env var once a custom domain is pointed
+// at that project; nothing else here needs to change.
+const WEB_APP_URL = process.env.NEXT_PUBLIC_WEB_APP_URL ?? 'https://involveme-web.pages.dev';
+
 // No store listing exists yet (roadmap Phase 7), so this page is honest
 // about what's actually possible today per platform, rather than four
 // identical "coming soon" boxes: Android can be sideloaded once a build
-// exists (no app-store review required for that), iOS fundamentally
-// cannot outside TestFlight or a paid enterprise certificate, so the real
-// path there is the installable web app once it ships (docs/15's Phase D).
+// exists (no app-store review required for that) — still not wired up,
+// no APK hosting exists yet. iOS fundamentally cannot sideload outside
+// TestFlight or a paid enterprise certificate, so the real path there is
+// the installable web app, which now genuinely exists (docs/22 Phase A/B).
 const ANDROID_STEPS = [
   'Download the APK file below.',
   'When prompted, allow your browser to install apps from this source (Settings, then Apps, then Special app access, then Install unknown apps).',
   'Open the downloaded file and tap Install.',
   "Once InvolveMe is on the Play Store, this step won't be needed, updates will just work like any other app.",
 ];
+
+function ShareIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 3v12m0-12 4 4m-4-4-4 4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function OpenAppIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="4" width="16" height="16" rx="4" stroke="currentColor" strokeWidth="2" />
+      <path
+        d="M9 15l6-6m0 0h-4m4 0v4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function AddToHomeScreenIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="4" width="16" height="16" rx="4" stroke="currentColor" strokeWidth="2" />
+      <path
+        d="M12 8v8M8 12h8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+const IOS_STEPS: { icon: React.ReactNode; text: React.ReactNode }[] = [
+  {
+    icon: <OpenAppIcon />,
+    text: (
+      <>
+        Tap <span className="font-semibold text-foreground">Open InvolveMe</span> below — it opens
+        in Safari.
+      </>
+    ),
+  },
+  {
+    icon: <ShareIcon />,
+    text: (
+      <>
+        Tap the <span className="font-semibold text-foreground">Share</span> icon in Safari&apos;s
+        toolbar.
+      </>
+    ),
+  },
+  {
+    icon: <AddToHomeScreenIcon />,
+    text: (
+      <>
+        Scroll down and tap{' '}
+        <span className="font-semibold text-foreground">Add to Home Screen</span>.
+      </>
+    ),
+  },
+];
+
+function StepList({ steps }: { steps: { icon: React.ReactNode; text: React.ReactNode }[] }) {
+  return (
+    <ol className="mt-5 flex flex-col gap-3">
+      {steps.map((step, i) => (
+        <li key={i} className="flex items-center gap-3">
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-pill bg-surface-alt text-foreground-accent">
+            {step.icon}
+          </span>
+          <span className="text-caption text-muted">{step.text}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export default function DownloadPage() {
   return (
@@ -63,10 +166,21 @@ export default function DownloadPage() {
             <div className="mt-6 rounded-card border border-dashed border-border px-5 py-4 text-center text-caption font-semibold text-muted">
               APK download, coming soon
             </div>
-            <p className="mt-4 text-caption text-muted">
-              Prefer not to install a file? A no-download web app version is also on the way for
-              Android.
-            </p>
+            <div className="mt-6 border-t border-border pt-6">
+              <p className="text-caption text-muted">
+                Prefer not to install a file? Use the installable web app instead — tap below, then
+                tap <span className="font-semibold text-foreground">Install</span> when Chrome
+                prompts you.
+              </p>
+              <a
+                href={WEB_APP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-block rounded-pill bg-surface-alt px-6 py-3 text-caption font-semibold text-foreground transition-colors hover:bg-border"
+              >
+                Open the web app
+              </a>
+            </div>
           </Card>
         </AnimatedSection>
 
@@ -78,18 +192,20 @@ export default function DownloadPage() {
             </h2>
             <p className="mt-3 text-body text-muted">
               Apple only allows installing an app outside the App Store through TestFlight or a paid
-              enterprise certificate, neither of which fits a public launch. Until InvolveMe is on
-              the App Store, the real path for iPhone and iPad is our installable web app: add it to
-              your Home Screen and it opens and feels like a real app icon, no App Store needed.
+              enterprise certificate, neither of which fits a public launch. The real path for
+              iPhone and iPad is our installable web app: add it to your Home Screen and it opens
+              and feels like a real app icon, no App Store needed.
             </p>
             <div className="mt-auto pt-6">
-              <div className="rounded-card border border-dashed border-border px-5 py-4 text-center text-caption font-semibold text-muted">
-                Installable web app, coming soon
-              </div>
-              <p className="mt-4 text-caption text-muted">
-                We&apos;ll walk you through Safari&apos;s &quot;Add to Home Screen&quot; step by
-                step once it&apos;s live.
-              </p>
+              <a
+                href={WEB_APP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block w-full rounded-pill bg-accent px-7 py-3.5 text-center text-body font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
+              >
+                Open InvolveMe
+              </a>
+              <StepList steps={IOS_STEPS} />
             </div>
           </Card>
         </AnimatedSection>
@@ -99,7 +215,8 @@ export default function DownloadPage() {
         <AnimatedSection>
           <h2 className="text-title font-bold text-foreground">Want to be first to know?</h2>
           <p className="mx-auto mt-3 max-w-md text-body text-muted">
-            Reach out and we&apos;ll let you know the moment either path is ready for your device.
+            Reach out and we&apos;ll let you know the moment the Android app is ready to install
+            directly.
           </p>
           <a
             href="/contact"

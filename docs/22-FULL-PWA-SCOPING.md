@@ -50,14 +50,18 @@ This is real, unbuilt work, not a config flip:
 
 ## 6. Hosting
 
-Already decided and partially live (`docs/15` §7, session 41): **Cloudflare Pages**, project `involveme-web` (currently `involveme-web.pages.dev`, an honest "coming soon" placeholder, not the real app). Once this phase actually ships a real build, deploy there for real and wire CI to redeploy on every merge to `main` that touches `apps/mobile` (or shared web-relevant packages) — `docs/15` §7 already specifies this trigger, just never wired, since there was nothing to deploy until now.
+**Live (session 44).** Cloudflare Pages, project `involveme-web` — the real built PWA (`apps/mobile`'s web export) deployed to `involveme-web.pages.dev` via `wrangler pages deploy`, replacing the old "coming soon" placeholder. Confirmed live via a real browser: manifest/service-worker both reachable over real HTTPS, phone-entry screen renders. **CI auto-redeploy on every merge to `main` is still not wired** — `docs/15` §7 specifies this trigger; this deploy was a manual one-off, not yet automated. No custom domain pointed at this project yet (`involveme.net`'s DNS is still unconfigured, confirmed live — NXDOMAIN) — `NEXT_PUBLIC_WEB_APP_URL` (apps/marketing's own env, see below) is the single place that URL is set, so switching to a real domain later is a one-line change, not a code change.
 
 ## 7. Marketing site Download page — real wiring, not placeholders
 
-`/download` currently shows honest "coming soon" placeholders for both platforms. Once this phase ships:
+**Done (session 44).** `apps/marketing/app/download/page.tsx` — both link out to `NEXT_PUBLIC_WEB_APP_URL` (the live PWA above):
 
-- **iOS**: replace the placeholder with a real link to the installed PWA's URL + real, illustrated "Add to Home Screen" steps (Safari-specific, since there's no install-prompt API to hook).
-- **Android**: replace the placeholder with a real install button/instructions for the PWA. **Explicit future follow-up, not built now**: once the native Android app is actually listed on the Play Store (`docs/08` Phase 7), this copy changes again to steer Android users toward the native app instead — the PWA was always the bridge for Android, not the permanent path, exactly as the user framed it. Flagging this now so it isn't forgotten, not scoping it today.
+- **iOS**: a real "Open InvolveMe" link + 3 illustrated steps (inline SVG icons matching this site's existing `LogoMark`/`ThemeToggle` style, not screenshots of real Safari chrome, which this effort has no device to capture) — open in Safari, tap Share, tap Add to Home Screen.
+- **Android**: the APK-sideload path is untouched (still honestly "coming soon," unrelated to this phase and not something this session built) — but the "a no-download web app version is also on the way" line is now a real working link to the same PWA, since Android's real install experience (the actual `beforeinstallprompt` button) already exists on the PWA's own origin, built in Phase A.
+
+**Also done, beyond this doc's original Phase C scope, per explicit user ask**: a sitewide, dismissible install nudge (`components/InstallNudgeBanner.tsx`, mounted in `app/layout.tsx`) — see docs/00-SESSION-HANDOFF.md session 44 for the cross-origin constraint this hit and how it was resolved.
+
+**Explicit future follow-up, not built now**: once the native Android app is actually listed on the Play Store (`docs/08` Phase 7), this page's Android copy changes again to steer Android users toward the native app instead — the PWA was always the bridge for Android, not the permanent path. Flagging this now so it isn't forgotten, not scoping it today.
 
 ## 8. Explicit non-goals for this effort
 
@@ -72,5 +76,5 @@ Each phase ships only with explicit go-ahead before the next starts — same dis
 
 1. **Phase A — PWA installability.** `manifest.json`, service worker (app-shell caching only, per §5), icon set, versioned cache-busting, iOS/Android install UX.
 2. **Phase B — Verify and fix the native-only gaps, one at a time** (§4 table): biometric→PIN fallback, offline outbox web compatibility, camera/media picker, voice notes, LiveKit calls. Each gets a real test before being marked done — this codebase's own history (three prior undetected crypto bugs) is the reason "assumed to work" is never good enough here.
-3. **Phase C — Wire real install links + instructions into the marketing site's Download page** (§7).
+3. **Phase C — Done.** Wire real install links + instructions into the marketing site's Download page, plus a sitewide install nudge (§7).
 4. **Phase D — Push notifications via Web Push.** Separate, materially larger effort (a new integration, not a fallback) — deferred, not blocking the rest of this plan.
