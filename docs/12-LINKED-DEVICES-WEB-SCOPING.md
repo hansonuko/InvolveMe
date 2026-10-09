@@ -1,6 +1,12 @@
-# 12 — Linked Devices / Web Client: Scoping (not built)
+# 12 — Linked Devices / Web Client: Scoping → in progress
 
-**Status: scoping only, 2026-09-19. Nothing in this document is built.** No web-client route, no pairing UI, no `linked_devices` table exists. This doc exists so that when this feature is actually scheduled, it starts from a real design pass instead of getting bolted on — the same discipline `docs/11-VOICE-VIDEO-CALLS-SCOPING.md` applied to calls. Per the user's own explicit choice (2026-09-19): scope now, build later.
+**Status: build started 2026-10-09 (session 44).** `involveme-web` (built in a prior session as a full standalone PWA, `docs/22`) is being rearchitected into exactly this feature instead — the real WhatsApp Web model, per explicit user correction. Progress against this doc's own §6 milestone list (renumbered M0–M7 in the implementation plan):
+
+- **M0 (§2's one open technical question) — resolved, live-verified, not assumed.** `admin.generateLink` doesn't apply (entirely email-based; this project is phone-only auth). The real mechanism: a stateless, self-signed HS256 JWT (`SUPABASE_JWT_SECRET`) — confirmed live against the real dev project that a genuine `setSession()`-backed browser session accepts one and `auth.uid()` resolves correctly server-side. No `auth.sessions`/`auth.refresh_tokens` row ever gets written for a linked device. See `docs/02-DATA-MODEL.md`'s `linked_devices`/`device_pairings` entry for the full finding and the resulting revocation design (a custom `linked_device_id` JWT claim, not a native session id).
+- **M1 (§3's data model + §6 item 2) — done.** `linked_devices`/`device_pairings` tables, RLS, `pricing_config` rows, four `SECURITY DEFINER` RPCs (`20261009080000_linked_devices_schema.sql`), 14/14 tests including a real concurrent-confirm race and the 5-device cap (corrected from this doc's own earlier "one device" placeholder — real WhatsApp allows 4 companions + primary = 5, confirmed via `supabase/tests/linked-devices-functions.test.js`).
+- **Everything else (M2–M7: Edge Functions, the reduced-privilege wallet gate, the web pairing screen, the mobile scanner + eas build, two-pane layout) — not started.**
+
+No web-client route, no pairing UI yet. This doc still exists as the design source of truth; the implementation plan (session 44) is the milestone-by-milestone execution log — see `docs/00-SESSION-HANDOFF.md`.
 
 **The ask, restated precisely:** a QR-code-based "Link a device" flow, modeled on WhatsApp's own Linked Devices feature, reachable from the home screen's three-dot overflow menu (alongside Settings) — scan a QR code shown on a computer to use InvolveMe from a browser, mirroring "100%" of WhatsApp's own linking UX and behavior.
 
@@ -67,4 +73,4 @@ Not a commitment — a concrete starting point, same shape as `docs/11` §8:
 
 ## Non-goals for any v1 of this feature (explicit, not just unlisted)
 
-Wallet/withdrawal/bank-account actions from a linked session (§4), offline support on the web client, more than one linked device active at a time (WhatsApp itself caps this — a reasonable number to adopt without re-deriving one), a native desktop app (Electron or otherwise) — the web browser target is the whole of "the web client" for v1.
+Wallet/withdrawal/bank-account actions from a linked session (§4), offline support on the web client, more than **5** linked devices active at a time (corrected from this doc's own original "one device" placeholder — matches real WhatsApp's actual cap of 4 companions + the primary phone, not a re-derived guess), a native desktop app (Electron or otherwise) — the web browser target is the whole of "the web client" for v1. A brand-new user with no existing InvolveMe session has no path in via `involveme-web` at all once this ships — accepted as permanent v1 scope, same as real WhatsApp Web, not a gap to close here.
