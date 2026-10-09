@@ -1,3 +1,5 @@
+import * as Linking from 'expo-linking';
+
 import { callPublicEdgeFunction } from '@/lib/edgeFunctions';
 
 /**
@@ -38,6 +40,30 @@ export function getDevicePairingStatus(pairingId: string) {
  */
 export function buildDevicePairingDeepLink(pairingId: string): string {
   return `involveme://link-device?pid=${pairingId}`;
+}
+
+/**
+ * The mobile scanner's half of the above — decodes a raw QR scan result
+ * back into a `pairing_id`. Returns `null` for anything that isn't this
+ * app's own pairing link (a QR code pointing somewhere else entirely, or
+ * garbage), so the scanner screen can show "not a valid InvolveMe code"
+ * instead of crashing on a malformed URL.
+ */
+export function parseDevicePairingDeepLink(scanned: string): string | null {
+  // expo-linking, not a raw `new URL(...)` parse — this file is shared
+  // between the web pairing screen and the native scanner, and `URL` has
+  // no guaranteed-polyfilled behavior on native RN the way it does in a
+  // browser; `Linking.parse` is the one deep-link parser this app already
+  // trusts on both platforms (expo-router itself depends on it).
+  let parsed: Linking.ParsedURL;
+  try {
+    parsed = Linking.parse(scanned);
+  } catch {
+    return null;
+  }
+  if (parsed.hostname !== 'link-device') return null;
+  const pid = parsed.queryParams?.pid;
+  return typeof pid === 'string' && pid.length > 0 ? pid : null;
 }
 
 /**

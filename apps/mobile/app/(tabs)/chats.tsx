@@ -5,6 +5,7 @@ import {
   FlatList,
   Linking,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   SectionList,
@@ -635,7 +636,15 @@ export default function ChatsScreen() {
             <Ionicons name="add" size={layout.headerIconSize} color={colors.textSecondary} />
           </Pressable>
         }
-        menuItems={[{ label: 'Settings', onPress: () => router.push('/settings') }]}
+        menuItems={[
+          // Scanning is a native-camera action — the web companion client
+          // (docs/12-LINKED-DEVICES-WEB-SCOPING.md) is itself the thing
+          // that gets linked, it never links a further device of its own.
+          ...(Platform.OS !== 'web'
+            ? [{ label: 'Link a device', onPress: () => router.push('/link-device') }]
+            : []),
+          { label: 'Settings', onPress: () => router.push('/settings') },
+        ]}
       />
 
       {/* Fixed, non-scrolling — only the search bar + list below it scroll. */}

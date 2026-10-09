@@ -80,6 +80,12 @@
           "microphonePermission": "InvolveMe uses your microphone to record voice messages.",
           "enableBackgroundPlayback": false
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "InvolveMe uses your camera to scan a QR code and link a device."
+        }
       ]
     ],
     "experiments": {
