@@ -6,124 +6,35 @@ import { VerifiedBanner } from '@/components/VerifiedBanner';
 
 export const metadata: Metadata = {
   title: 'Download',
-  description: 'Get InvolveMe on Android, or as an installable web app for iOS.',
+  description: 'Get InvolveMe on Android. iOS is coming once we launch on the App Store.',
 };
 
-// docs/22-FULL-PWA-SCOPING.md §7 Phase C — the PWA (apps/mobile's web
-// export) is live at this URL, a separate Cloudflare Pages origin from
-// this marketing site. Swap the env var once a custom domain is pointed
-// at that project; nothing else here needs to change.
-const WEB_APP_URL = process.env.NEXT_PUBLIC_WEB_APP_URL ?? 'https://involveme-web.pages.dev';
+// Reversed 2026-10-09 (session 44): this used to also point at
+// involveme-web as an installable standalone PWA for brand-new users on
+// both platforms (docs/22-FULL-PWA-SCOPING.md Phase A/B). That
+// architecture got replaced with docs/12-LINKED-DEVICES-WEB-SCOPING.md's
+// real WhatsApp-Web model, per explicit product correction — involveme-
+// web is now a QR-pairing companion client only, reachable exclusively by
+// scanning a code from an already-logged-in phone. It has no path in for
+// someone who doesn't have the app yet, so it's no longer offered as an
+// install target on this page at all; see that doc's own §1 for the full
+// finding behind the pivot.
 
 // No store listing exists yet (roadmap Phase 7), so this page is honest
 // about what's actually possible today per platform, rather than four
 // identical "coming soon" boxes: Android can be sideloaded once a build
 // exists (no app-store review required for that) — still not wired up,
 // no APK hosting exists yet. iOS fundamentally cannot sideload outside
-// TestFlight or a paid enterprise certificate, so the real path there is
-// the installable web app, which now genuinely exists (docs/22 Phase A/B).
+// TestFlight or a paid enterprise certificate, and (per the reversal
+// above) there is no installable-web-app fallback anymore either — so,
+// honestly, iOS has no path in at all yet. Same "say so plainly" posture
+// as the Android card below, not four different ways of hiding the gap.
 const ANDROID_STEPS = [
   'Download the APK file below.',
   'When prompted, allow your browser to install apps from this source (Settings, then Apps, then Special app access, then Install unknown apps).',
   'Open the downloaded file and tap Install.',
   "Once InvolveMe is on the Play Store, this step won't be needed, updates will just work like any other app.",
 ];
-
-function ShareIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 3v12m0-12 4 4m-4-4-4 4"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function OpenAppIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="4" y="4" width="16" height="16" rx="4" stroke="currentColor" strokeWidth="2" />
-      <path
-        d="M9 15l6-6m0 0h-4m4 0v4"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function AddToHomeScreenIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="4" y="4" width="16" height="16" rx="4" stroke="currentColor" strokeWidth="2" />
-      <path
-        d="M12 8v8M8 12h8"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-const IOS_STEPS: { icon: React.ReactNode; text: React.ReactNode }[] = [
-  {
-    icon: <OpenAppIcon />,
-    text: (
-      <>
-        Tap <span className="font-semibold text-foreground">Open InvolveMe</span> below — it opens
-        in Safari.
-      </>
-    ),
-  },
-  {
-    icon: <ShareIcon />,
-    text: (
-      <>
-        Tap the <span className="font-semibold text-foreground">Share</span> icon in Safari&apos;s
-        toolbar.
-      </>
-    ),
-  },
-  {
-    icon: <AddToHomeScreenIcon />,
-    text: (
-      <>
-        Scroll down and tap{' '}
-        <span className="font-semibold text-foreground">Add to Home Screen</span>.
-      </>
-    ),
-  },
-];
-
-function StepList({ steps }: { steps: { icon: React.ReactNode; text: React.ReactNode }[] }) {
-  return (
-    <ol className="mt-5 flex flex-col gap-3">
-      {steps.map((step, i) => (
-        <li key={i} className="flex items-center gap-3">
-          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-pill bg-surface-alt text-foreground-accent">
-            {step.icon}
-          </span>
-          <span className="text-caption text-muted">{step.text}</span>
-        </li>
-      ))}
-    </ol>
-  );
-}
 
 export default function DownloadPage() {
   return (
@@ -166,46 +77,24 @@ export default function DownloadPage() {
             <div className="mt-6 rounded-card border border-dashed border-border px-5 py-4 text-center text-caption font-semibold text-muted">
               APK download, coming soon
             </div>
-            <div className="mt-6 border-t border-border pt-6">
-              <p className="text-caption text-muted">
-                Prefer not to install a file? Use the installable web app instead — tap below, then
-                tap <span className="font-semibold text-foreground">Install</span> when Chrome
-                prompts you.
-              </p>
-              <a
-                href={WEB_APP_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 inline-block rounded-pill bg-surface-alt px-6 py-3 text-caption font-semibold text-foreground transition-colors hover:bg-border"
-              >
-                Open the web app
-              </a>
-            </div>
           </Card>
         </AnimatedSection>
 
         <AnimatedSection delay={0.08}>
           <Card className="flex h-full flex-col">
             <p className="text-caption font-semibold uppercase tracking-wide text-credit">iOS</p>
-            <h2 className="mt-2 text-title font-bold text-foreground">
-              Use the installable web app
-            </h2>
+            <h2 className="mt-2 text-title font-bold text-foreground">Not available yet</h2>
             <p className="mt-3 text-body text-muted">
               Apple only allows installing an app outside the App Store through TestFlight or a paid
-              enterprise certificate, neither of which fits a public launch. The real path for
-              iPhone and iPad is our installable web app: add it to your Home Screen and it opens
-              and feels like a real app icon, no App Store needed.
+              enterprise certificate, neither of which fits a public launch — so there&apos;s no way
+              to get InvolveMe on iPhone or iPad before we&apos;re listed on the App Store.
+              We&apos;d rather tell you that plainly than point you at something that won&apos;t
+              actually work.
             </p>
             <div className="mt-auto pt-6">
-              <a
-                href={WEB_APP_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block w-full rounded-pill bg-accent px-7 py-3.5 text-center text-body font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
-              >
-                Open InvolveMe
-              </a>
-              <StepList steps={IOS_STEPS} />
+              <p className="text-caption text-muted">
+                Reach out below and we&apos;ll let you know the moment iOS is ready.
+              </p>
             </div>
           </Card>
         </AnimatedSection>

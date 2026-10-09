@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+import { useRouter } from 'expo-router';
 
+import { ActionSheet } from '@/components/ui/ActionSheet';
+import { AppHeader } from '@/components/ui/AppHeader';
 import { Ring } from '@/components/ui/Ring';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
 import { EdgeFunctionError } from '@/lib/edgeFunctions';
+import { usePwaInstallPrompt } from '@/lib/hooks/usePwaInstallPrompt';
 import {
   buildDevicePairingDeepLink,
   createDevicePairing,
@@ -13,7 +17,15 @@ import {
   getDevicePairingStatus,
 } from '@/lib/linkedDevicePairing';
 import { supabase } from '@/lib/supabase';
+import { showAlert } from '@/lib/ui/alert';
 import { useTheme } from '@/theme';
+
+// Same fallback-to-the-live-Pages-URL pattern apps/marketing's own
+// download page uses for NEXT_PUBLIC_WEB_APP_URL — involveme.net's DNS
+// isn't live yet either, so this must work against the real deployed
+// origin, not just the eventual custom domain.
+const MARKETING_URL =
+  process.env.EXPO_PUBLIC_MARKETING_URL ?? 'https://involveme-marketing.pages.dev';
 
 // Matches get-device-pairing-status's own polling guidance
 // (docs/12-LINKED-DEVICES-WEB-SCOPING.md M2's header comment) — frequent
@@ -43,6 +55,9 @@ type ScreenState =
  */
 export function WebDevicePairingScreen() {
   const { colors, spacing, radius } = useTheme();
+  const router = useRouter();
+  const { canInstall, promptInstall, isIosSafari } = usePwaInstallPrompt();
+  const [downloadSheetVisible, setDownloadSheetVisible] = useState(false);
   const [state, setState] = useState<ScreenState>({ kind: 'loading' });
   const [secondsLeft, setSecondsLeft] = useState(0);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,70 +212,143 @@ export function WebDevicePairingScreen() {
   // one `POLL_INTERVAL_MS` of it actually happening — no separate local-
   // clock trigger is needed, and this file no longer has one.
 
-  return (
-    <Screen style={styles.container}>
-      <View style={styles.hero}>
-        <Text variant="display">InvolveMe Web</Text>
-        <Text variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
-          Use InvolveMe from this browser, linked to your phone.
-        </Text>
-      </View>
+  // "Download the web app" here means installing *this* QR-pairing page
+  // itself as a home-screen/desktop shortcut — a real, standalone use even
+  // though it can't log a brand-new user in on its own (M4's own
+  // architecture note): re-opening it to scan a fresh code, or because a
+  // session expired, is a genuine standalone reason to want an icon for
+  // it. `usePwaInstallPrompt` is the same hook `InstallPwaPrompt`'s own
+  // floating banner already uses — one real `beforeinstallprompt`
+  // subscription, not a second copy of it.
+  const handleInstallWebApp = async () => {
+    if (canInstall) {
+      await promptInstall();
+      return;
+    }
+    if (isIosSafari) {
+      showAlert(
+        'Add to Home Screen',
+        'Tap the Share icon in Safari’s toolbar, then "Add to Home Screen".',
+      );
+      return;
+    }
+    // Desktop/Android Chrome before the browser's own install-eligibility
+    // criteria have fired yet (e.g. just landed on the page this instant)
+    // — same honest fallback the marketing site's Download page uses
+    // rather than claiming a prompt that isn't actually available yet.
+    showAlert(
+      'Install not available yet',
+      'Look for an install icon in your browser’s address bar, or check back in a moment.',
+    );
+  };
 
-      <View
-        style={[
-          styles.card,
+  const handleOpenAndroidDownload = () => {
+    void Linking.openURL(`${MARKETING_URL}/download`);
+  };
+
+  return (
+    <Screen style={styles.root}>
+      <AppHeader
+        title="InvolveMe"
+        brand
+        rightSlot={
+          <Pressable
+            onPress={() => setDownloadSheetVisible(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            style={[
+              styles.downloadPill,
+              { backgroundColor: colors.brandPrimary, borderRadius: radius.pill },
+            ]}
+          >
+            <Text variant="caption" color="inverse" style={{ fontWeight: '600' }}>
+              Download
+            </Text>
+          </Pressable>
+        }
+        menuItems={[
           {
-            backgroundColor: colors.bgSurface,
-            borderColor: colors.borderSubtle,
-            borderRadius: radius.card,
-            padding: spacing.xl,
-            gap: spacing.lg,
+            label: 'How it works',
+            onPress: () => void Linking.openURL(`${MARKETING_URL}/how-it-works`),
           },
+          { label: 'Privacy Policy', onPress: () => router.push('/legal/privacy') },
+          { label: 'Terms of Service', onPress: () => router.push('/legal/terms') },
         ]}
-      >
-        <View style={styles.qrWrap}>
-          {state.kind === 'pairing' ? (
-            <>
-              <QRCode value={buildDevicePairingDeepLink(state.pairingId)} size={220} />
-              <View style={[styles.countdown, { gap: spacing.xs }]}>
-                <Ring
-                  size={28}
-                  strokeWidth={3}
-                  progress={secondsLeft / state.totalSeconds}
-                  colors={[colors.brandPrimary]}
-                  trackColor={colors.borderSubtle}
-                />
-                <Text variant="caption" color="tertiary">
-                  Refreshes in {secondsLeft}s
-                </Text>
-              </View>
-            </>
-          ) : state.kind === 'error' ? (
-            <Text variant="body" color="danger" style={{ textAlign: 'center' }}>
-              {state.message}
-            </Text>
-          ) : state.kind === 'linked' ? (
-            <Text variant="body" color="secondary">
-              Linked! Opening InvolveMe…
-            </Text>
-          ) : (
-            <Text variant="body" color="secondary">
-              Generating code…
-            </Text>
-          )}
+      />
+      <ActionSheet
+        visible={downloadSheetVisible}
+        onClose={() => setDownloadSheetVisible(false)}
+        title="Get InvolveMe"
+        actions={[
+          { label: 'Install this web app', onPress: () => void handleInstallWebApp() },
+          { label: 'Get the Android app', onPress: handleOpenAndroidDownload },
+        ]}
+      />
+
+      <View style={styles.container}>
+        <View style={styles.hero}>
+          <Text variant="display">InvolveMe Web</Text>
+          <Text variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
+            Use InvolveMe from this browser, linked to your phone.
+          </Text>
         </View>
 
-        <View style={{ gap: spacing.sm }}>
-          <Text variant="bodyMedium">To link a device:</Text>
-          <Text variant="body" color="secondary">
-            1. Open InvolveMe on your phone
-          </Text>
-          <Text variant="body" color="secondary">
-            2. Tap the menu, then Link a Device
-          </Text>
-          <Text variant="body" color="secondary">
-            3. Point your phone at this screen to scan the code
-          </Text>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.bgSurface,
+              borderColor: colors.borderSubtle,
+              borderRadius: radius.card,
+              padding: spacing.xl,
+              gap: spacing.lg,
+            },
+          ]}
+        >
+          <View style={styles.qrWrap}>
+            {state.kind === 'pairing' ? (
+              <>
+                <QRCode value={buildDevicePairingDeepLink(state.pairingId)} size={220} />
+                <View style={[styles.countdown, { gap: spacing.xs }]}>
+                  <Ring
+                    size={28}
+                    strokeWidth={3}
+                    progress={secondsLeft / state.totalSeconds}
+                    colors={[colors.brandPrimary]}
+                    trackColor={colors.borderSubtle}
+                  />
+                  <Text variant="caption" color="tertiary">
+                    Refreshes in {secondsLeft}s
+                  </Text>
+                </View>
+              </>
+            ) : state.kind === 'error' ? (
+              <Text variant="body" color="danger" style={{ textAlign: 'center' }}>
+                {state.message}
+              </Text>
+            ) : state.kind === 'linked' ? (
+              <Text variant="body" color="secondary">
+                Linked! Opening InvolveMe…
+              </Text>
+            ) : (
+              <Text variant="body" color="secondary">
+                Generating code…
+              </Text>
+            )}
+          </View>
+
+          <View style={{ gap: spacing.sm }}>
+            <Text variant="bodyMedium">To link a device:</Text>
+            <Text variant="body" color="secondary">
+              1. Open InvolveMe on your phone
+            </Text>
+            <Text variant="body" color="secondary">
+              2. Tap the menu, then Link a Device
+            </Text>
+            <Text variant="body" color="secondary">
+              3. Point your phone at this screen to scan the code
+            </Text>
+          </View>
         </View>
       </View>
     </Screen>
@@ -268,9 +356,17 @@ export function WebDevicePairingScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { justifyContent: 'center', gap: 32, alignItems: 'center' },
+  root: { flex: 1, paddingHorizontal: 0 },
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 32,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
   hero: { alignItems: 'center' },
   card: { borderWidth: 1, width: '100%', maxWidth: 420, alignItems: 'center' },
   qrWrap: { minHeight: 260, alignItems: 'center', justifyContent: 'center', gap: 12 },
   countdown: { flexDirection: 'row', alignItems: 'center' },
+  downloadPill: { paddingHorizontal: 14, paddingVertical: 8 },
 });

@@ -1,29 +1,30 @@
 'use client';
 
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useSyncExternalStore } from 'react';
 
 const DISMISSED_KEY = 'involveme-install-nudge-dismissed';
-const WEB_APP_URL = process.env.NEXT_PUBLIC_WEB_APP_URL ?? 'https://involveme-web.pages.dev';
 
 const noopSubscribe = () => () => {};
 
-function isIos(): boolean {
-  return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
-}
-
 /**
- * Sitewide, dismissible nudge toward the installable PWA — docs/22-FULL-PWA-
- * SCOPING.md §7 Phase C. This site and the PWA itself (apps/mobile's web
- * export) are two separate Cloudflare Pages origins, so there's no real
- * cross-origin way to trigger the actual install prompt from here — the
- * genuine `beforeinstallprompt`/iOS instructions already live on the PWA's
- * own origin (`components/InstallPwaPrompt.tsx` in apps/mobile). This is a
- * promotional link over to that experience, not a second copy of it.
+ * Sitewide, dismissible nudge toward the Download page.
  *
- * Suppressed on `/download` specifically — that page already has the full
- * real install walkthrough inline, so a floating banner repeating "go
- * install" on top of it would just be noise, not a second nudge.
+ * Reversed 2026-10-09 (session 44): this used to link straight to
+ * involveme-web as an installable PWA any visitor could open and use —
+ * that assumption is exactly what docs/12-LINKED-DEVICES-WEB-SCOPING.md's
+ * architecture pivot invalidated (involveme-web is a QR-pairing companion
+ * client now, reachable only from an already-logged-in phone; see
+ * app/download/page.tsx's own header comment for the full finding). This
+ * banner now points at `/download` instead, which has the real,
+ * currently-accurate per-platform story (Android sideload, iOS not yet
+ * available) — a promotional nudge toward that page, not a second copy
+ * of its content.
+ *
+ * Suppressed on `/download` specifically — that page already has the
+ * full real install walkthrough inline, so a floating banner repeating
+ * "go install" on top of it would just be noise, not a second nudge.
  *
  * `useSyncExternalStore`'s server/client snapshot split (same pattern
  * ThemeToggle.tsx already uses) is what lets this read `localStorage`
@@ -58,21 +59,17 @@ export function InstallNudgeBanner() {
     <div className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-surface px-4 py-3 shadow-[0_-4px_16px_rgba(0,0,0,0.08)]">
       <div className="mx-auto flex max-w-6xl items-center gap-4">
         <div className="flex-1">
-          <p className="text-caption font-semibold text-foreground">Install InvolveMe</p>
+          <p className="text-caption font-semibold text-foreground">Get InvolveMe</p>
           <p className="text-caption text-muted">
-            {isIos()
-              ? 'Open the app, then tap Share → Add to Home Screen.'
-              : 'Add it to your home screen for the full app experience.'}
+            See how to get it on your phone, Android today, iOS coming soon.
           </p>
         </div>
-        <a
-          href={WEB_APP_URL}
-          target="_blank"
-          rel="noopener noreferrer"
+        <Link
+          href="/download"
           className="whitespace-nowrap rounded-pill bg-accent px-5 py-2.5 text-caption font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
         >
-          Open app
-        </a>
+          Download
+        </Link>
         <button
           type="button"
           onClick={dismiss}
