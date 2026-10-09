@@ -1,52 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/ui/Text';
+import { usePwaInstallPrompt } from '@/lib/hooks/usePwaInstallPrompt';
 import { useTheme } from '@/theme';
 
 const DISMISSED_KEY = 'involveme-install-prompt-dismissed';
 
-/** Chrome's own install-prompt event — not in TS's standard DOM lib yet. */
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
-
-function isStandaloneDisplay() {
-  return (
-    window.matchMedia?.('(display-mode: standalone)').matches ||
-    // iOS Safari's own non-standard flag — `display-mode: standalone`
-    // isn't reliably reported there even once actually installed.
-    (navigator as unknown as { standalone?: boolean }).standalone === true
-  );
-}
-
-function isIosSafari() {
-  const ua = window.navigator.userAgent;
-  const isIos = /iphone|ipad|ipod/i.test(ua);
-  // Every iOS browser (Chrome, Firefox, etc.) is a WebKit wrapper that
-  // still reports "Safari" in its UA, so excluding "CriOS"/"FxiOS" is
-  // required to not fire this for, say, iOS Chrome too.
-  const isSafari = /safari/i.test(ua) && !/crios|fxios|edgios/i.test(ua);
-  return isIos && isSafari;
-}
-
 /** Everything here is knowable synchronously at mount (display mode, a
- * localStorage flag, the UA string) — computed as the initial state itself
- * rather than via an effect that calls setState in its own body, which
+ * localStorage flag) — computed as the initial state itself rather than
+ * via an effect that calls setState in its own body, which
  * `react-hooks/set-state-in-effect` correctly rejects (see
  * docs/00-SESSION-HANDOFF.md session 38 for why this rule is non-negotiable
- * here). Only `deferredPrompt` below is genuinely effect-driven, since it
- * really is a subscription to an external event. */
-function computeInitialState(): { dismissed: boolean; showIosInstructions: boolean } {
-  if (Platform.OS !== 'web') return { dismissed: true, showIosInstructions: false };
-  if (isStandaloneDisplay()) return { dismissed: true, showIosInstructions: false };
-  if (window.localStorage.getItem(DISMISSED_KEY) === '1') {
-    return { dismissed: true, showIosInstructions: false };
-  }
-  return { dismissed: false, showIosInstructions: isIosSafari() };
+ * here). The `beforeinstallprompt`/iOS-Safari detection itself now lives in
+ * `usePwaInstallPrompt` (shared with `WebDevicePairingScreen`'s own
+ * explicit "Install Web App" button) — this only needs the dismissal flag
+ * and the already-installed short-circuit, both local to this banner. */
+function computeInitialDismissed(): boolean {
+  if (Platform.OS !== 'web') return true;
+  if (window.matchMedia?.('(display-mode: standalone)').matches) return true;
+  if ((navigator as unknown as { standalone?: boolean }).standalone === true) return true;
+  return window.localStorage.getItem(DISMISSED_KEY) === '1';
 }
 
 /** Web-only PWA install UX (docs/22-FULL-PWA-SCOPING.md §5/§9 Phase A) —
@@ -59,34 +35,20 @@ function computeInitialState(): { dismissed: boolean; showIosInstructions: boole
 export function InstallPwaPrompt() {
   const { colors, spacing, radius } = useTheme();
   const insets = useSafeAreaInsets();
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [{ dismissed, showIosInstructions }, setUiState] = useState(computeInitialState);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || dismissed) return;
-
-    const handler = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, [dismissed]);
+  const [dismissed, setDismissed] = useState(computeInitialDismissed);
+  const { canInstall, promptInstall, isIosSafari } = usePwaInstallPrompt();
 
   if (Platform.OS !== 'web' || dismissed) return null;
-  if (!deferredPrompt && !showIosInstructions) return null;
+  if (!canInstall && !isIosSafari) return null;
 
   const dismiss = () => {
     window.localStorage.setItem(DISMISSED_KEY, '1');
-    setUiState((s) => ({ ...s, dismissed: true }));
+    setDismissed(true);
   };
 
   const install = async () => {
-    if (!deferredPrompt) return;
-    await deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') dismiss();
-    setDeferredPrompt(null);
+    const accepted = await promptInstall();
+    if (accepted) dismiss();
   };
 
   return (
@@ -106,7 +68,7 @@ export function InstallPwaPrompt() {
       <View style={styles.row}>
         <Ionicons name="download-outline" size={22} color={colors.textSecondary} />
         <View style={styles.textCol}>
-          {deferredPrompt ? (
+          {canInstall ? (
             <>
               <Text variant="bodyMedium">Install InvolveMe</Text>
               <Text variant="caption" color="tertiary">
@@ -132,7 +94,7 @@ export function InstallPwaPrompt() {
           <Ionicons name="close" size={20} color={colors.textTertiary} />
         </Pressable>
       </View>
-      {deferredPrompt ? (
+      {canInstall ? (
         <Pressable
           accessibilityRole="button"
           onPress={install}
