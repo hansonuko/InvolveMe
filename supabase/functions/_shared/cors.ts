@@ -15,11 +15,16 @@
 // live); involveme-marketing.pages.dev is where the site actually serves
 // from right now (docs/15-MARKETING-SITE-PWA-SCOPING.md §7) — both are
 // listed so the live deployed signup form's own Origin header is actually
-// allowed, not just the eventual production domain.
+// allowed, not just the eventual production domain. involveme-web.pages.dev
+// is the separate linked-devices companion client (docs/12-LINKED-DEVICES-
+// WEB-SCOPING.md) — its QR-pairing screen calls create-device-pairing/
+// get-device-pairing-status directly from browser JS, the same reason
+// web-send-otp needed this file in the first place.
 const ALLOWED_ORIGINS = [
   'https://involveme.net',
   'https://www.involveme.net',
   'https://involveme-marketing.pages.dev',
+  'https://involveme-web.pages.dev',
 ];
 
 function isAllowedOrigin(origin: string | null): boolean {
