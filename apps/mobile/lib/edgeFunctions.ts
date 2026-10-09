@@ -79,3 +79,39 @@ export async function callEdgeFunction<TResponse>(
 
   return json as TResponse;
 }
+
+/**
+ * Same wire shape as `callEdgeFunction`, but for the small set of public,
+ * unauthenticated Edge Functions (`create-device-pairing`,
+ * `get-device-pairing-status` — docs/12-LINKED-DEVICES-WEB-SCOPING.md M2) —
+ * there is deliberately no session yet to attach a bearer token from; that's
+ * the entire point of the pairing handshake these two calls exist for.
+ */
+export async function callPublicEdgeFunction<TResponse>(
+  name: string,
+  body?: Record<string, unknown>,
+): Promise<TResponse> {
+  if (!getIsOnline()) {
+    throw new EdgeFunctionError('offline', "You're offline — try again once you're connected.", 0);
+  }
+
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const res = await fetch(`${supabaseUrl}/functions/v1/${name}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+
+  const json = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    throw new EdgeFunctionError(
+      json?.error ?? 'unknown_error',
+      json?.message ?? `Request failed with status ${res.status}`,
+      res.status,
+      json,
+    );
+  }
+
+  return json as TResponse;
+}
