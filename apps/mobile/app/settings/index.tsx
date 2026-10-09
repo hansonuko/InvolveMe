@@ -143,6 +143,11 @@ export default function SettingsScreen() {
               onPress={() => router.push('/settings/notifications')}
             />
             <SettingsRow
+              icon="desktop-outline"
+              label="Linked Devices"
+              onPress={() => router.push('/settings/linked-devices')}
+            />
+            <SettingsRow
               icon="color-palette-outline"
               label="Appearance"
               onPress={() => router.push('/settings/appearance')}
