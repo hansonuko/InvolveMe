@@ -205,6 +205,11 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: npm run test:admin-account-management:ci
 
+      - name: Linked devices tests (QR-pairing concurrency, 5-device cap, revocation)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: npm run test:linked-devices:ci
+
   # Placeholder — activates once supabase/migrations exist (Phase 1).
   # Runs schema migrations against the staging Supabase project on merge to
   # main, per docs/01-ARCHITECTURE.md "Environments".
