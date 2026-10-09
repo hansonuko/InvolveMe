@@ -29,6 +29,7 @@ import { type MatchedContactUser, useFindUsersByPhones } from '@/lib/queries/con
 import { type StatusFeedGroup, useStatusFeed } from '@/lib/queries/status';
 import { type ThreadWithPartner, useStartThread, useThreads } from '@/lib/queries/threads';
 import { useSession } from '@/lib/hooks/useSession';
+import { useIsWideWeb } from '@/lib/hooks/useIsWideWeb';
 import { toE164NigerianPhone } from '@/lib/phone';
 import { useTheme } from '@/theme';
 
@@ -555,7 +556,18 @@ function ContactsList() {
   );
 }
 
-export default function ChatsScreen() {
+/**
+ * docs/12-LINKED-DEVICES-WEB-SCOPING.md Milestone 7 — the root route
+ * component below (`ChatsRouteScreen`) renders this exact same component
+ * a second time as `app/_layout.tsx`'s persistent two-pane sidebar on wide
+ * web (imported directly, not duplicated) — the "full chats.tsx parity"
+ * sidebar scope, not a separate trimmed-down list view. Named + exported
+ * (rather than staying this file's sole default export) specifically so
+ * that import can happen without expo-router treating it as a second
+ * route registration — a plain module import of a route file's named
+ * export doesn't register a route, only a `default` export does.
+ */
+export function ChatsScreen() {
   const router = useRouter();
   const { session } = useSession();
   const { colors, spacing, radius, layout } = useTheme();
@@ -704,7 +716,32 @@ export default function ChatsScreen() {
   );
 }
 
+/**
+ * The actual route component for `/chats`. On wide web, `app/_layout.tsx`
+ * already renders `ChatsScreen` once as the persistent sidebar — showing
+ * it again here as this route's own content would just be the exact same
+ * thread list twice. This renders a plain "pick a conversation" state
+ * instead, matching WhatsApp Web's own right-pane placeholder before
+ * anything is selected. Native and narrow web are completely unaffected
+ * (`useIsWideWeb()` is always `false` there) — they still get the real
+ * `ChatsScreen` as this route's content, exactly as before this
+ * milestone.
+ */
+export default function ChatsRouteScreen() {
+  const isWideWeb = useIsWideWeb();
+  if (!isWideWeb) return <ChatsScreen />;
+
+  return (
+    <Screen style={styles.placeholderScreen}>
+      <Text variant="body" color="tertiary">
+        Select a conversation to start messaging
+      </Text>
+    </Screen>
+  );
+}
+
 const styles = StyleSheet.create({
+  placeholderScreen: { alignItems: 'center', justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'center' },
   rowEnd: { alignItems: 'flex-end' },
   unreadBadge: { minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center' },

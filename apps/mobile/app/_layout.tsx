@@ -3,12 +3,13 @@ import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persi
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import * as Notifications from 'expo-notifications';
-import { type Href, Stack, useRouter, useSegments } from 'expo-router';
+import { type Href, Stack, useRouter, useSegments, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ChatsScreen } from '@/app/(tabs)/chats';
 import { AnimatedSplash } from '@/components/AnimatedSplash';
 import { AppLockScreen } from '@/components/AppLockScreen';
 import { AppAlertHost } from '@/components/ui/AppAlertHost';
@@ -19,6 +20,7 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 import { useAppLock } from '@/lib/appLock';
 import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
 import { useSession } from '@/lib/hooks/useSession';
+import { useIsWideWeb } from '@/lib/hooks/useIsWideWeb';
 import { useLastSeenHeartbeat } from '@/lib/lastSeen';
 import { useOnboardingStatusStore } from '@/lib/onboardingStore';
 import { useOutboxDrain } from '@/lib/outboxDrain';
@@ -29,7 +31,21 @@ import {
   syncPushTokenOnLaunch,
 } from '@/lib/push';
 import { useTwoStepGateStore } from '@/lib/twoStepGateStore';
-import { ThemeProvider } from '@/theme';
+import { ThemeProvider, useTheme } from '@/theme';
+
+/** Themed wrapper for the sidebar's own border — a plain function
+ * component (not inlined in RootLayout's own body) specifically because
+ * `useTheme()` needs a `ThemeProvider` ancestor, which `RootLayout` itself
+ * renders rather than sits inside; this is rendered as a *child* of that
+ * provider instead, same as every other themed component in this tree. */
+function ChatsSidebar() {
+  const { colors } = useTheme();
+  return (
+    <View style={[styles.sidebar, { borderRightColor: colors.borderSubtle }]}>
+      <ChatsScreen />
+    </View>
+  );
+}
 
 SplashScreen.preventAutoHideAsync();
 
@@ -140,6 +156,21 @@ export default function RootLayout() {
   useAuthGate(isLoading, !!session, needsOnboarding, twoStepPinVerified);
   useLastSeenHeartbeat(session?.user.id);
   const { locked, retry } = useAppLock(!!session);
+
+  // docs/12-LINKED-DEVICES-WEB-SCOPING.md Milestone 7 — the two-pane chat
+  // layout's persistent sidebar. Mounted here (root level), not inside
+  // app/(tabs)/_layout.tsx, because /thread/[id] is itself a root-level
+  // Stack sibling of (tabs), not nested under it (see that screen's own
+  // Stack.Screen comment below) — a sidebar living inside (tabs) could
+  // never appear next to an open thread at all. Scoped to exactly the
+  // chats-list and thread routes (not /groups, /wallet, /status,
+  // /settings, …) — those have no natural list+detail relationship with a
+  // sidebar the way chats does, and keeping it scoped means every other
+  // route's layout is completely untouched by this milestone.
+  const isWideWeb = useIsWideWeb();
+  const pathname = usePathname();
+  const showChatsSidebar =
+    isWideWeb && !!session && (pathname === '/chats' || pathname.startsWith('/thread/'));
 
   // AnimatedSplash now owns hiding the native splash (see its own header
   // comment) — it calls SplashScreen.hideAsync() itself the instant it
@@ -282,15 +313,27 @@ export default function RootLayout() {
                 <AppLockScreen> on top instead, the same way a lock screen
                 covers, rather than kills, whatever's running underneath it
                 on other platforms. */}
-            <View style={styles.flex}>
-              {/* Only the two route groups are registered here — thread/[id] and
-                  settings/index set their own header options inline via
-                  <Stack.Screen options={...} /> from within the screen itself,
-                  which avoids relying on exact nested-route name matching. */}
-              <Stack screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="(auth)" />
-                <Stack.Screen name="(tabs)" />
-              </Stack>
+            <View style={showChatsSidebar ? styles.twoPaneRow : styles.flex}>
+              {/* The persistent two-pane sidebar (docs/12 Milestone 7) —
+                  the exact same ChatsScreen component app/(tabs)/chats.tsx
+                  itself renders on native/narrow web, mounted once here so
+                  it never remounts (and never loses scroll position/
+                  refetches its thread list) while navigating between
+                  /chats and /thread/[id] underneath it. Rendered OUTSIDE
+                  the Stack entirely — it isn't a route, just a sidebar
+                  that happens to sit next to whatever the Stack is
+                  currently showing. */}
+              {showChatsSidebar ? <ChatsSidebar /> : null}
+              <View style={styles.flex}>
+                {/* Only the two route groups are registered here — thread/[id] and
+                    settings/index set their own header options inline via
+                    <Stack.Screen options={...} /> from within the screen itself,
+                    which avoids relying on exact nested-route name matching. */}
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="(auth)" />
+                  <Stack.Screen name="(tabs)" />
+                </Stack>
+              </View>
               {locked ? (
                 // Never reached while `!session`, since useAppLock reports
                 // `unlocked` with nothing to protect yet. Opaque and
@@ -322,4 +365,11 @@ export default function RootLayout() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  twoPaneRow: { flex: 1, flexDirection: 'row' },
+  // A fixed width, not a flex fraction — WhatsApp Web's own sidebar is a
+  // fixed ~30% that doesn't keep growing on very wide monitors, and a
+  // fixed px value is simpler to reason about than a percentage that'd
+  // need its own min/max clamping to stay usable at any width above the
+  // 900px breakpoint this layout only activates past anyway.
+  sidebar: { width: 360, borderRightWidth: 1 },
 });
