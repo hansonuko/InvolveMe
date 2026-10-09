@@ -66,10 +66,10 @@ export default function HomePage() {
           </div>
           <div className="mt-6">
             <Link
-              href="/pricing"
+              href="/chat-credits"
               className="text-body font-semibold text-foreground-accent hover:underline"
             >
-              View pricing
+              Buy Chat Credits
             </Link>
           </div>
         </AnimatedSection>

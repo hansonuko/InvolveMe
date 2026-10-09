@@ -2,6 +2,12 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Where we stopped (session 44 continued — marketing site: public pricing removed entirely, replaced with flat "Chat Credits from ₦100" messaging — 2026-10-09) — start here next session
+
+Explicit product decision, not a bug fix: no per-word/per-byte rate or formula shows up publicly anywhere on the marketing site anymore — not on the dedicated page, not on How it works, not in the Guide. `/pricing` is renamed `/chat-credits` (`ChatCreditsContent.tsx`, was `PricingContent.tsx`) and its content is a flat, static line: anyone wanting someone's time on chat can buy Chat Credits starting from ₦100 and up — no live number, no formula. `HowItWorksContent.tsx`'s own "actual formula" section (word/byte block sizes, exact credit amounts, encrypted-byte calibration) is gone the same way. `lib/pricing.ts`/`lib/usePublicPricing.ts` (the `get-public-pricing` fetch mechanism these pages used) were deleted outright — nothing on the site needs them anymore. `docs/15-MARKETING-SITE-PWA-SCOPING.md`'s own page table updated to match; its original "fetch pricing_config live, never hand-copy" plan for that page is exactly what got reversed here.
+
+**Scope check, in case this surprises a future reader**: this only touches the public marketing site. The mobile app's own in-app cost preview (`apps/mobile/lib/pricing.ts` — a completely different file, shows the sender a cost estimate before they hit send) is untouched and still correct to keep — that's an authenticated in-product feature, not public marketing copy, and was never in scope here.
+
 ## Where we stopped (session 44 continued — linked-devices Milestone 7 done, all seven milestones now code-complete: the two-pane web layout — 2026-10-09) — start here next session
 
 **The scope decision got asked rather than guessed.** M7 was explicitly flagged in the approved plan as "real, non-trivial, open-ended work" with no pinned-down mechanism — before writing any code, asked the user whether the sidebar should be full `chats.tsx` parity (search, Contacts tab, new-chat modal, status row) or a leaner list-only v1; they chose full parity.

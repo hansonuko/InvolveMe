@@ -11,7 +11,7 @@ const GROUPS = [
     links: [
       { href: '/how-it-works', label: 'How it works' },
       { href: '/guide', label: 'Guide' },
-      { href: '/pricing', label: 'Pricing' },
+      { href: '/chat-credits', label: 'Chat Credits' },
     ],
   },
   {
