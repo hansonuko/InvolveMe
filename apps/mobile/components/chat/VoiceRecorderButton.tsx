@@ -117,6 +117,19 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
   const phaseRef = useRef<RecorderPhase>('idle');
   const rawSamplesRef = useRef<number[]>([]);
   const startedAtRef = useRef<number>(0);
+  /** A real, confirmed race: `beginRecording` is async (it awaits a
+   * permission check, then `prepareToRecordAsync`/`record`, before ever
+   * calling `setPhaseBoth('recording')`), but `onPanResponderGrant` fires
+   * it without awaiting. A quick tap releases before any of that
+   * resolves, so `onPanResponderRelease` reads `phaseRef.current` as
+   * still `'idle'` and `finishRecording` silently no-ops (`wasActive` is
+   * false) — meanwhile the recording actually starts moments later with
+   * no way to ever stop it via touch, since the gesture that would have
+   * stopped it already ended. This records what the release *would* have
+   * done, so the effect below can actually do it once recording really
+   * starts, instead of a tap looking like "the button isn't active."
+   */
+  const pendingReleaseOutcomeRef = useRef<'send' | 'discard' | null>(null);
   /** Pause/resume while locked — WhatsApp's own locked recorder has this, and
    * the previous inline toolbar had no way to reach it at all. */
   const [isPaused, setIsPaused] = useState(false);
@@ -201,22 +214,23 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
 
   const beginRecording = useCallback(async () => {
     if (disabled || phaseRef.current !== 'idle') return;
-
-    const existing = await getRecordingPermissionsAsync();
-    let granted = existing.granted;
-    if (!granted) {
-      const requested = await withAppLockSuppressed(() => requestRecordingPermissionsAsync());
-      granted = requested.granted;
-    }
-    if (!granted) {
-      showAlert(
-        'Microphone access needed',
-        "Turn on microphone access in your phone's Settings app to record voice messages.",
-      );
-      return;
-    }
+    pendingReleaseOutcomeRef.current = null;
 
     try {
+      const existing = await getRecordingPermissionsAsync();
+      let granted = existing.granted;
+      if (!granted) {
+        const requested = await withAppLockSuppressed(() => requestRecordingPermissionsAsync());
+        granted = requested.granted;
+      }
+      if (!granted) {
+        showAlert(
+          'Microphone access needed',
+          "Turn on microphone access in your phone's Settings app to record voice messages.",
+        );
+        return;
+      }
+
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
@@ -232,6 +246,7 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
     } catch (e) {
       console.error('VoiceRecorderButton: failed to start recording:', e);
       setPhaseBoth('idle');
+      pendingReleaseOutcomeRef.current = null;
     }
   }, [disabled, recorder, setPhaseBoth]);
 
@@ -280,6 +295,19 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
         if (outcome === 'preview') {
           setPhaseBoth('idle');
           resetVisuals();
+        }
+        // A real UX gap this closes: `outcome === 'send'` here means the
+        // user genuinely intended to send (a quick tap, not a
+        // slide-to-cancel) but held for under a second — previously this
+        // silently dropped the recording with zero feedback, which is
+        // exactly what "the button isn't active when tapped" looks like
+        // from the outside even though recording technically worked.
+        // 'discard' (an intentional cancel) stays silent on purpose.
+        if (outcome === 'send') {
+          showAlert(
+            'Hold to record',
+            'Press and hold the microphone button to record a voice message.',
+          );
         }
         return; // no message, no charge, no upload — docs/17 §1
       }
@@ -366,16 +394,42 @@ export function VoiceRecorderButton({ onSend, disabled, onPhaseChange }: VoiceRe
         },
         onPanResponderRelease: () => {
           if (phaseRef.current === 'locked') return; // hands-free — the locked toolbar finishes it
+          if (phaseRef.current === 'idle') {
+            // beginRecording() is still awaiting its permission
+            // check/native prepare — a quick tap releases before any of
+            // that resolves. Record what the release meant to do; the
+            // effect below finishes it once recording actually starts,
+            // instead of silently no-opping here (see
+            // pendingReleaseOutcomeRef's own comment).
+            pendingReleaseOutcomeRef.current = 'send';
+            return;
+          }
           void finishRecording(phaseRef.current === 'cancelling' ? 'discard' : 'send');
         },
         onPanResponderTerminate: () => {
           if (phaseRef.current === 'locked') return;
+          if (phaseRef.current === 'idle') {
+            pendingReleaseOutcomeRef.current = 'discard';
+            return;
+          }
           void finishRecording('discard');
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+
+  // Flushes a release that arrived while `beginRecording` was still in
+  // flight (see `pendingReleaseOutcomeRef`'s own comment) — the moment
+  // recording actually starts, immediately finish it exactly as the
+  // touch that already ended intended, rather than leaving the panel
+  // stuck open with nothing left to stop it.
+  useEffect(() => {
+    if (phase !== 'recording' || !pendingReleaseOutcomeRef.current) return;
+    const outcome = pendingReleaseOutcomeRef.current;
+    pendingReleaseOutcomeRef.current = null;
+    void finishRecording(outcome);
+  }, [phase, finishRecording]);
 
   const elapsedSeconds = Math.floor(recorderState.durationMillis / 1000);
   const meterLevel =
