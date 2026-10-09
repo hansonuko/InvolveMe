@@ -49,19 +49,15 @@ const STEPS = [
     title: 'How you earn',
     body: (
       <>
-        Sending you a message costs the other person a small number of credits, calculated from its
-        length. Those credits are held until you reply, then released straight to your earnings. No
-        reply, no charge, and nothing for you to collect: unanswered messages refund to the sender
+        Anyone wanting your time messages you using Chat Credits, bought from just ₦100 and up.
+        Those credits are held until you reply, then released straight to your earnings. No reply,
+        no charge, and nothing for you to collect: unanswered messages refund to the sender
         automatically. Chat earns you money today; pay-per-minute voice and video calls are coming
         next. See{' '}
         <Link href="/how-it-works" className="font-semibold text-foreground-accent hover:underline">
           How it works
         </Link>{' '}
-        for the exact formula and{' '}
-        <Link href="/pricing" className="font-semibold text-foreground-accent hover:underline">
-          Pricing
-        </Link>{' '}
-        for current rates.
+        for the full mechanism.
       </>
     ),
   },

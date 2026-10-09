@@ -1,9 +1,6 @@
-'use client';
-
+import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { Card, Eyebrow, Section } from '@/components/Section';
-import { earningsForBytes, earningsForWords, formatNaira } from '@/lib/pricing';
-import { usePublicPricing } from '@/lib/usePublicPricing';
 
 const STEPS = [
   {
@@ -29,12 +26,6 @@ const STEPS = [
 ];
 
 export function HowItWorksContent() {
-  const pricing = usePublicPricing();
-  const exampleWords = pricing.message_word_block_size;
-  const exampleEarnings = earningsForWords(pricing, exampleWords);
-  const exampleBytes = pricing.message_byte_block_size;
-  const exampleByteEarnings = earningsForBytes(pricing, exampleBytes);
-
   return (
     <>
       <Section className="pb-10 pt-16 text-center">
@@ -82,28 +73,20 @@ export function HowItWorksContent() {
 
       <Section>
         <AnimatedSection>
-          <Eyebrow>The actual formula</Eyebrow>
+          <Eyebrow>Chat Credits</Eyebrow>
           <h2 className="mt-3 text-display font-extrabold text-foreground">
-            What you earn per reply
+            Buy Chat Credits to message someone
           </h2>
           <div className="mt-8 grid gap-6 md:grid-cols-2">
             <div>
               <p className="text-body text-muted">
-                1 credit ={' '}
-                <span className="font-semibold text-foreground">
-                  {formatNaira(pricing.credit_unit_kobo)}
-                </span>
-                . A message costs the sender{' '}
-                <span className="font-semibold text-foreground">
-                  {pricing.message_base_credits} credits
-                </span>{' '}
-                for every {pricing.message_word_block_size} words or part thereof, rounded up. A
-                small platform fee comes off what you earn when escrow releases, the rest is yours.
+                Anyone wanting to get someone&apos;s time on chat with InvolveMe can buy Chat
+                Credits, starting from just ₦100 and up. No subscription, no fixed plan — top up
+                whenever you need to.
               </p>
               <p className="mt-4 rounded-card border border-border bg-surface px-5 py-4 text-caption text-muted">
-                Example: reply to a {exampleWords}-word message and you earn {exampleEarnings}{' '}
-                credits, {formatNaira(exampleEarnings * pricing.credit_unit_kobo)}, after the
-                platform fee. Messages are capped at {pricing.message_max_words} words.
+                A small platform fee comes off what&apos;s released to the person who replies, the
+                rest is theirs.
               </p>
             </div>
             <div>
@@ -115,22 +98,18 @@ export function HowItWorksContent() {
               <p className="mt-4 text-body text-muted">
                 That platform fee also funds the escrow, KYC, and fraud-protection systems described
                 on the{' '}
-                <a
+                <Link
                   href="/security"
                   className="font-semibold text-foreground-accent hover:underline"
                 >
                   Security &amp; Trust
-                </a>{' '}
+                </Link>{' '}
                 page.
               </p>
               <p className="mt-4 rounded-card border border-border bg-surface px-5 py-4 text-caption text-muted">
-                🔒 In an end-to-end-encrypted conversation, the same formula applies to the
-                message&apos;s encrypted byte length instead of its word count, since that&apos;s
-                the only thing about an encrypted message the server can ever measure. A{' '}
-                {exampleBytes}-byte encrypted message earns {exampleByteEarnings} credits (
-                {formatNaira(exampleByteEarnings * pricing.credit_unit_kobo)}), calibrated to land
-                on the same numbers as an equivalent-length unencrypted message. Capped at{' '}
-                {pricing.message_max_bytes} bytes per message.
+                🔒 Chat Credits work the same way in an end-to-end-encrypted conversation too — the
+                exact same buy-in, held-until-reply mechanism, just measured differently under the
+                hood since an encrypted message can&apos;t be read to count its words.
               </p>
             </div>
           </div>
