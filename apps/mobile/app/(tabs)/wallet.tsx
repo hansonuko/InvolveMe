@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   FlatList,
   Modal,
@@ -22,6 +22,7 @@ import { Text } from '@/components/ui/Text';
 import { useBanks, useLinkBankAccount, type Bank } from '@/lib/queries/banks';
 import { useFindUserByPhone, type FoundUser } from '@/lib/queries/findUserByPhone';
 import { useSession } from '@/lib/hooks/useSession';
+import { useIsLinkedDevice } from '@/lib/hooks/useIsLinkedDevice';
 import { useKycTier } from '@/lib/queries/kyc';
 import { toE164NigerianPhone } from '@/lib/phone';
 import {
@@ -676,6 +677,18 @@ export default function WalletScreen() {
   const { session } = useSession();
   const userId = session?.user.id;
   const queryClient = useQueryClient();
+
+  // docs/12-LINKED-DEVICES-WEB-SCOPING.md Milestone 6 — the tab bar
+  // already hides Wallet for a linked/companion session
+  // (app/(tabs)/_layout.tsx's own `href: null`), but that only keeps it
+  // out of the tab bar, not off a direct URL/deep link. Client-side
+  // defense in depth on top of M3's real server-side guard either way —
+  // every function this screen could call is already blocked server-side
+  // regardless of whether this redirect fires.
+  const isLinkedDevice = useIsLinkedDevice();
+  useEffect(() => {
+    if (isLinkedDevice) router.replace('/(tabs)/chats');
+  }, [isLinkedDevice, router]);
 
   const { data: wallets, isLoading, refetch: refetchWallets, isRefetching } = useWallets(userId);
   const { data: bankAccount, refetch: refetchBankAccount } = useLinkedBankAccount(userId);

@@ -4,6 +4,7 @@ import type { ColorValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSession } from '@/lib/hooks/useSession';
+import { useIsLinkedDevice } from '@/lib/hooks/useIsLinkedDevice';
 import { useTotalUnreadCount } from '@/lib/queries/threads';
 import { useTheme } from '@/theme';
 
@@ -84,6 +85,10 @@ export default function TabsLayout() {
   const { colors, typography, layout } = useTheme();
   const { session } = useSession();
   const insets = useSafeAreaInsets();
+  // docs/12-LINKED-DEVICES-WEB-SCOPING.md Milestone 6 — client-side
+  // defense in depth on top of M3's real server-side wallet guard. Only
+  // ever true on a linked/companion web session.
+  const isLinkedDevice = useIsLinkedDevice();
   // Real count from thread_unread_counts (migration
   // 20260914080000_thread_read_cursor.sql) — undefined/0 renders no
   // badge at all, never a fabricated number.
@@ -132,7 +137,14 @@ export default function TabsLayout() {
           for it, rather than relying on simply omitting a Tabs.Screen
           (which doesn't reliably hide an existing route file). */}
       <Tabs.Screen name="calls" options={{ href: null }} />
-      <Tabs.Screen name="wallet" options={{ title: 'Wallet' }} />
+      {/* Hidden on a linked/companion session the same way calls.tsx is
+          hidden above — `href: null` keeps the route file reachable by
+          direct URL (so a stale deep link or bookmark 404s cleanly
+          rather than crashing) without it showing up as a tab. */}
+      <Tabs.Screen
+        name="wallet"
+        options={{ title: 'Wallet', href: isLinkedDevice ? null : undefined }}
+      />
       <Tabs.Screen name="status" options={{ title: 'Status' }} />
     </Tabs>
   );
