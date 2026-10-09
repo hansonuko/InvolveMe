@@ -26,6 +26,25 @@
 // this is a small, self-contained HS256 sign, and avoids a new dependency
 // for something this codebase's own "stay lite" rule would rather not add
 // (CLAUDE.md rule #10).
+//
+// Reads LINKED_DEVICE_JWT_SECRET, not SUPABASE_JWT_SECRET — found live,
+// 2026-10-09, while verifying M4 end-to-end: `supabase secrets set` hard-
+// rejects any name starting with `SUPABASE_` ("Env name cannot start with
+// SUPABASE_, skipping") since that prefix is reserved for the platform's
+// own auto-injected vars (SUPABASE_URL/SUPABASE_ANON_KEY/SUPABASE_SERVICE_
+// ROLE_KEY and friends) — it is never silently populated with a project's
+// legacy JWT secret the way those are. This meant the function had been
+// throwing on every real call since M2 shipped (confirmed via a raw,
+// unmocked HTTP call against the live deployed function: a 500 on every
+// single 'confirmed' poll, no exceptions) — M2's own tests never caught
+// it because they spawn the function locally with env vars supplied by
+// the test harness's own shell, not the real deployed runtime's secret
+// store, so SUPABASE_JWT_SECRET being set locally (for signing test
+// tokens) always hid the gap. Same *value* as the project's real JWT
+// secret (this still has to match what GoTrue verifies against) — only
+// the Edge Function secret's *name* changed, specifically to dodge the
+// reserved prefix.
+const JWT_SECRET_ENV_VAR = 'LINKED_DEVICE_JWT_SECRET';
 
 function base64url(bytes: Uint8Array): string {
   let binary = '';
@@ -38,9 +57,9 @@ export async function signLinkedDeviceToken(
   linkedDeviceId: string,
   ttlSeconds: number,
 ): Promise<string> {
-  const secret = Deno.env.get('SUPABASE_JWT_SECRET');
+  const secret = Deno.env.get(JWT_SECRET_ENV_VAR);
   if (!secret) {
-    throw new Error('SUPABASE_JWT_SECRET is not set.');
+    throw new Error(`${JWT_SECRET_ENV_VAR} is not set.`);
   }
 
   const encoder = new TextEncoder();

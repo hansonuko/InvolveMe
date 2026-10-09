@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { WebDevicePairingScreen } from '@/components/WebDevicePairingScreen';
 import {
   COUNTRY_DIAL_CODES,
   DEFAULT_COUNTRY_DIAL_CODE,
@@ -16,8 +17,27 @@ import { supabase } from '@/lib/supabase';
 import { useAuthFlowStore } from '@/store/useAuthFlowStore';
 import { useTheme } from '@/theme';
 
-/** Phase 0 auth: phone number entry → Supabase OTP. See docs/05-API-REALTIME-SPEC.md.
+/**
+ * Root of the `(auth)` group — branches entirely by platform.
  *
+ * On native, this is Phase 0 auth: phone number entry → Supabase OTP (see
+ * docs/05-API-REALTIME-SPEC.md), unchanged below.
+ *
+ * On web (`involveme-web`), per the explicit product correction this
+ * feature is built on (docs/12-LINKED-DEVICES-WEB-SCOPING.md — the real
+ * WhatsApp Web model, not a standalone OTP-login PWA), there is no phone
+ * entry at all: a brand-new user has no path in via the browser, only an
+ * already-logged-in phone scanning a QR code can authenticate this device.
+ * See `WebDevicePairingScreen`'s own header comment.
+ */
+export default function AuthEntryScreen() {
+  if (Platform.OS === 'web') {
+    return <WebDevicePairingScreen />;
+  }
+  return <PhoneEntryScreen />;
+}
+
+/**
  * Age gate + Terms/Privacy acceptance (session 13, continued —
  * docs/07-COMPLIANCE-LEGAL.md §4): one combined checkbox, the standard
  * pattern virtually every messaging app uses at signup, since neither
@@ -35,7 +55,7 @@ import { useTheme } from '@/theme';
  * app/(auth)/onboarding.tsx's header comment for why the two aren't
  * unified). Defaults to +234 per CLAUDE.md's "NGN-only for now" posture.
  */
-export default function PhoneEntryScreen() {
+function PhoneEntryScreen() {
   const { colors, spacing, radius } = useTheme();
   const router = useRouter();
   const setPendingPhone = useAuthFlowStore((s) => s.setPendingPhone);

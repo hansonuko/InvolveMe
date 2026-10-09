@@ -136,6 +136,17 @@ jobs:
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          # Same underlying secret value as SUPABASE_JWT_SECRET above, just
+          # exposed under a second env var name too — _shared/
+          # linkedDeviceToken.ts reads LINKED_DEVICE_JWT_SECRET
+          # specifically (not SUPABASE_JWT_SECRET), because Supabase's own
+          # `secrets set` rejects any name starting with `SUPABASE_` on the
+          # deployed project (reserved for platform-injected vars) — see
+          # docs/12-LINKED-DEVICES-WEB-SCOPING.md M4's note for the full
+          # finding. CI spawns the function locally via `deno run`, which
+          # has no such restriction, but still needs this exact var name to
+          # match what the function code actually reads.
+          LINKED_DEVICE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
           FLW_CLIENT_ID: ${{ secrets.FLW_CLIENT_ID }}
           FLW_CLIENT_SECRET: ${{ secrets.FLW_CLIENT_SECRET }}
           FLW_ENVIRONMENT: ${{ secrets.FLW_ENVIRONMENT }}
