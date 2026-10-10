@@ -58,7 +58,7 @@ export function StandaloneRequiredScreen() {
           Install InvolveMe to continue
         </Text>
         <Text variant="body" color="secondary" style={styles.body}>
-          On desktop, InvolveMe only runs once it’s installed — not as a regular browser tab. On a
+          On desktop, InvolveMe only runs once it’s installed, not as a regular browser tab. On a
           phone, it just works directly.
         </Text>
 
@@ -69,7 +69,7 @@ export function StandaloneRequiredScreen() {
         />
 
         <Text variant="caption" color="tertiary" style={[styles.body, { marginTop: spacing.xxl }]}>
-          Already using InvolveMe on your phone? This device doesn’t need its own account — link it
+          Already using InvolveMe on your phone? This device doesn’t need its own account, link it
           as a companion instead.
         </Text>
         <Pressable

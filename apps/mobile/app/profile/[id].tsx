@@ -373,7 +373,7 @@ export default function ProfileScreen() {
       {
         onSuccess: () => {
           setReportOpen(false);
-          showAlert('Reported', 'Thanks — our team will review this.');
+          showAlert('Reported', 'Thanks, our team will review this.');
         },
       },
     );

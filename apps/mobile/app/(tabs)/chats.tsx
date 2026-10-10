@@ -797,7 +797,7 @@ export function ChatsScreen() {
                 <Text variant="body" color="tertiary">
                   {search
                     ? 'No conversations match your search.'
-                    : 'No conversations yet — tap + to start one.'}
+                    : 'No conversations yet. Tap + to start one.'}
                 </Text>
               )}
             </View>

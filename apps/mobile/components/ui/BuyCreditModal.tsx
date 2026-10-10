@@ -23,8 +23,8 @@ function TopupCongrats({ onContinue }: { onContinue: () => void }) {
         Congratulations!
       </Text>
       <Text variant="body" color="secondary" style={{ textAlign: 'center' }}>
-        Your credit has landed — you can now start chatting with your loved ones, engage with
-        groups, and also earn from it.
+        Your credit has landed. You can now start chatting with your loved ones, engage with groups,
+        and also earn from it.
       </Text>
       <Button label="Go to wallet" onPress={onContinue} style={{ marginTop: spacing.lg }} />
     </View>
@@ -147,8 +147,8 @@ export function BuyCreditModal({ visible, onClose }: { visible: boolean; onClose
               Tap and hold the account number to copy it.
             </Text>
             <Text variant="caption" color="secondary">
-              Credits land automatically once the transfer is confirmed — this screen updates
-              itself, no need to back out and check.
+              Credits land automatically once the transfer is confirmed. This screen updates itself,
+              no need to back out and check.
             </Text>
           </View>
         )}

@@ -74,7 +74,7 @@ function KycSection() {
   return (
     <View style={{ gap: spacing.sm }}>
       <Text variant="caption" color="tertiary">
-        Required before you can withdraw. Uses your BVN or NIN — no camera, no photos.
+        Required before you can withdraw. Uses your BVN or NIN, no camera, no photos.
       </Text>
 
       {submitKyc.isSuccess ? (
@@ -344,7 +344,7 @@ function TwoStepSection({ enabled }: { enabled: boolean }) {
             }}
           />
           <Text variant="caption" color="tertiary">
-            Not used to send anything yet — this app doesn’t send email. It’s captured so a future
+            Not used to send anything yet. This app doesn’t send email. It’s captured so a future
             email-based PIN reset has somewhere to send to.
           </Text>
         </>
@@ -379,7 +379,7 @@ export default function AccountSettingsScreen() {
     if (!userId) return;
     showAlert(
       'Delete account',
-      'This sends a request to our team for manual review — your wallet balance needs to be handled first, so this is not instant. Continue?',
+      'This sends a request to our team for manual review. Your wallet balance needs to be handled first, so this is not instant. Continue?',
       [
         { text: 'Cancel', style: 'cancel' },
         {

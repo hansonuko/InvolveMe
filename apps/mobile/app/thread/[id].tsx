@@ -330,7 +330,7 @@ function friendlySendErrorMessage(message: string): string {
     message.includes('recipient has no active E2EE device') ||
     message.includes('no recipient device could be reached')
   ) {
-    return "This contact hasn't set up secure messaging yet — try again once they've opened InvolveMe.";
+    return "This contact hasn't set up secure messaging yet. Try again once they've opened InvolveMe.";
   }
   return message;
 }
@@ -414,7 +414,7 @@ function ThreadOverflowMenu({
     } catch (e) {
       const message =
         e instanceof EdgeFunctionError && e.code === 'partner_not_ready'
-          ? "The other person hasn't set up encryption on their device yet — this will work once they have."
+          ? "The other person hasn't set up encryption on their device yet. This will work once they have."
           : e instanceof Error
             ? e.message
             : 'Something went wrong.';
@@ -484,7 +484,7 @@ function ThreadOverflowMenu({
     onClose();
     showAlert(
       'Reset encryption session?',
-      'Use this if messages in this chat show "Message unavailable" and won\'t decrypt. This clears your device\'s saved encryption keys for this contact — the next message either of you sends starts a fresh, secure session. If it still happens afterward, ask the other person to do the same on their device.',
+      'Use this if messages in this chat show "Message unavailable" and won\'t decrypt. This clears your device\'s saved encryption keys for this contact. The next message either of you sends starts a fresh, secure session. If it still happens afterward, ask the other person to do the same on their device.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -546,7 +546,7 @@ function ThreadOverflowMenu({
         onSuccess: () => {
           setReportOpen(false);
           setReason(null);
-          showAlert('Reported', 'Thanks — our team will review this.');
+          showAlert('Reported', 'Thanks, our team will review this.');
         },
       },
     );
@@ -1054,7 +1054,7 @@ function PendingMessageBubble({ body }: { body: string }) {
       >
         <Text variant="body">{body}</Text>
         <Text variant="caption" color="secondary" style={{ marginTop: spacing.xs }}>
-          Pending — will send once you buy credit
+          Pending: will send once you buy credit
         </Text>
       </View>
     </View>
@@ -1866,7 +1866,7 @@ export default function ThreadScreen() {
       const fallbackDetail =
         e && typeof e === 'object' && 'message' in e && typeof e.message === 'string'
           ? e.message
-          : `${typeof e} — ${JSON.stringify(e)}`;
+          : `${typeof e}: ${JSON.stringify(e)}`;
       const message =
         e instanceof EdgeFunctionError
           ? e.message
@@ -2069,7 +2069,7 @@ export default function ThreadScreen() {
     if (failures > 0) {
       showAlert(
         'Some messages could not be deleted',
-        `${failures} of ${ids.length} failed — they may be outside the delete window or already removed.`,
+        `${failures} of ${ids.length} failed. They may be outside the delete window or already removed.`,
       );
     }
   };
@@ -2488,7 +2488,7 @@ export default function ThreadScreen() {
               style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.sm }}
             >
               <Text variant="caption" color="secondary">
-                Buy chat credit to start your conversation — your message will send automatically
+                Buy chat credit to start your conversation. Your message will send automatically
                 once it lands.
               </Text>
               <Button label="Buy credit" onPress={() => setBuyCreditVisible(true)} />

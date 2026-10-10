@@ -132,18 +132,18 @@ export function InstallPwaPrompt() {
           </Text>
           {onFullPwaHost ? (
             <Text variant="caption" color="tertiary">
-              Keep InvolveMe one tap away — add it to your home screen like any other app.
+              Keep InvolveMe one tap away. Add it to your home screen like any other app.
             </Text>
           ) : isAndroid ? (
             <Text variant="caption" color="tertiary">
               {
-                "Not on the Play Store yet — get the Android app directly, or we'll notify you the moment it's there."
+                "Not on the Play Store yet. Get the Android app directly, or we'll notify you the moment it's there."
               }
             </Text>
           ) : (
             <Text variant="caption" color="tertiary">
               {
-                "Not on Android? Install the web app for the complete experience — we'll notify you when the native app is ready for your store."
+                "Not on Android? Install the web app for the complete experience. We'll notify you when the native app is ready for your store."
               }
             </Text>
           )}

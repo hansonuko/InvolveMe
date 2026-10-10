@@ -218,7 +218,7 @@ export function MemberSearchList({
                 color="tertiary"
                 style={{ textAlign: 'center', marginTop: spacing.sm, marginBottom: spacing.md }}
               >
-                Contacts access is off — you can still add someone by their phone number.
+                Contacts access is off. You can still add someone by their phone number.
               </Text>
               <Button label="Open settings" onPress={() => void Linking.openSettings()} />
             </>

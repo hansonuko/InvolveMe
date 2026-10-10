@@ -329,7 +329,7 @@ export default function GroupsScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text variant="body" color="tertiary">
-              {isLoading ? 'Loading…' : 'No groups yet — tap + to start one.'}
+              {isLoading ? 'Loading…' : 'No groups yet. Tap + to start one.'}
             </Text>
           </View>
         }

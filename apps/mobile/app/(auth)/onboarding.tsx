@@ -196,7 +196,7 @@ function ProfileStep({
         </Text>
         {country && !country.payments_live ? (
           <Text variant="caption" color="tertiary" style={{ marginTop: spacing.xs }}>
-            Payments for {country.currency} aren&apos;t live yet — you&apos;ll use NGN for now.
+            Payments for {country.currency} aren&apos;t live yet. You&apos;ll use NGN for now.
           </Text>
         ) : null}
       </View>
@@ -286,7 +286,7 @@ function WelcomeStep({
         >
           {paymentsLive
             ? `Your wallet is ready in ${currency}.`
-            : `Your wallet is ready in NGN — ${currency} payments are coming soon.`}
+            : `Your wallet is ready in NGN. ${currency} payments are coming soon.`}
         </Text>
       </Animated.View>
 

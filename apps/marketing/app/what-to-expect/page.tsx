@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 const LAUNCH_FEATURES = [
   {
     title: 'Pay-per-message chat',
-    body: 'Message anyone, and your credits are held safely in escrow the instant you hit send. The moment they reply, it becomes real income for them — no chasing anyone for payment.',
+    body: 'Message anyone, and your credits are held safely in escrow the instant you hit send. The moment they reply, it becomes real income for them, no chasing anyone for payment.',
   },
   {
     title: 'A real wallet, not a fake balance',
@@ -31,19 +31,19 @@ const LAUNCH_FEATURES = [
   },
   {
     title: 'Optional end-to-end encryption',
-    body: 'Turn on encryption for any conversation and only the two of you can read it — the app itself can’t. Chat Credits still work exactly the same way underneath.',
+    body: 'Turn on encryption for any conversation and only the two of you can read it, not even the app itself. Chat Credits still work exactly the same way underneath.',
   },
   {
     title: 'Groups, status & voice notes',
-    body: 'Group threads, 24-hour status updates, and voice messages all ship on day one — the full shape of a modern chat app, not a stripped-down beta.',
+    body: 'Group threads, 24-hour status updates, and voice messages all ship on day one. The full shape of a modern chat app, not a stripped-down beta.',
   },
   {
     title: 'Multi-device, done right',
-    body: 'Link your phone, a browser, and a desktop app to the same account at the same time, the real WhatsApp Web model — not one login at a time.',
+    body: 'Link your phone, a browser, and a desktop app to the same account at the same time, real multi-device support, not one login at a time.',
   },
   {
     title: 'KYC-gated withdrawals',
-    body: 'Your earnings only ever leave to a verified bank account in your name — real identity verification, not an honor system, protecting your money from day one.',
+    body: 'Your earnings only ever leave to a verified bank account in your name. Real identity verification, not an honor system, protecting your money from day one.',
   },
 ];
 
@@ -51,36 +51,36 @@ const VERSIONS = [
   {
     eyebrow: 'Android',
     title: 'The mobile app',
-    body: 'Install InvolveMe directly on Android — the full native app experience, before we’re even listed on the Play Store.',
+    body: 'Install InvolveMe directly on Android: the full native app experience, before we’re even listed on the Play Store.',
   },
   {
     eyebrow: 'iOS, and everyone else',
     title: 'The mobile web app',
-    body: 'Not on Android? Install InvolveMe as a web app instead — it looks and feels like a native app on your home screen, works fully offline-tolerant, and needs no app store at all. This is the real way in on iPhone today, not a stopgap.',
+    body: 'Not on Android? Install InvolveMe as a web app instead. It looks and feels like a native app on your home screen, works fully offline-tolerant, and needs no app store at all. This is the real way in on iPhone today, not a stopgap.',
   },
   {
     eyebrow: 'PC & Mac',
     title: 'The desktop app',
-    body: 'Install the same web app on a desktop or laptop and it runs like a real app in its own window. Already have InvolveMe on your phone? Link your desktop to that same account instead — and keep linking more devices whenever you want, all staying in sync.',
+    body: 'Install the same web app on a desktop or laptop and it runs like a real app in its own window. Already have InvolveMe on your phone? Link your desktop to that same account instead, and keep linking more devices whenever you want, all staying in sync.',
   },
 ];
 
 const WHY_IT_MATTERS = [
   {
     title: 'Every reply is a paycheck',
-    body: 'No other mainstream chat app pays you to use it. WhatsApp, Telegram, Instagram DMs — all free to send, none of it pays you back. InvolveMe flips that: the person messaging you pays, and replying is how you earn.',
+    body: 'No other mainstream chat app pays you to use it. Every other app out there is free to send on, and none of it pays you back. InvolveMe flips that: the person messaging you pays, and replying is how you earn.',
   },
   {
     title: 'No ads, no data-harvesting business model',
-    body: 'Free chat apps make money by selling attention or data. InvolveMe’s business model is the credits themselves — which means it’s never incentivized to keep you scrolling or sell what you type.',
+    body: 'Free chat apps make money by selling attention or data. InvolveMe’s business model is the credits themselves, which means it’s never incentivized to keep you scrolling or sell what you type.',
   },
   {
     title: 'Your money is protected like a bank’s, not a chat toy’s',
-    body: 'Escrowed credits, a double-entry ledger that has to reconcile to the kobo, real fraud monitoring, and KYC-gated withdrawals — the financial plumbing underneath feels like a bank, even though the app on top feels exactly like the messenger you already use.',
+    body: 'Escrowed credits, a double-entry ledger that has to reconcile to the kobo, real fraud monitoring, and KYC-gated withdrawals: the financial plumbing underneath feels like a bank, even though the app on top feels exactly like the messenger you already use.',
   },
   {
     title: 'Zero learning curve',
-    body: 'If you’ve used WhatsApp, you already know how to use InvolveMe. We didn’t reinvent chat — we made the exact same experience actually pay you.',
+    body: 'If you’ve used a chat app before, you already know how to use InvolveMe. We didn’t reinvent chat, we made the familiar experience actually pay you.',
   },
 ];
 
@@ -94,8 +94,8 @@ export default function WhatToExpectPage() {
             What to Expect from InvolveMe
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-body text-muted">
-            We soft-launch on <strong className="text-foreground">{LAUNCH_DATE_LABEL}</strong> —
-            here’s exactly what ships, how to get in on day one, and why InvolveMe isn’t just
+            We soft-launch on <strong className="text-foreground">{LAUNCH_DATE_LABEL}</strong>.
+            Here’s exactly what ships, how to get in on day one, and why InvolveMe isn’t just
             another messaging app.
           </p>
           <div className="mt-8">
@@ -130,7 +130,7 @@ export default function WhatToExpectPage() {
             Every device, one account
           </h2>
           <p className="mt-4 max-w-2xl text-body text-muted">
-            However you reach us first, you’re covered — and every version stays linked to the same
+            However you reach us first, you’re covered, and every version stays linked to the same
             account and wallet.
           </p>
         </AnimatedSection>
@@ -175,7 +175,7 @@ export default function WhatToExpectPage() {
             Sign up the moment we open, {LAUNCH_DATE_LABEL}
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-body text-muted">
-            Signup opens the moment we go live — be one of the first to confirm your number and
+            Signup opens the moment we go live. Be one of the first to confirm your number and
             you’ll get 100 non-withdrawable chat credits to start with, on us.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">

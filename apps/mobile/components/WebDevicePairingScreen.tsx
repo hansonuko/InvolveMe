@@ -139,7 +139,7 @@ export function WebDevicePairingScreen() {
       const message =
         e instanceof EdgeFunctionError
           ? e.message
-          : 'Could not start pairing — check your connection and try again.';
+          : 'Could not start pairing. Check your connection and try again.';
       setState({ kind: 'error', message });
     }
   }, [clearTimers]);
@@ -311,7 +311,7 @@ export function WebDevicePairingScreen() {
         color="secondary"
         style={[styles.heroSubtitle, isWide ? null : { textAlign: 'center' }]}
       >
-        No subscriptions, no ads — just real conversations that pay you back. Link this browser to
+        No subscriptions, no ads, just real conversations that pay you back. Link this browser to
         keep chatting (and earning) from your desktop too.
       </Text>
 

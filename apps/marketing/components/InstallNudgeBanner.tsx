@@ -71,8 +71,8 @@ export function InstallNudgeBanner() {
           <p className="text-caption font-semibold text-foreground">Get InvolveMe</p>
           <p className="text-caption text-muted">
             {isAndroid
-              ? 'Not on the Play Store yet — get the Android app directly.'
-              : "Not on Android? Install the web app — we'll notify you when the native app is ready for your store."}
+              ? 'Not on the Play Store yet. Get the Android app directly.'
+              : "Not on Android? Install the web app. We'll notify you when the native app is ready for your store."}
           </p>
         </div>
         {isAndroid ? (

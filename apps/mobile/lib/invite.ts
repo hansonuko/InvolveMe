@@ -10,7 +10,7 @@ import { showAlert } from '@/lib/ui/alert';
  * one. Not contacts-aware (no per-recipient personalization) — same fixed
  * message either way, just triggered from two different entry points. */
 export const INVITE_MESSAGE =
-  'Join me on InvolveMe — a chat app where your time has real value. Every message counts, literally.';
+  'Join me on InvolveMe, a chat app where your time has real value. Every message counts, literally.';
 
 /**
  * `Share.share` on web (`react-native-web`) calls the browser's own

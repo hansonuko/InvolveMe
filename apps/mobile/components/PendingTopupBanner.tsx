@@ -60,7 +60,7 @@ export function PendingTopupBanner() {
         {status === 'completed'
           ? `🎉 ${naira} credit added!`
           : isFailure
-            ? `${naira} top-up didn't go through — check your wallet.`
+            ? `${naira} top-up didn't go through. Check your wallet.`
             : `Confirming your ${naira} top-up…`}
       </Text>
     </View>

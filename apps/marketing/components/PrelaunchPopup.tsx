@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
-import { LAUNCH_DATE, LAUNCH_DATE_LABEL } from '@/lib/prelaunch';
+import { isPrelaunch, LAUNCH_DATE, LAUNCH_DATE_LABEL } from '@/lib/prelaunch';
 
 function daysRemaining() {
   const diff = LAUNCH_DATE.getTime() - Date.now();
@@ -26,6 +26,12 @@ export function PrelaunchPopup() {
   const [days, setDays] = useState<number | null>(null);
 
   useEffect(() => {
+    // Checked client-side at mount, not just relying on daysRemaining()'s
+    // own clamp-to-0 — once launch has actually passed this popup should
+    // never appear at all, not switch to an "It's launch day!" variant
+    // that then lingers forever. Decided in docs/00-SESSION-HANDOFF.md's
+    // "three asks" entry: hide entirely, don't just swap copy.
+    if (!isPrelaunch()) return;
     // Deferred one microtask out, not called directly in the effect body —
     // same react-hooks/set-state-in-effect pattern WebDevicePairingScreen's
     // own poll effect uses for its initial countdown value.
@@ -73,7 +79,7 @@ export function PrelaunchPopup() {
       </motion.p>
 
       <p className="mx-auto mt-4 max-w-sm text-body text-muted">
-        Get paid every time you reply to a message — no ads, no subscriptions, just real
+        Get paid every time you reply to a message. No ads, no subscriptions, just real
         conversations that pay you back. See what&apos;s coming, and how to get in on day one.
       </p>
 

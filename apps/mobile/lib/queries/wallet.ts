@@ -84,7 +84,7 @@ const LEDGER_ENTRY_LABELS: Record<string, string> = {
   topup_purchase: 'Credit purchased',
   message_debit: 'Message sent',
   escrow_release_earning: 'Earned from a reply',
-  escrow_refund_unanswered: 'Refunded — no reply',
+  escrow_refund_unanswered: 'Refunded, no reply',
   earnings_conversion: 'Converted to cash',
   withdrawal_payout: 'Withdrawal sent',
   withdrawal_refund_failed: 'Withdrawal reversed',

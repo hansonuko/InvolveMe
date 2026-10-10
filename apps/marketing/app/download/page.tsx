@@ -87,10 +87,10 @@ export default function DownloadPage() {
             <h2 className="mt-2 text-title font-bold text-foreground">Install the web app</h2>
             <p className="mt-3 text-body text-muted">
               Apple only allows installing an app outside the App Store through TestFlight or a paid
-              enterprise certificate, neither of which fits a public launch — so this is the real
-              way in on iPhone/iPad today, not a stopgap, and it works the same way on desktop. On a
+              enterprise certificate, neither of which fits a public launch, so this is the real way
+              in on iPhone/iPad today, not a stopgap, and it works the same way on desktop. On a
               phone it opens straight away, no install required (though you can still add it to your
-              home screen). On a desktop or PC, it installs like a real app — look for the install
+              home screen). On a desktop or PC, it installs like a real app: look for the install
               prompt, or use the button below.
             </p>
             <a
@@ -116,7 +116,7 @@ export default function DownloadPage() {
             <p className="mt-3 max-w-2xl text-body text-muted">
               No need for a second account. Open InvolveMe&apos;s web companion, scan the code with
               your phone&apos;s camera from the app&apos;s menu, and this browser links straight to
-              your existing account — the same way WhatsApp Web works.
+              your existing account, just like linking a new device on any modern chat app.
             </p>
             <a
               href="https://web.involvemechat.com"

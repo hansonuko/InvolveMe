@@ -126,8 +126,8 @@ export default function TwoStepScreen() {
           <View style={{ gap: spacing.md }}>
             <Text variant="body" color="secondary">
               {cooldownElapsed
-                ? 'The waiting period is over — you can continue without your PIN. Set a new one in Settings once you’re in.'
-                : `Forgot your PIN? For your security, we can only turn off two-step verification after a short waiting period — ${formatWaitTime(resetState.availableAt, now)} left.`}
+                ? 'The waiting period is over. You can continue without your PIN. Set a new one in Settings once you’re in.'
+                : `Forgot your PIN? For your security, we can only turn off two-step verification after a short waiting period: ${formatWaitTime(resetState.availableAt, now)} left.`}
             </Text>
             {cooldownElapsed ? (
               <Button

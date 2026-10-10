@@ -83,7 +83,7 @@ export function Turnstile({ onVerify }: { onVerify: (token: string) => void }) {
   if (!siteKey || failedToLoad) {
     return (
       <p className="text-caption text-muted">
-        Verification is temporarily unavailable — signup is disabled until this is configured.
+        Verification is temporarily unavailable. Signup is disabled until this is configured.
       </p>
     );
   }
