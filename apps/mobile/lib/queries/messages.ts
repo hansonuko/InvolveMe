@@ -8,7 +8,7 @@ import { bytesToBase64 } from '@/lib/e2ee/bytes';
 import { decryptMediaBytes, type MediaKeyMaterial } from '@/lib/e2ee/mediaCrypto';
 import { deleteCachedPlaintext, setCachedPlaintext } from '@/lib/e2ee/plaintextCache';
 import { decryptThreadMessages, encryptForThread, type OutgoingEnvelope } from '@/lib/e2ee/session';
-import { nativeSodiumProvider } from '@/lib/e2ee/sodiumProviderNative';
+import { platformSodiumProvider } from '@/lib/e2ee/sodiumProviderPlatform';
 import { useRealtimeTableChanges } from '@/lib/realtimeChannel';
 import { supabase } from '@/lib/supabase';
 
@@ -796,7 +796,7 @@ export function useDecryptedChatImageUri(
     queryFn: async (): Promise<string> => {
       const response = await fetch(mediaUrl as string);
       const ciphertext = new Uint8Array(await response.arrayBuffer());
-      const plaintext = decryptMediaBytes(nativeSodiumProvider, ciphertext, {
+      const plaintext = decryptMediaBytes(platformSodiumProvider, ciphertext, {
         keyBase64: mediaKeyBase64 as string,
         nonceBase64: mediaNonceBase64 as string,
       });

@@ -26,6 +26,7 @@ import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
 import { parseBody, requiredString } from '../_shared/validate.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 import {
   createFlutterwaveProvider,
   PaymentProviderError,
@@ -94,7 +95,7 @@ function namesRoughlyMatch(
   return kycTokens.length > 0 && kycTokens.every((t) => bankTokens.has(t));
 }
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -225,4 +226,15 @@ Deno.serve(async (req) => {
     account_name: bankAccount.account_name,
     account_number_last4: bankAccount.account_number_last4,
   });
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });

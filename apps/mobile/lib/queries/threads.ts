@@ -86,6 +86,14 @@ export function useThreads(currentUserId: string | undefined) {
   const query = useQuery({
     queryKey,
     enabled: !!currentUserId,
+    // Keeps the last-good list on screen through every refetch (including
+    // the one that fires the instant this mounts after a page reload) —
+    // found investigating a real report (session 45 continued) of the
+    // chat list flashing real content, blanking to a loading state, and
+    // settling on empty: without this, React Query's default behavior
+    // during any refetch is exactly that flash-then-blank, regardless of
+    // what the refetch itself resolves to.
+    placeholderData: (previousData) => previousData,
     queryFn: async (): Promise<ThreadWithPartner[]> => {
       const { data: threads, error } = await supabase
         .from('threads')

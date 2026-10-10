@@ -1,9 +1,13 @@
 // Real end-to-end encryption, step 3 (docs/21-E2EE-TECHNICAL-DESIGN.md §1, §7)
 //
-// Node/WASM-backed SodiumProvider, used ONLY by this package's own test
-// suite (x3dh.test.ts, doubleRatchet.test.ts, hkdfRfc5869.test.ts) — never
-// imported by the app itself. Backed by libsodium-wrappers-sumo, which is
-// Node-runnable (WASM) unlike the production native module. The plain
+// Node/WASM-backed SodiumProvider. Originally built for this package's own
+// test suite only (x3dh.test.ts, doubleRatchet.test.ts, hkdfRfc5869.test.ts)
+// — as of session 45 continued, also re-exported as the real production
+// web crypto provider (`sodiumProviderPlatform.web.ts`), since WASM
+// libsodium runs in a browser exactly as well as it runs under Node; the
+// name stayed as-is rather than renaming a file every existing test still
+// imports directly. Backed by libsodium-wrappers-sumo, which is
+// Node/browser-runnable (WASM) unlike the production native module. The plain
 // "libsodium-wrappers" package (non-sumo) was tried first and rejected —
 // verified live, not assumed: its actual installed runtime exposes only a
 // minimal function set (crypto_auth, crypto_generichash, crypto_hash,

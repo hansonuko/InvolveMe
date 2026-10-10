@@ -1,17 +1,20 @@
 // Real end-to-end encryption, step 5 (docs/21-E2EE-TECHNICAL-DESIGN.md §5)
 //
 // Per-device identity: an Ed25519 signing keypair + an X25519 ECDH
-// keypair, generated once per device on first E2EE setup and persisted in
-// expo-secure-store (iOS Keychain / Android Keystore) — never uploaded,
-// never reaches this app's own server in any form beyond the PUBLIC
-// halves register-e2ee-device sends. Losing this (app reinstall, device
-// reset) means losing the ability to decrypt past sessions with it —
-// expected and unavoidable for real E2EE, not a bug to work around.
+// keypair, generated once per device on first E2EE setup and persisted via
+// `secureStoreCompat` — iOS Keychain / Android Keystore on native, the
+// browser's own `localStorage` on web (session 45 continued; see that
+// module's `.web.ts` for the real security-tier tradeoff that implies) —
+// never uploaded, never reaches this app's own server in any form beyond
+// the PUBLIC halves register-e2ee-device sends. Losing this (app
+// reinstall, device reset, clearing browser storage) means losing the
+// ability to decrypt past sessions with it — expected and unavoidable for
+// real E2EE on any platform, not a bug to work around.
 
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from './secureStoreCompat';
 
 import { base64ToBytes, bytesToBase64 } from './bytes';
-import { nativeSodiumProvider as sodium } from './sodiumProviderNative';
+import { platformSodiumProvider as sodium } from './sodiumProviderPlatform';
 import type { KeyPair } from './sodiumProvider';
 
 const IDENTITY_KEY = 'e2ee_identity_v1';

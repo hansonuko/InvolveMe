@@ -40,8 +40,9 @@ function loadTurnstileScript(): Promise<void> {
 // Bot-abuse guard in front of the OTP-send call (docs/15-MARKETING-SITE-
 // PWA-SCOPING.md §4.4, non-negotiable — ships in the same phase as the
 // signup form). A real Turnstile widget (sitekey 0x4AAAAAAFRCZapP4N0Af8Lf,
-// scoped to involveme.net/www.involveme.net/involveme-marketing.pages.dev)
-// has been live since 2026-10-08 — NEXT_PUBLIC_TURNSTILE_SITE_KEY is no
+// scoped to involvemechat.com/www.involvemechat.com/involveme-marketing.
+// pages.dev — updated 2026-10-09 when the real domain went live) has been
+// live since 2026-10-08 — NEXT_PUBLIC_TURNSTILE_SITE_KEY is no
 // longer Cloudflare's published always-pass test key. Still renders a
 // clear "unavailable" state rather than crashing if the env var is ever
 // unset again (a misconfigured future deploy, a different environment) —

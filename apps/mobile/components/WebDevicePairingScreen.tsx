@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Linking, Pressable, StyleSheet, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
 import QRCode from 'react-native-qrcode-svg';
-import { useRouter } from 'expo-router';
 
 import { ActionSheet } from '@/components/ui/ActionSheet';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { Ring } from '@/components/ui/Ring';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { WebFooter } from '@/components/WebFooter';
 import { EdgeFunctionError } from '@/lib/edgeFunctions';
+import { useIsWideWeb } from '@/lib/hooks/useIsWideWeb';
 import { usePwaInstallPrompt } from '@/lib/hooks/usePwaInstallPrompt';
 import {
   buildDevicePairingDeepLink,
@@ -16,16 +26,10 @@ import {
   describeWebDevice,
   getDevicePairingStatus,
 } from '@/lib/linkedDevicePairing';
+import { MARKETING_URL } from '@/lib/marketingUrl';
 import { supabase } from '@/lib/supabase';
 import { showAlert } from '@/lib/ui/alert';
 import { useTheme } from '@/theme';
-
-// Same fallback-to-the-live-Pages-URL pattern apps/marketing's own
-// download page uses for NEXT_PUBLIC_WEB_APP_URL — involveme.net's DNS
-// isn't live yet either, so this must work against the real deployed
-// origin, not just the eventual custom domain.
-const MARKETING_URL =
-  process.env.EXPO_PUBLIC_MARKETING_URL ?? 'https://involveme-marketing.pages.dev';
 
 // Matches get-device-pairing-status's own polling guidance
 // (docs/12-LINKED-DEVICES-WEB-SCOPING.md M2's header comment) — frequent
@@ -55,7 +59,6 @@ type ScreenState =
  */
 export function WebDevicePairingScreen() {
   const { colors, spacing, radius } = useTheme();
-  const router = useRouter();
   const { canInstall, promptInstall, isIosSafari } = usePwaInstallPrompt();
   const [downloadSheetVisible, setDownloadSheetVisible] = useState(false);
   const [state, setState] = useState<ScreenState>({ kind: 'loading' });
@@ -67,6 +70,54 @@ export function WebDevicePairingScreen() {
   // response that arrived after we stopped caring" shape useSession's own
   // mount-guard uses elsewhere in this app.
   const pairingIdRef = useRef<string | null>(null);
+
+  // "lively" per the explicit ask — a quiet entrance for the hero copy and
+  // the QR card rather than everything just appearing instantly, plus a
+  // slow ambient float on the two background blobs. Respects
+  // useReducedMotion the same way AnimatedSplash.tsx already does (the one
+  // other place in this app driving a mount animation off shared values) —
+  // final state is identical either way, only the transition is skipped.
+  const reducedMotion = useReducedMotion();
+  const heroOpacity = useSharedValue(reducedMotion ? 1 : 0);
+  const heroTranslateY = useSharedValue(reducedMotion ? 0 : 16);
+  const cardOpacity = useSharedValue(reducedMotion ? 1 : 0);
+  const cardScale = useSharedValue(reducedMotion ? 1 : 0.94);
+  const blobFloat = useSharedValue(0);
+
+  useEffect(() => {
+    if (!reducedMotion) {
+      heroOpacity.value = withTiming(1, { duration: 500, easing: Easing.out(Easing.cubic) });
+      heroTranslateY.value = withTiming(0, { duration: 500, easing: Easing.out(Easing.cubic) });
+      cardOpacity.value = withDelay(150, withTiming(1, { duration: 450 }));
+      cardScale.value = withDelay(
+        150,
+        withTiming(1, { duration: 450, easing: Easing.out(Easing.back(1.2)) }),
+      );
+      blobFloat.value = withRepeat(
+        withTiming(1, { duration: 6000, easing: Easing.inOut(Easing.sin) }),
+        -1,
+        true,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const heroStyle = useAnimatedStyle(() => ({
+    opacity: heroOpacity.value,
+    transform: [{ translateY: heroTranslateY.value }],
+  }));
+  const cardStyle = useAnimatedStyle(() => ({
+    opacity: cardOpacity.value,
+    transform: [{ scale: cardScale.value }],
+  }));
+  const blobOneStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: blobFloat.value * -24 }, { translateX: blobFloat.value * 16 }],
+  }));
+  const blobTwoStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: blobFloat.value * 20 }, { translateX: blobFloat.value * -14 }],
+  }));
+
+  const isWide = useIsWideWeb();
 
   const clearTimers = useCallback(() => {
     if (pollRef.current) clearTimeout(pollRef.current);
@@ -246,11 +297,93 @@ export function WebDevicePairingScreen() {
     void Linking.openURL(`${MARKETING_URL}/download`);
   };
 
+  const heroBlock = (
+    <Animated.View style={[styles.hero, heroStyle, isWide ? styles.heroWide : null]}>
+      <Text
+        variant="hero"
+        color="secondary"
+        style={[styles.heroTitle, !isWide ? styles.heroTitleNarrow : null]}
+      >
+        Get paid, every time you reply.
+      </Text>
+      <Text
+        variant="body"
+        color="secondary"
+        style={[styles.heroSubtitle, isWide ? null : { textAlign: 'center' }]}
+      >
+        No subscriptions, no ads — just real conversations that pay you back. Link this browser to
+        keep chatting (and earning) from your desktop too.
+      </Text>
+
+      <View style={[styles.steps, { gap: spacing.sm }]}>
+        <Text variant="bodyMedium">To link a device:</Text>
+        <Text variant="body" color="secondary">
+          1. Open InvolveMe on your phone
+        </Text>
+        <Text variant="body" color="secondary">
+          2. Tap the menu, then Link a Device
+        </Text>
+        <Text variant="body" color="secondary">
+          3. Point your phone at this screen to scan the code
+        </Text>
+      </View>
+    </Animated.View>
+  );
+
+  const qrCard = (
+    <Animated.View
+      style={[
+        styles.card,
+        cardStyle,
+        {
+          backgroundColor: colors.bgSurface,
+          borderColor: colors.borderSubtle,
+          borderRadius: radius.card,
+          padding: spacing.xl,
+          gap: spacing.lg,
+        },
+      ]}
+    >
+      <View style={styles.qrWrap}>
+        {state.kind === 'pairing' ? (
+          <>
+            <QRCode value={buildDevicePairingDeepLink(state.pairingId)} size={220} />
+            <View style={[styles.countdown, { gap: spacing.xs }]}>
+              <Ring
+                size={28}
+                strokeWidth={3}
+                progress={secondsLeft / state.totalSeconds}
+                colors={[colors.brandPrimary]}
+                trackColor={colors.borderSubtle}
+              />
+              <Text variant="caption" color="tertiary">
+                Refreshes in {secondsLeft}s
+              </Text>
+            </View>
+          </>
+        ) : state.kind === 'error' ? (
+          <Text variant="body" color="danger" style={{ textAlign: 'center' }}>
+            {state.message}
+          </Text>
+        ) : state.kind === 'linked' ? (
+          <Text variant="body" color="secondary">
+            Linked! Opening InvolveMe…
+          </Text>
+        ) : (
+          <Text variant="body" color="secondary">
+            Generating code…
+          </Text>
+        )}
+      </View>
+    </Animated.View>
+  );
+
   return (
     <Screen style={styles.root}>
       <AppHeader
         title="InvolveMe"
         brand
+        logo
         rightSlot={
           <Pressable
             onPress={() => setDownloadSheetVisible(true)}
@@ -271,8 +404,14 @@ export function WebDevicePairingScreen() {
             label: 'How it works',
             onPress: () => void Linking.openURL(`${MARKETING_URL}/how-it-works`),
           },
-          { label: 'Privacy Policy', onPress: () => router.push('/legal/privacy') },
-          { label: 'Terms of Service', onPress: () => router.push('/legal/terms') },
+          {
+            label: 'Privacy Policy',
+            onPress: () => void Linking.openURL(`${MARKETING_URL}/legal/privacy`),
+          },
+          {
+            label: 'Terms of Service',
+            onPress: () => void Linking.openURL(`${MARKETING_URL}/legal/terms`),
+          },
         ]}
       />
       <ActionSheet
@@ -285,88 +424,77 @@ export function WebDevicePairingScreen() {
         ]}
       />
 
-      <View style={styles.container}>
-        <View style={styles.hero}>
-          <Text variant="display">InvolveMe Web</Text>
-          <Text variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
-            Use InvolveMe from this browser, linked to your phone.
-          </Text>
-        </View>
-
-        <View
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Two slow-floating tint blobs behind everything — purely
+            decorative "lively" ambience, never intercepts touches. */}
+        <Animated.View
+          pointerEvents="none"
           style={[
-            styles.card,
-            {
-              backgroundColor: colors.bgSurface,
-              borderColor: colors.borderSubtle,
-              borderRadius: radius.card,
-              padding: spacing.xl,
-              gap: spacing.lg,
-            },
+            styles.blob,
+            blobOneStyle,
+            { backgroundColor: colors.brandPrimary, top: -60, left: -60 },
           ]}
-        >
-          <View style={styles.qrWrap}>
-            {state.kind === 'pairing' ? (
-              <>
-                <QRCode value={buildDevicePairingDeepLink(state.pairingId)} size={220} />
-                <View style={[styles.countdown, { gap: spacing.xs }]}>
-                  <Ring
-                    size={28}
-                    strokeWidth={3}
-                    progress={secondsLeft / state.totalSeconds}
-                    colors={[colors.brandPrimary]}
-                    trackColor={colors.borderSubtle}
-                  />
-                  <Text variant="caption" color="tertiary">
-                    Refreshes in {secondsLeft}s
-                  </Text>
-                </View>
-              </>
-            ) : state.kind === 'error' ? (
-              <Text variant="body" color="danger" style={{ textAlign: 'center' }}>
-                {state.message}
-              </Text>
-            ) : state.kind === 'linked' ? (
-              <Text variant="body" color="secondary">
-                Linked! Opening InvolveMe…
-              </Text>
-            ) : (
-              <Text variant="body" color="secondary">
-                Generating code…
-              </Text>
-            )}
-          </View>
+        />
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.blob,
+            blobTwoStyle,
+            { backgroundColor: colors.accentCredit, top: 120, right: -80 },
+          ]}
+        />
 
-          <View style={{ gap: spacing.sm }}>
-            <Text variant="bodyMedium">To link a device:</Text>
-            <Text variant="body" color="secondary">
-              1. Open InvolveMe on your phone
-            </Text>
-            <Text variant="body" color="secondary">
-              2. Tap the menu, then Link a Device
-            </Text>
-            <Text variant="body" color="secondary">
-              3. Point your phone at this screen to scan the code
-            </Text>
-          </View>
+        <View style={[styles.container, isWide ? styles.containerWide : null]}>
+          {heroBlock}
+          {qrCard}
         </View>
-      </View>
+
+        <WebFooter marketingUrl={MARKETING_URL} />
+      </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, paddingHorizontal: 0 },
+  scroll: { flex: 1 },
+  scrollContent: { flexGrow: 1 },
   container: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
-    gap: 32,
     alignItems: 'center',
+    gap: 40,
     paddingHorizontal: 16,
+    paddingVertical: 48,
   },
-  hero: { alignItems: 'center' },
-  card: { borderWidth: 1, width: '100%', maxWidth: 420, alignItems: 'center' },
+  containerWide: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 72,
+    maxWidth: 1100,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  hero: { alignItems: 'center', gap: 16, maxWidth: 420 },
+  heroWide: { alignItems: 'flex-start', maxWidth: 440, gap: 20 },
+  heroTitle: { textAlign: 'left' },
+  heroTitleNarrow: { textAlign: 'center', fontSize: 34, lineHeight: 40 },
+  heroSubtitle: { maxWidth: 380 },
+  steps: { marginTop: 8 },
+  card: { borderWidth: 1, width: '100%', maxWidth: 360, alignItems: 'center' },
   qrWrap: { minHeight: 260, alignItems: 'center', justifyContent: 'center', gap: 12 },
   countdown: { flexDirection: 'row', alignItems: 'center' },
   downloadPill: { paddingHorizontal: 14, paddingVertical: 8 },
+  blob: {
+    position: 'absolute',
+    width: 260,
+    height: 260,
+    borderRadius: 260,
+    opacity: 0.08,
+  },
 });

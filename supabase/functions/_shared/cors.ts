@@ -11,20 +11,26 @@
 // only reflecting a known-good Origin back is the more conservative
 // choice than a wildcard.
 
-// involveme.net is the real domain (registered 2026-10-08, DNS not yet
-// live); involveme-marketing.pages.dev is where the site actually serves
-// from right now (docs/15-MARKETING-SITE-PWA-SCOPING.md §7) — both are
-// listed so the live deployed signup form's own Origin header is actually
-// allowed, not just the eventual production domain. involveme-web.pages.dev
-// is the separate linked-devices companion client (docs/12-LINKED-DEVICES-
-// WEB-SCOPING.md) — its QR-pairing screen calls create-device-pairing/
-// get-device-pairing-status directly from browser JS, the same reason
-// web-send-otp needed this file in the first place.
+// involvemechat.com is the real marketing domain (live on Cloudflare as of
+// 2026-10-09, docs/15-MARKETING-SITE-PWA-SCOPING.md §7); involveme-
+// marketing.pages.dev is kept too since it still resolves and is the
+// domain this repo's own deployed-smoke tests hit directly. web.
+// involvemechat.com is the separate linked-devices companion client
+// (docs/12-LINKED-DEVICES-WEB-SCOPING.md) — its QR-pairing screen calls
+// create-device-pairing/get-device-pairing-status directly from browser
+// JS, the same reason web-send-otp needed this file in the first place;
+// involveme-web.pages.dev is kept alongside it for the same reason.
+// app.involvemechat.com is docs/22-FULL-PWA-SCOPING.md's revived
+// standalone app (session 45 continued) — the one domain where every
+// client-callable function matters, not just the three above, since it
+// mirrors the full native app's feature set in a browser.
 const ALLOWED_ORIGINS = [
-  'https://involveme.net',
-  'https://www.involveme.net',
+  'https://involvemechat.com',
+  'https://www.involvemechat.com',
   'https://involveme-marketing.pages.dev',
+  'https://web.involvemechat.com',
   'https://involveme-web.pages.dev',
+  'https://app.involvemechat.com',
 ];
 
 function isAllowedOrigin(origin: string | null): boolean {

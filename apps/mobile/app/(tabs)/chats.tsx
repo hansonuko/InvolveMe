@@ -25,12 +25,17 @@ import { MemberSearchList } from '@/components/groups/MemberSearchList';
 import { StoryViewer } from '@/components/status/StoryViewer';
 import { type DeviceContact, useDeviceContacts, usePhoneContactNames } from '@/lib/contacts';
 import { shareInvite } from '@/lib/invite';
-import { type MatchedContactUser, useFindUsersByPhones } from '@/lib/queries/contacts';
+import {
+  type MatchedContactUser,
+  useFindUsersByPhones,
+  useSyncContactNames,
+} from '@/lib/queries/contacts';
 import { type StatusFeedGroup, useStatusFeed } from '@/lib/queries/status';
 import { type ThreadWithPartner, useStartThread, useThreads } from '@/lib/queries/threads';
 import { useSession } from '@/lib/hooks/useSession';
 import { useIsWideWeb } from '@/lib/hooks/useIsWideWeb';
 import { toE164NigerianPhone } from '@/lib/phone';
+import { isFullPwaHost } from '@/lib/webAppMode';
 import { useTheme } from '@/theme';
 
 // Was pushed to 92dp on an earlier "bigger chat-list avatars" ask, which
@@ -301,6 +306,7 @@ function NewChatModal({ visible, onClose }: { visible: boolean; onClose: () => v
               visible={visible}
               excludeUserIds={new Set()}
               onSelect={handleSelect}
+              onInviteNoMatch={Platform.OS === 'web' ? () => void shareInvite() : undefined}
             />
           </View>
         </KeyboardAvoidingScreen>
@@ -377,13 +383,53 @@ function ContactRow({
  * search box filters both by the same display name — matching the
  * `chats` sub-tab's own search bar shape/placement (own local state, a
  * non-sticky `ListHeaderComponent` that scrolls with the list) rather
- * than inventing a second search pattern in this same file. */
+ * than inventing a second search pattern in this same file.
+ *
+ * Web has no bulk-phonebook-read API at all — not Android-permissions-
+ * style-denied, genuinely nonexistent, including on iOS Safari, the main
+ * audience `app.involvemechat.com` serves — so `expo-contacts`'s own web
+ * shim always reports `granted: false`, and this screen's native-only
+ * "Allow contacts access" messaging would be a permanent dead end there
+ * (worse, its "Open settings" button calls `Linking.openSettings()`,
+ * itself native-only). `WebContactsSearch` below swaps in the exact same
+ * find-one-person building block `NewChatModal` already uses
+ * (`MemberSearchList` + `useStartThread`) instead of trying to read a
+ * phonebook that doesn't exist on this platform. */
+function WebContactsSearch() {
+  const router = useRouter();
+  const { spacing } = useTheme();
+  const startThread = useStartThread();
+
+  const handleSelect = (user: MatchedContactUser) => {
+    startThread.mutate(user.id, {
+      onSuccess: (data) => router.push(`/thread/${data.thread_id}`),
+    });
+  };
+
+  return (
+    <View style={{ flex: 1, padding: 16, gap: spacing.md }}>
+      {startThread.isError ? (
+        <Text variant="caption" color="danger">
+          {startThread.error.message}
+        </Text>
+      ) : null}
+      <MemberSearchList
+        visible
+        excludeUserIds={new Set()}
+        onSelect={handleSelect}
+        onInviteNoMatch={() => void shareInvite()}
+      />
+    </View>
+  );
+}
+
 function ContactsList() {
   const router = useRouter();
   const { colors, spacing, radius } = useTheme();
   const { session } = useSession();
   const { status, error, sync } = useDeviceContacts();
   const findUsers = useFindUsersByPhones();
+  const syncContactNames = useSyncContactNames();
   const startThread = useStartThread();
   // Same queryKey as ChatsScreen's own useStatusFeed call — TanStack Query
   // dedupes this to the shared cache, not a second network round-trip.
@@ -402,7 +448,30 @@ function ContactsList() {
       const allPhones = [
         ...new Set(deviceContacts.flatMap((c) => c.phones.map(toE164NigerianPhone))),
       ];
-      findUsers.mutate(allPhones);
+      findUsers.mutate(allPhones, {
+        // Cross-device name sync (session 45 continued) — piggybacks on
+        // this exact match result rather than a second lookup: every
+        // `contact_user_id` written below was already legitimately
+        // returned to this caller right here, nothing new is disclosed.
+        // See lib/queries/contacts.ts's useSyncContactNames for why this
+        // is a direct RLS-scoped upsert, not a new Edge Function.
+        onSuccess: (data) => {
+          const phoneToName = new Map<string, string>();
+          for (const c of deviceContacts) {
+            if (!c.name) continue;
+            for (const p of c.phones) {
+              phoneToName.set(toE164NigerianPhone(p).replace(/^\+/, ''), c.name);
+            }
+          }
+          const rows = data.matches
+            .map((m) => {
+              const name = phoneToName.get(m.phone);
+              return name ? { contact_user_id: m.id, name } : null;
+            })
+            .filter((r): r is { contact_user_id: string; name: string } => r !== null);
+          if (rows.length > 0) syncContactNames.mutate(rows);
+        },
+      });
     })();
     return () => {
       cancelled = true;
@@ -574,6 +643,8 @@ export function ChatsScreen() {
   const {
     data: threads,
     isLoading,
+    isError: threadsError,
+    error: threadsErrorDetail,
     refetch: refetchThreads,
     isRefetching,
   } = useThreads(session?.user.id);
@@ -649,10 +720,17 @@ export function ChatsScreen() {
           </Pressable>
         }
         menuItems={[
-          // Scanning is a native-camera action — the web companion client
-          // (docs/12-LINKED-DEVICES-WEB-SCOPING.md) is itself the thing
-          // that gets linked, it never links a further device of its own.
-          ...(Platform.OS !== 'web'
+          // Scanning is a camera action, available wherever this is a real
+          // primary account with its own camera: native, or
+          // app.involvemechat.com (docs/22's standalone PWA — a full login,
+          // same as native, just reached through a browser; expo-camera's
+          // CameraView already has a working web implementation backed by
+          // getUserMedia + the browser's own barcode detection). Excluded
+          // on every *other* web host: web.involvemechat.com's QR-pairing
+          // companion (docs/12-LINKED-DEVICES-WEB-SCOPING.md) is itself the
+          // thing that gets linked, it never links a further device of its
+          // own — scanning from there would be backwards.
+          ...(Platform.OS !== 'web' || isFullPwaHost()
             ? [{ label: 'Link a device', onPress: () => router.push('/link-device') }]
             : []),
           { label: 'Settings', onPress: () => router.push('/settings') },
@@ -666,7 +744,14 @@ export function ChatsScreen() {
         // A different data shape (device contacts, not threads) and its
         // own loading/permission states — a dedicated component rather
         // than overloading the threads FlatList below, per Batch C1.
-        <ContactsList />
+        // Web has no bulk-contacts API at all (see WebContactsSearch's own
+        // header comment) — swap in the phone-search equivalent instead
+        // of a permanent "allow contacts access" dead end.
+        Platform.OS === 'web' ? (
+          <WebContactsSearch />
+        ) : (
+          <ContactsList />
+        )
       ) : (
         <FlatList
           data={filteredThreads}
@@ -687,6 +772,27 @@ export function ChatsScreen() {
                 <Text variant="body" color="tertiary">
                   Loading…
                 </Text>
+              ) : threadsError ? (
+                // Distinct from the plain "no conversations" case below —
+                // found investigating a real report (session 45 continued)
+                // of the chat list going empty after a reload with no
+                // visible reason: an error here used to be indistinguishable
+                // from a genuinely empty list, which made it impossible to
+                // tell the two apart from the outside. Surfacing the real
+                // message is step one of actually diagnosing this.
+                <>
+                  <Text
+                    variant="body"
+                    color="danger"
+                    style={{ textAlign: 'center', marginBottom: spacing.md }}
+                  >
+                    Couldn&apos;t load conversations.{'\n'}
+                    {threadsErrorDetail instanceof Error
+                      ? threadsErrorDetail.message
+                      : 'Unknown error.'}
+                  </Text>
+                  <Button label="Retry" onPress={() => void refetchThreads()} />
+                </>
               ) : (
                 <Text variant="body" color="tertiary">
                   {search

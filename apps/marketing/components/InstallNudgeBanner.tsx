@@ -5,32 +5,40 @@ import { usePathname } from 'next/navigation';
 import { useState, useSyncExternalStore } from 'react';
 
 const DISMISSED_KEY = 'involveme-install-nudge-dismissed';
+const FULL_PWA_URL = 'https://app.involvemechat.com';
 
 const noopSubscribe = () => () => {};
 
+function isAndroidUa() {
+  return /android/i.test(window.navigator.userAgent);
+}
+
 /**
- * Sitewide, dismissible nudge toward the Download page.
+ * Sitewide, dismissible nudge — what it promotes depends on the device.
  *
- * Reversed 2026-10-09 (session 44): this used to link straight to
- * involveme-web as an installable PWA any visitor could open and use —
- * that assumption is exactly what docs/12-LINKED-DEVICES-WEB-SCOPING.md's
- * architecture pivot invalidated (involveme-web is a QR-pairing companion
- * client now, reachable only from an already-logged-in phone; see
- * app/download/page.tsx's own header comment for the full finding). This
- * banner now points at `/download` instead, which has the real,
- * currently-accurate per-platform story (Android sideload, iOS not yet
- * available) — a promotional nudge toward that page, not a second copy
- * of its content.
+ * Reversed 2026-10-09 (session 44), then reinstated the same day (session
+ * 45 continued): this originally linked straight to involveme-web as an
+ * installable PWA — invalidated when that domain became docs/12's
+ * QR-pairing companion client (reachable only from an already-logged-in
+ * phone). The standalone installable app that assumption described didn't
+ * go away, it moved to its own subdomain, `app.involvemechat.com` (see
+ * `apps/mobile/lib/webAppMode.ts`) — so this banner is back to promoting
+ * a real install, just at the corrected URL, and only for devices that
+ * actually benefit from it: Android already has its own direct-APK path
+ * (`/download`), so only non-Android visitors get sent straight to the
+ * PWA install; Android still goes to `/download`.
  *
  * Suppressed on `/download` specifically — that page already has the
- * full real install walkthrough inline, so a floating banner repeating
- * "go install" on top of it would just be noise, not a second nudge.
+ * full real install walkthrough inline (including the same PWA link for
+ * non-Android), so a floating banner repeating "go install" on top of it
+ * would just be noise, not a second nudge.
  *
  * `useSyncExternalStore`'s server/client snapshot split (same pattern
- * ThemeToggle.tsx already uses) is what lets this read `localStorage`
- * safely on a statically-exported page without a hydration mismatch or a
- * `react-hooks/set-state-in-effect` violation — the dismissed flag is
- * computed as part of the snapshot itself, never set via an effect body.
+ * ThemeToggle.tsx already uses) is what lets this read
+ * `localStorage`/`navigator.userAgent` safely on a statically-exported
+ * page without a hydration mismatch or a `react-hooks/set-state-in-effect`
+ * violation — both are computed as part of the snapshot itself, never set
+ * via an effect body.
  */
 export function InstallNudgeBanner() {
   const pathname = usePathname();
@@ -46,6 +54,7 @@ export function InstallNudgeBanner() {
     () => window.localStorage.getItem(DISMISSED_KEY) === '1',
     () => false,
   );
+  const isAndroid = useSyncExternalStore(noopSubscribe, isAndroidUa, () => false);
 
   if (!mounted || dismissedBefore || closedThisVisit) return null;
   if (pathname === '/download') return null;
@@ -61,15 +70,26 @@ export function InstallNudgeBanner() {
         <div className="flex-1">
           <p className="text-caption font-semibold text-foreground">Get InvolveMe</p>
           <p className="text-caption text-muted">
-            See how to get it on your phone, Android today, iOS coming soon.
+            {isAndroid
+              ? 'Not on the Play Store yet — get the Android app directly.'
+              : "Not on Android? Install the web app — we'll notify you when the native app is ready for your store."}
           </p>
         </div>
-        <Link
-          href="/download"
-          className="whitespace-nowrap rounded-pill bg-accent px-5 py-2.5 text-caption font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
-        >
-          Download
-        </Link>
+        {isAndroid ? (
+          <Link
+            href="/download"
+            className="whitespace-nowrap rounded-pill bg-accent px-5 py-2.5 text-caption font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
+          >
+            Download
+          </Link>
+        ) : (
+          <a
+            href={FULL_PWA_URL}
+            className="whitespace-nowrap rounded-pill bg-accent px-5 py-2.5 text-caption font-semibold text-on-accent transition-colors hover:bg-accent-pressed"
+          >
+            Install
+          </a>
+        )}
         <button
           type="button"
           onClick={dismiss}

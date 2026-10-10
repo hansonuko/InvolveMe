@@ -1,9 +1,15 @@
 import { Contact, ContactField, requestPermissionsAsync } from 'expo-contacts';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { withAppLockSuppressed } from '@/lib/appLock';
 import { useContactsChangedStore } from '@/lib/contactsChangedStore';
+import { useSession } from '@/lib/hooks/useSession';
 import { toE164NigerianPhone } from '@/lib/phone';
+import {
+  useFindUsersByPhones,
+  useSavedContactNames,
+  useSyncContactNames,
+} from '@/lib/queries/contacts';
 
 export interface DeviceContact {
   id: string;
@@ -96,11 +102,44 @@ export function useDeviceContacts() {
  * `profile/[id].tsx`'s "Save to contacts" action) — every screen using
  * this hook picks up a freshly saved name without needing its own
  * restart or manual refresh.
+ *
+ * Priority extended (session 45 continued) to fix a real cross-device gap:
+ * a name saved on one device only ever showed on that same device — web
+ * has no bulk-contacts API at all (always empty here), and a second
+ * native device never had that contact saved locally either. Now checks
+ * `useSavedContactNames` (`lib/queries/contacts.ts`) — this device's own
+ * live `expo-contacts` result still wins when both exist (it's always at
+ * least as fresh as whatever was last synced to the server), but the
+ * server-saved name is a real fallback now instead of a bare phone number.
+ *
+ * Also now the one real place `useSyncContactNames` (the *write* side)
+ * gets called from — found live that it was wired only into `chats.tsx`'s
+ * `ContactsList`, whose own mount effect only ever runs if someone
+ * actually visits the Contacts sub-tab specifically, which nobody had
+ * (zero rows in `saved_contact_names`, ever, confirmed directly against
+ * the dev DB). This hook already reads the full device phonebook on every
+ * mount regardless (chats/thread/profile all call it) — uploading matched
+ * names from here too, gated to once per JS session via the module-level
+ * flag below, actually gets this feature to run without needing a second,
+ * easy-to-never-find entry point.
  */
+let hasSyncedContactNamesThisSession = false;
+
 export function usePhoneContactNames() {
   const { sync } = useDeviceContacts();
   const [phoneToContactName, setPhoneToContactName] = useState<Map<string, string>>(new Map());
   const contactsVersion = useContactsChangedStore((s) => s.version);
+  const { session } = useSession();
+  const { data: savedContactNameRows } = useSavedContactNames(session?.user.id);
+  const findUsers = useFindUsersByPhones();
+  const syncContactNames = useSyncContactNames();
+  // Built here, client-side only — never store a `Map` as a persisted
+  // query's own result (see useSavedContactNames's header comment for the
+  // real crash that caused).
+  const savedContactNames = useMemo(
+    () => new Map((savedContactNameRows ?? []).map((r) => [r.contact_user_id, r.name])),
+    [savedContactNameRows],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -115,6 +154,26 @@ export function usePhoneContactNames() {
         }
       }
       setPhoneToContactName(map);
+
+      if (hasSyncedContactNamesThisSession || map.size === 0) return;
+      hasSyncedContactNamesThisSession = true;
+      try {
+        const { matches } = await findUsers.mutateAsync([...map.keys()].map((p) => `+${p}`));
+        if (cancelled || matches.length === 0) return;
+        const rows = matches
+          .map((m) => {
+            const name = map.get(m.phone);
+            return name ? { contact_user_id: m.id, name } : null;
+          })
+          .filter((r): r is { contact_user_id: string; name: string } => r !== null);
+        if (rows.length > 0) syncContactNames.mutate(rows);
+      } catch (e) {
+        // A transient failure here just means next session's sync tries
+        // again (the flag only guards against re-trying *within* this
+        // one) — never worth surfacing to the user over.
+        hasSyncedContactNamesThisSession = false;
+        console.error('usePhoneContactNames: contact-name sync failed:', e);
+      }
     })();
     return () => {
       cancelled = true;
@@ -123,15 +182,17 @@ export function usePhoneContactNames() {
   }, [contactsVersion]);
 
   const resolveContactName = useCallback(
-    (partner: { display_name: string | null; phone: string | null }): string => {
+    (partner: { id: string; display_name: string | null; phone: string | null }): string => {
       if (partner.phone) {
         const contactName = phoneToContactName.get(partner.phone);
         if (contactName) return contactName;
+        const savedName = savedContactNames?.get(partner.id);
+        if (savedName) return savedName;
         return `+${partner.phone}`;
       }
       return partner.display_name ?? 'Unnamed';
     },
-    [phoneToContactName],
+    [phoneToContactName, savedContactNames],
   );
 
   return { phoneToContactName, resolveContactName };

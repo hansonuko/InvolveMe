@@ -41,7 +41,7 @@ async function main() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Origin: 'https://involveme-marketing.pages.dev',
+      Origin: 'https://involvemechat.com',
     },
     // Unique per run for the same reason as web-send-otp-function.test.js:
     // this assertion needs the request to get PAST the per-phone rate
@@ -68,7 +68,7 @@ async function main() {
 
   log(
     'CORS header reflects an allowed Origin',
-    res.headers.get('access-control-allow-origin') === 'https://involveme-marketing.pages.dev',
+    res.headers.get('access-control-allow-origin') === 'https://involvemechat.com',
     `access-control-allow-origin=${res.headers.get('access-control-allow-origin')}`,
   );
 

@@ -15,6 +15,7 @@
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { TWO_STEP_RESET_COOLDOWN_DAYS } from '../_shared/twoStep.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -27,7 +28,7 @@ function errorResponse(status: number, code: string, message: string): Response 
   return json(status, { error: code, message });
 }
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -73,4 +74,15 @@ Deno.serve(async (req) => {
   ).toISOString();
 
   return json(200, { requested_at: requestedAt, available_at: availableAt });
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });

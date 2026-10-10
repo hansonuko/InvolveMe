@@ -20,7 +20,7 @@ import { PanResponder, Pressable, View, type LayoutChangeEvent } from 'react-nat
 import { Text } from '@/components/ui/Text';
 import { usePlaybackStore, type PlaybackRate } from '@/lib/audio/playbackStore';
 import { decryptMediaBytes } from '@/lib/e2ee/mediaCrypto';
-import { nativeSodiumProvider } from '@/lib/e2ee/sodiumProviderNative';
+import { platformSodiumProvider } from '@/lib/e2ee/sodiumProviderPlatform';
 import { useChatMediaUrl, useMarkAudioPlayed, type Message } from '@/lib/queries/messages';
 import { supabase } from '@/lib/supabase';
 import { showAlert } from '@/lib/ui/alert';
@@ -124,7 +124,7 @@ export function VoiceMessageBubble({
     try {
       const response = await fetch(mediaUrl.data);
       const ciphertext = new Uint8Array(await response.arrayBuffer());
-      const plaintext = decryptMediaBytes(nativeSodiumProvider, ciphertext, {
+      const plaintext = decryptMediaBytes(platformSodiumProvider, ciphertext, {
         keyBase64: message.e2eeMediaKeyBase64 as string,
         nonceBase64: message.e2eeMediaNonceBase64 as string,
       });

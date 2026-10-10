@@ -27,9 +27,8 @@
 // the trimmed entries) will fail to decrypt — a real, documented
 // trade-off, not a silent gap.
 
-import * as SecureStore from 'expo-secure-store';
-
 import { base64ToBytes, bytesToBase64 } from './bytes';
+import * as SecureStore from './secureStoreCompat';
 import type { RatchetState } from './doubleRatchet';
 
 const MAX_PERSISTED_SKIPPED = 25;

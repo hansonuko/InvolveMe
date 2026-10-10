@@ -15,13 +15,13 @@
 // index_v1` tracks which ids currently exist (SecureStore has no "list
 // keys" API), and is itself small (a JSON array of small integers).
 
-import * as SecureStore from 'expo-secure-store';
-
 import { callEdgeFunction } from '@/lib/edgeFunctions';
+
+import * as SecureStore from './secureStoreCompat';
 
 import { base64ToBytes, bytesToBase64 } from './bytes';
 import { getOrCreateIdentity } from './identity';
-import { nativeSodiumProvider as sodium } from './sodiumProviderNative';
+import { platformSodiumProvider as sodium } from './sodiumProviderPlatform';
 
 const DEVICE_ID_KEY = 'e2ee_device_id_v1';
 const SIGNED_PREKEY_KEY = 'e2ee_signed_prekey_v1';

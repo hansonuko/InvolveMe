@@ -19,6 +19,7 @@
 import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { parseBody } from '../_shared/validate.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 const CompleteOnboardingRequestSchema = z.object({
   country: z
@@ -51,7 +52,7 @@ function errorResponse(status: number, code: string, message: string): Response 
   return json(status, { error: code, message });
 }
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -102,4 +103,15 @@ Deno.serve(async (req) => {
     currency: (data as { resolved_currency: string; payments_live: boolean }).resolved_currency,
     payments_live: (data as { resolved_currency: string; payments_live: boolean }).payments_live,
   });
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });
