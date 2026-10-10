@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Card, Eyebrow, Section } from '@/components/Section';
 import { SignupForm } from '@/components/SignupForm';
+import { LAUNCH_DATE_LABEL } from '@/lib/prelaunch';
 
 export const metadata: Metadata = {
   title: 'Sign up',
@@ -20,6 +21,9 @@ export default function SignupPage() {
       <p className="mx-auto mt-4 max-w-md text-body text-muted">
         Confirm your phone number to get started. Once verified, we&apos;ll take you to the download
         page to finish setting up in the app.
+      </p>
+      <p className="mx-auto mt-2 max-w-md text-caption text-muted">
+        Signup opens for our soft launch on {LAUNCH_DATE_LABEL}.
       </p>
       <Card className="mx-auto mt-10 max-w-md">
         <SignupForm />
