@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { Card, Eyebrow, Section } from '@/components/Section';
+import { LAUNCH_DATE_LABEL } from '@/lib/prelaunch';
 
 export const metadata: Metadata = {
   title: 'Guide',
@@ -19,14 +20,14 @@ const STEPS = [
     title: 'Sign up early',
     body: (
       <>
-        Confirm your phone number on the{' '}
+        Signup opens on our soft-launch day, {LAUNCH_DATE_LABEL}, on the{' '}
         <Link href="/signup" className="font-semibold text-foreground-accent hover:underline">
           Sign up
         </Link>{' '}
-        page. Early adopters who sign up before launch get 100 non-withdrawable chat credits to
-        start with, a real commitment we&apos;re making for launch day, December 1, 2026, not a
-        balance that exists yet. &quot;Non-withdrawable&quot; means these credits let you try
-        sending messages, they can&apos;t be converted to cash.
+        page. Confirm your phone number that day and you&apos;ll get 100 non-withdrawable chat
+        credits to start with, a real commitment we&apos;re making for launch day, not a balance
+        that exists yet. &quot;Non-withdrawable&quot; means these credits let you try sending
+        messages, they can&apos;t be converted to cash.
       </>
     ),
   },
