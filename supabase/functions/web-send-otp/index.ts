@@ -51,6 +51,18 @@ const OTP_PER_PHONE_WINDOW_SECONDS = 10 * 60;
 const OTP_PER_IP_MAX = 10;
 const OTP_PER_IP_WINDOW_SECONDS = 10 * 60;
 
+// Soft launch is 2026-11-20 — matches apps/marketing/lib/prelaunch.ts and
+// apps/mobile/lib/prelaunch.ts's own copy of this same date exactly (can't
+// share one module across these separately-deployed runtimes). This is the
+// fail-closed backstop: the marketing site's SignupForm already checks
+// this client-side and never calls this function before launch, but SMS
+// delivery genuinely isn't wired up yet (docs/00-SESSION-HANDOFF.md), so a
+// caller that reaches here before launch some other way (a stale page, a
+// direct API call) still gets a clear "not yet" rather than a real attempt
+// that fails downstream with a confusing error.
+const LAUNCH_DATE = new Date('2026-11-20T00:00:00');
+const PRELAUNCH_MESSAGE = 'Complete this signup from November 20 to start using the app.';
+
 const E164_PATTERN = /^\+[1-9]\d{6,14}$/;
 
 // Kept as two separately-parsed fields, not one parseBody() call
@@ -180,6 +192,16 @@ Deno.serve(async (req) => {
 
   if (!captchaOk) {
     return errorResponse(req, 400, 'captcha_failed', 'Captcha verification failed.');
+  }
+
+  // Placed after the captcha check, not before: a bogus/missing captcha
+  // should still get its own specific error right up until launch (that
+  // behavior is independently tested — web-send-otp-function.test.js,
+  // web-send-otp-deployed-smoke.test.js — and stays correct either way).
+  // Only a caller who's genuinely passed a human-verification check gets
+  // told "not yet" instead of something more generic.
+  if (Date.now() < LAUNCH_DATE.getTime()) {
+    return errorResponse(req, 403, 'prelaunch', PRELAUNCH_MESSAGE);
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');

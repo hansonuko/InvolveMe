@@ -2,8 +2,7 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
-
-const LAUNCH_DATE = new Date('2026-12-01T00:00:00');
+import { LAUNCH_DATE } from '@/lib/prelaunch';
 
 function getTimeRemaining() {
   const diff = LAUNCH_DATE.getTime() - Date.now();

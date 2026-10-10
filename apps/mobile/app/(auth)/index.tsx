@@ -6,6 +6,7 @@ import { FlatList, Modal, Platform, Pressable, StyleSheet, TextInput, View } fro
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Text } from '@/components/ui/Text';
+import { PrelaunchAnnouncementModal } from '@/components/PrelaunchAnnouncementModal';
 import { WebDevicePairingScreen } from '@/components/WebDevicePairingScreen';
 import {
   COUNTRY_DIAL_CODES,
@@ -13,28 +14,50 @@ import {
   type CountryDialCode,
 } from '@/lib/countryDialCodes';
 import { toE164Phone } from '@/lib/phone';
+import { isPrelaunch, PRELAUNCH_SIGNUP_MESSAGE } from '@/lib/prelaunch';
 import { supabase } from '@/lib/supabase';
+import { showAlert } from '@/lib/ui/alert';
 import { useAuthFlowStore } from '@/store/useAuthFlowStore';
+import { isFullPwaHost } from '@/lib/webAppMode';
 import { useTheme } from '@/theme';
 
 /**
- * Root of the `(auth)` group — branches entirely by platform.
+ * Root of the `(auth)` group — branches entirely by platform, and on web,
+ * by hostname.
  *
  * On native, this is Phase 0 auth: phone number entry → Supabase OTP (see
  * docs/05-API-REALTIME-SPEC.md), unchanged below.
  *
- * On web (`involveme-web`), per the explicit product correction this
- * feature is built on (docs/12-LINKED-DEVICES-WEB-SCOPING.md — the real
- * WhatsApp Web model, not a standalone OTP-login PWA), there is no phone
- * entry at all: a brand-new user has no path in via the browser, only an
- * already-logged-in phone scanning a QR code can authenticate this device.
- * See `WebDevicePairingScreen`'s own header comment.
+ * On web, the *default* host (`web.involvemechat.com`, `involveme-
+ * web.pages.dev`, localhost) is `involveme-web`'s QR-pairing companion
+ * (docs/12-LINKED-DEVICES-WEB-SCOPING.md — the real WhatsApp Web model):
+ * there is no phone entry at all, only an already-logged-in phone scanning
+ * a QR code can authenticate this device. See `WebDevicePairingScreen`'s
+ * own header comment.
+ *
+ * `app.involvemechat.com` (`lib/webAppMode.ts`) is the one exception —
+ * docs/22-FULL-PWA-SCOPING.md's original standalone app, revived at its
+ * own subdomain rather than conflated back into the pairing companion's
+ * domain. Gets the exact same phone-entry/OTP flow native does. By the
+ * time this screen can even render there, `app/_layout.tsx`'s own
+ * `needsPwaInstall` gate has already confirmed this is a real installed
+ * session, not a bare browser tab — nothing further to check here.
  */
 export default function AuthEntryScreen() {
-  if (Platform.OS === 'web') {
-    return <WebDevicePairingScreen />;
-  }
-  return <PhoneEntryScreen />;
+  const inner =
+    Platform.OS === 'web' && !isFullPwaHost() ? <WebDevicePairingScreen /> : <PhoneEntryScreen />;
+
+  // Web-only, covering both `app.involvemechat.com` and
+  // `web.involvemechat.com` (native is never in prelaunch — the native app
+  // isn't store-listed yet, so this gate would be meaningless there; see
+  // PrelaunchAnnouncementModal's own header comment).
+  if (Platform.OS !== 'web') return inner;
+  return (
+    <>
+      {inner}
+      <PrelaunchAnnouncementModal />
+    </>
+  );
 }
 
 /**
@@ -70,6 +93,17 @@ function PhoneEntryScreen() {
 
   const handleSendCode = async () => {
     setError(null);
+
+    // Signup genuinely can't complete yet — SMS delivery isn't wired up
+    // before launch (docs/00-SESSION-HANDOFF.md). Checked before the
+    // network call, same reasoning as the marketing site's SignupForm, so
+    // the visitor sees a clear "not yet" popup instead of a real send
+    // attempt failing downstream with a confusing error.
+    if (isPrelaunch()) {
+      showAlert('Not open just yet', PRELAUNCH_SIGNUP_MESSAGE);
+      return;
+    }
+
     setIsSubmitting(true);
     const e164Phone = toE164Phone(phone, country.dialCode);
     const { error: otpError } = await supabase.auth.signInWithOtp({ phone: e164Phone });
