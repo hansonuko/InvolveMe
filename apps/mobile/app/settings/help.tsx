@@ -33,7 +33,7 @@ function reportCrash(crash: {
   timestamp: string;
 }) {
   const lines = [
-    `InvolveMe crash report — ${crash.timestamp}`,
+    `InvolveMe crash report (${crash.timestamp})`,
     crash.message,
     crash.componentStack ? `Component stack:${crash.componentStack}` : '',
     crash.stack ?? '',

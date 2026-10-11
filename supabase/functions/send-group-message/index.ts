@@ -17,6 +17,7 @@ import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
 import { runInBackground, sendPushToUser } from '../_shared/push.ts';
 import { parseBody, requiredString } from '../_shared/validate.ts';
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 interface SendGroupMessageRequestBody {
   group_thread_id?: string;
@@ -79,7 +80,7 @@ function mapSendGroupMessageError(pgMessage: string): Response {
   return errorResponse(500, 'internal_error', 'Something went wrong.');
 }
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -222,4 +223,15 @@ Deno.serve(async (req) => {
     word_count: data.word_count,
     created_at: data.created_at,
   });
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });

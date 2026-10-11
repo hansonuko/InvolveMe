@@ -12,7 +12,7 @@ import Animated, {
 
 import { Text } from '@/components/ui/Text';
 import { MARKETING_URL } from '@/lib/marketingUrl';
-import { LAUNCH_DATE, LAUNCH_DATE_LABEL } from '@/lib/prelaunch';
+import { isPrelaunch, LAUNCH_DATE, LAUNCH_DATE_LABEL } from '@/lib/prelaunch';
 import { useTheme } from '@/theme';
 
 function getTimeRemaining() {
@@ -43,7 +43,10 @@ function getTimeRemaining() {
  */
 export function PrelaunchAnnouncementModal() {
   const { colors, spacing, radius } = useTheme();
-  const [visible, setVisible] = useState(true);
+  // Hides entirely once launch has passed, rather than swapping to an
+  // "It's launch day!" variant that would then linger forever — decided in
+  // docs/00-SESSION-HANDOFF.md's "three asks" entry.
+  const [visible, setVisible] = useState(isPrelaunch());
   const [remaining, setRemaining] = useState(getTimeRemaining());
 
   const reducedMotion = useReducedMotion();
@@ -70,7 +73,14 @@ export function PrelaunchAnnouncementModal() {
         withRepeat(withTiming(1, { duration: 1400, easing: Easing.inOut(Easing.sin) }), -1, true),
       );
     }
-    const tick = setInterval(() => setRemaining(getTimeRemaining()), 60000);
+    const tick = setInterval(() => {
+      setRemaining(getTimeRemaining());
+      // Launch happening while this modal is already open and sitting on
+      // screen (rare, but the per-minute tick is already here for the
+      // countdown) — close it rather than flipping to "It's launch day!"
+      // and staying up.
+      if (!isPrelaunch()) setVisible(false);
+    }, 60000);
     return () => clearInterval(tick);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -169,7 +179,7 @@ export function PrelaunchAnnouncementModal() {
             color="secondary"
             style={{ textAlign: 'center', marginTop: spacing.sm }}
           >
-            Get paid every time you reply to a message — no ads, no subscriptions, just real
+            Get paid every time you reply to a message. No ads, no subscriptions, just real
             conversations that pay you back.
           </Text>
 

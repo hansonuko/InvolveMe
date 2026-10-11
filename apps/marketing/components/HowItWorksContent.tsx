@@ -81,7 +81,7 @@ export function HowItWorksContent() {
             <div>
               <p className="text-body text-muted">
                 Anyone wanting to get someone&apos;s time on chat with InvolveMe can buy Chat
-                Credits, starting from just ₦100 and up. No subscription, no fixed plan — top up
+                Credits, starting from just ₦100 and up. No subscription, no fixed plan: top up
                 whenever you need to.
               </p>
               <p className="mt-4 rounded-card border border-border bg-surface px-5 py-4 text-caption text-muted">
@@ -107,7 +107,7 @@ export function HowItWorksContent() {
                 page.
               </p>
               <p className="mt-4 rounded-card border border-border bg-surface px-5 py-4 text-caption text-muted">
-                🔒 Chat Credits work the same way in an end-to-end-encrypted conversation too — the
+                🔒 Chat Credits work the same way in an end-to-end-encrypted conversation too: the
                 exact same buy-in, held-until-reply mechanism, just measured differently under the
                 hood since an encrypted message can&apos;t be read to count its words.
               </p>

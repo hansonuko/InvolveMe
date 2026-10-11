@@ -28,6 +28,7 @@
 // succeeds. This function never touches messages or the ledger.
 
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 // Deliberately NOT converted to the shared Zod parseBody() pattern
 // (docs/19-SECURITY-HARDENING-SCOPING.md §4): `kind` is already validated
@@ -55,7 +56,7 @@ const EXTENSION_BY_KIND: Record<string, string> = {
   audio: 'm4a',
 };
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -105,4 +106,15 @@ Deno.serve(async (req) => {
     token: data.token,
     signed_url: data.signedUrl,
   });
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });

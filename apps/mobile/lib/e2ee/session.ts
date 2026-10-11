@@ -34,12 +34,13 @@ import {
 import { getOrCreateIdentity } from './identity';
 import { getCachedPlaintextBatch, setCachedPlaintext } from './plaintextCache';
 import {
+  ensureDeviceRegistered,
   getOwnDeviceId,
   getSignedPrekey,
   replenishOneTimePrekeysIfLow,
   takeLocalOneTimePrekey,
 } from './prekeys';
-import { nativeSodiumProvider as sodium } from './sodiumProviderNative';
+import { platformSodiumProvider as sodium } from './sodiumProviderPlatform';
 import { deleteSession, loadSession, saveSession } from './sessionStore';
 import { verifyPrekeyBundle, x3dhInitiate, x3dhRespond, type PrekeyBundle } from './x3dh';
 
@@ -141,7 +142,19 @@ export async function encryptForThread(
 ): Promise<OutgoingEnvelope[]> {
   await sodium.ready();
   const identity = await getOrCreateIdentity();
-  const signedPrekey = await getSignedPrekey();
+  let signedPrekey = await getSignedPrekey();
+  if (!signedPrekey) {
+    // A device that has never completed its one-time E2EE setup (a
+    // freshly-linked web session, or a native install that joined this
+    // thread after e2ee was already turned on by someone else) has no
+    // button for this — WhatsApp Web doesn't make a newly-linked device
+    // ask the user to "enable encryption" either, it just silently
+    // registers itself the first time it needs to participate.
+    // ensureDeviceRegistered() is idempotent, so this is always safe to
+    // call speculatively rather than only from the explicit menu action.
+    await ensureDeviceRegistered();
+    signedPrekey = await getSignedPrekey();
+  }
   if (!signedPrekey) {
     throw new Error('encryptForThread: this device has not completed E2EE setup yet.');
   }
@@ -303,7 +316,16 @@ export async function decryptEnvelope(
    * genuinely couldn't read the message. */
   const bootstrapFromEnvelope = async (): Promise<RatchetState> => {
     const identity = await getOrCreateIdentity();
-    const signedPrekey = await getSignedPrekey();
+    let signedPrekey = await getSignedPrekey();
+    if (!signedPrekey) {
+      // Same auto-registration as encryptForThread above — a device
+      // can also reach here with local storage wiped (reinstall, a
+      // browser clearing site data) while still listed server-side as
+      // active; re-registering replaces its published bundle so new
+      // envelopes keep targeting a key this device actually holds.
+      await ensureDeviceRegistered();
+      signedPrekey = await getSignedPrekey();
+    }
     if (!signedPrekey) {
       throw new Error('decryptEnvelope: this device has not completed E2EE setup yet.');
     }

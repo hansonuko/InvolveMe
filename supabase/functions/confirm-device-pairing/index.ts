@@ -13,6 +13,7 @@
 import { z } from 'npm:zod@^3.23';
 import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shared/auth.ts';
 import { parseBody, requiredUuid } from '../_shared/validate.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 const ConfirmPairingRequestSchema = z.object({
   pairing_id: requiredUuid('pairing_id'),
@@ -51,7 +52,7 @@ function mapConfirmPairingError(pgMessage: string): Response {
   return errorResponse(500, 'internal_error', 'Something went wrong.');
 }
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -86,4 +87,15 @@ Deno.serve(async (req) => {
   if (error) return mapConfirmPairingError(error.message);
 
   return json(200, { linked_device_id: linkedDeviceId });
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });

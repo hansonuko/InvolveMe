@@ -29,7 +29,7 @@ export default function NotificationsSettingsScreen() {
     } else if (enabled && result === 'error') {
       showAlert(
         "Couldn't turn on notifications",
-        'Something went wrong reaching the notification service — check your connection and try again.',
+        'Something went wrong reaching the notification service. Check your connection and try again.',
       );
     }
   };

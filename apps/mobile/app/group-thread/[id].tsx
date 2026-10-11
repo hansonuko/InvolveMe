@@ -277,7 +277,7 @@ function GroupInfoScreen({
     if (isOwner) {
       showAlert(
         "You can't leave yet",
-        "As the group owner, you can't leave a group yet — ownership transfer isn't built.",
+        "As the group owner, you can't leave a group yet. Ownership transfer isn't built.",
       );
       return;
     }
@@ -693,7 +693,7 @@ export default function GroupThreadScreen() {
         <KeyboardAvoidingScreen>
           <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
             <Text variant="caption" color="secondary">
-              Free to send — group messaging doesn&apos;t cost credits yet.
+              Free to send: group messaging doesn&apos;t cost credits yet.
             </Text>
           </View>
 

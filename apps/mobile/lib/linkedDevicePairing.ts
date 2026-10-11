@@ -1,5 +1,3 @@
-import * as Linking from 'expo-linking';
-
 import { callPublicEdgeFunction } from '@/lib/edgeFunctions';
 
 /**
@@ -48,22 +46,25 @@ export function buildDevicePairingDeepLink(pairingId: string): string {
  * app's own pairing link (a QR code pointing somewhere else entirely, or
  * garbage), so the scanner screen can show "not a valid InvolveMe code"
  * instead of crashing on a malformed URL.
+ *
+ * Deliberately NOT `expo-linking`'s `Linking.parse()`/a raw `new URL(...)`
+ * — confirmed live (session 45 continued) that both resolve to React
+ * Native's own bundled `URL` polyfill (`Libraries/Blob/URL.js`), whose
+ * `hostname` getter is `^https?:\/\/...` only — it silently returns `''`
+ * for any non-http(s) scheme, including this app's own `involveme://`.
+ * That made every real scan a no-op: the QR decoded fine, but this
+ * function always returned `null`, so the scanner screen just kept
+ * scanning with no error and no connection ever happened. A plain regex
+ * match on the known literal format `buildDevicePairingDeepLink` above
+ * produces has no such dependency. `URLSearchParams` (used for the query
+ * string only, never `.hostname`) is unaffected by this bug and stays
+ * reliable on both platforms.
  */
 export function parseDevicePairingDeepLink(scanned: string): string | null {
-  // expo-linking, not a raw `new URL(...)` parse — this file is shared
-  // between the web pairing screen and the native scanner, and `URL` has
-  // no guaranteed-polyfilled behavior on native RN the way it does in a
-  // browser; `Linking.parse` is the one deep-link parser this app already
-  // trusts on both platforms (expo-router itself depends on it).
-  let parsed: Linking.ParsedURL;
-  try {
-    parsed = Linking.parse(scanned);
-  } catch {
-    return null;
-  }
-  if (parsed.hostname !== 'link-device') return null;
-  const pid = parsed.queryParams?.pid;
-  return typeof pid === 'string' && pid.length > 0 ? pid : null;
+  const match = /^involveme:\/\/link-device\?(.*)$/.exec(scanned);
+  if (!match) return null;
+  const pid = new URLSearchParams(match[1]).get('pid');
+  return pid && pid.length > 0 ? pid : null;
 }
 
 /**

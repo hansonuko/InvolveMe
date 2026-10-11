@@ -6,7 +6,7 @@ import * as Notifications from 'expo-notifications';
 import { type Href, Stack, useRouter, useSegments, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ChatsScreen } from '@/app/(tabs)/chats';
@@ -17,12 +17,16 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { InstallPwaPrompt } from '@/components/InstallPwaPrompt';
 import { LinkedDeviceBanner } from '@/components/LinkedDeviceBanner';
 import { OfflineBanner } from '@/components/OfflineBanner';
+import { PendingTopupBanner } from '@/components/PendingTopupBanner';
+import { StandaloneRequiredScreen } from '@/components/StandaloneRequiredScreen';
 import { useAppLock } from '@/lib/appLock';
 import { registerDeviceFingerprint } from '@/lib/deviceFingerprint';
+import { usePwaInstallPrompt } from '@/lib/hooks/usePwaInstallPrompt';
 import { useSession } from '@/lib/hooks/useSession';
 import { useIsWideWeb } from '@/lib/hooks/useIsWideWeb';
 import { useLastSeenHeartbeat } from '@/lib/lastSeen';
 import { useOnboardingStatusStore } from '@/lib/onboardingStore';
+import { usePendingTopupStore } from '@/lib/pendingTopupStore';
 import { useOutboxDrain } from '@/lib/outboxDrain';
 import { checkForOtaUpdateOnLaunch } from '@/lib/otaUpdates';
 import {
@@ -31,6 +35,7 @@ import {
   syncPushTokenOnLaunch,
 } from '@/lib/push';
 import { useTwoStepGateStore } from '@/lib/twoStepGateStore';
+import { isFullPwaHost, isMobileWeb } from '@/lib/webAppMode';
 import { ThemeProvider, useTheme } from '@/theme';
 
 /** Themed wrapper for the sidebar's own border — a plain function
@@ -66,7 +71,16 @@ const asyncStoragePersister = createAsyncStoragePersister({
 const persistOptions = {
   persister: asyncStoragePersister,
   maxAge: 24 * 60 * 60 * 1000,
-  buster: 'v1',
+  // Bumped v1 -> v2 (session 45 continued): useSavedContactNames used to
+  // return a `Map`, which JSON-serializes to `{}` through this exact
+  // persister — any device that had already run that query has a
+  // corrupted `{}` sitting in its persisted cache right now. The query
+  // itself is fixed to never return a Map anymore, but that alone doesn't
+  // retroactively un-corrupt already-persisted data; this bump discards
+  // it outright instead of racing the live refetch that would otherwise
+  // briefly hand a real `.map is not a function` crash to anything reading
+  // it before that refetch resolves.
+  buster: 'v2',
 };
 
 /** Mounted once, inside the query client's own provider tree, so
@@ -153,9 +167,24 @@ export default function RootLayout() {
   const twoStepPinVerified = useTwoStepGateStore((s) => s.pinVerified);
   const checkTwoStepPinStatus = useTwoStepGateStore((s) => s.checkPinStatus);
   const resetTwoStepGate = useTwoStepGateStore((s) => s.reset);
+  const clearPendingTopup = usePendingTopupStore((s) => s.clearPendingTopup);
   useAuthGate(isLoading, !!session, needsOnboarding, twoStepPinVerified);
   useLastSeenHeartbeat(session?.user.id);
   const { locked, retry } = useAppLock(!!session);
+
+  // app.involvemechat.com (docs/22-FULL-PWA-SCOPING.md's revived standalone
+  // app, see lib/webAppMode.ts) is built for completely new users with no
+  // other path to InvolveMe at all (iOS, any device without store access)
+  // — mobile visitors get the full app directly in the browser, same as
+  // the native app, no install requirement; that's the entire point of
+  // offering it. Desktop is the one case gated behind installing first
+  // (explicit product requirement) — checked here at the root, not just
+  // inside app/(auth)/index.tsx's login screen, so a desktop tab that
+  // already holds a valid session (e.g. the same browser profile reopened
+  // as a plain tab after installing once) can't skip the gate either.
+  const { isAlreadyInstalled } = usePwaInstallPrompt();
+  const needsPwaInstall =
+    Platform.OS === 'web' && isFullPwaHost() && !isMobileWeb() && !isAlreadyInstalled;
 
   // docs/12-LINKED-DEVICES-WEB-SCOPING.md Milestone 7 — the two-pane chat
   // layout's persistent sidebar. Mounted here (root level), not inside
@@ -212,6 +241,15 @@ export default function RootLayout() {
       resetTwoStepGate();
     }
   }, [session?.user.id, checkTwoStepPinStatus, resetTwoStepGate]);
+
+  // A pending top-up is a per-user bookmark (lib/pendingTopupStore.ts) —
+  // clearing it on sign-out keeps a different user signing in on the same
+  // device/browser from inheriting someone else's in-flight top-up,
+  // same "don't reuse the previous user's state" reasoning the two resets
+  // above already follow.
+  useEffect(() => {
+    if (!session?.user.id) clearPendingTopup();
+  }, [session?.user.id, clearPendingTopup]);
 
   // Runs on every launch/session-restore — prompts for notification
   // permission automatically the first time (WhatsApp's own behavior,
@@ -294,6 +332,7 @@ export default function RootLayout() {
           <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
             <OutboxDrainEffect userId={session?.user.id} />
             <OfflineBanner />
+            <PendingTopupBanner />
             <LinkedDeviceBanner />
             <InstallPwaPrompt />
             {/* Themed Alert.alert replacement (lib/ui/alert.ts) — mounted
@@ -325,14 +364,18 @@ export default function RootLayout() {
                   currently showing. */}
               {showChatsSidebar ? <ChatsSidebar /> : null}
               <View style={styles.flex}>
-                {/* Only the two route groups are registered here — thread/[id] and
-                    settings/index set their own header options inline via
-                    <Stack.Screen options={...} /> from within the screen itself,
-                    which avoids relying on exact nested-route name matching. */}
-                <Stack screenOptions={{ headerShown: false }}>
-                  <Stack.Screen name="(auth)" />
-                  <Stack.Screen name="(tabs)" />
-                </Stack>
+                {needsPwaInstall ? (
+                  <StandaloneRequiredScreen />
+                ) : (
+                  /* Only the two route groups are registered here — thread/[id] and
+                     settings/index set their own header options inline via
+                     <Stack.Screen options={...} /> from within the screen itself,
+                     which avoids relying on exact nested-route name matching. */
+                  <Stack screenOptions={{ headerShown: false }}>
+                    <Stack.Screen name="(auth)" />
+                    <Stack.Screen name="(tabs)" />
+                  </Stack>
+                )}
               </View>
               {locked ? (
                 // Never reached while `!session`, since useAppLock reports

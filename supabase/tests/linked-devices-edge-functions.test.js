@@ -233,15 +233,28 @@ async function main() {
       // CORS: the real browser-facing header this function must actually
       // send for involveme-web's own Origin, not assumed from source
       // alone (session 41's own prior Turnstile CORS miss is exactly the
-      // class of bug this check exists to catch).
+      // class of bug this check exists to catch). Checks both the real
+      // custom domain (live since 2026-10-09) and the .pages.dev origin
+      // the cors.ts allowlist keeps around alongside it.
       const corsRes = await fetch(`${FUNCTION_URL}/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://web.involvemechat.com' },
+        body: JSON.stringify({ pairing_id: pairingId }),
+      });
+      log(
+        "CORS header reflects web.involvemechat.com's real Origin",
+        corsRes.headers.get('access-control-allow-origin') === 'https://web.involvemechat.com',
+      );
+
+      const corsResLegacy = await fetch(`${FUNCTION_URL}/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: 'https://involveme-web.pages.dev' },
         body: JSON.stringify({ pairing_id: pairingId }),
       });
       log(
-        "CORS header reflects involveme-web's real Origin",
-        corsRes.headers.get('access-control-allow-origin') === 'https://involveme-web.pages.dev',
+        "CORS header still reflects involveme-web.pages.dev's Origin",
+        corsResLegacy.headers.get('access-control-allow-origin') ===
+          'https://involveme-web.pages.dev',
       );
     });
 

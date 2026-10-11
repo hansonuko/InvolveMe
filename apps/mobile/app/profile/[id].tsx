@@ -313,7 +313,7 @@ export default function ProfileScreen() {
   // drift apart on what name they show for the same person.
   const { resolveContactName } = usePhoneContactNames();
   const profileDisplayName = profile
-    ? resolveContactName({ display_name: profile.display_name, phone: profile.phone })
+    ? resolveContactName({ id, display_name: profile.display_name, phone: profile.phone })
     : undefined;
 
   // "Save to device" (punch-list item 1) — only offered when this phone
@@ -373,7 +373,7 @@ export default function ProfileScreen() {
       {
         onSuccess: () => {
           setReportOpen(false);
-          showAlert('Reported', 'Thanks — our team will review this.');
+          showAlert('Reported', 'Thanks, our team will review this.');
         },
       },
     );

@@ -28,6 +28,15 @@ interface MemberSearchListProps {
    * someone can't be picked twice. */
   excludeUserIds: Set<string>;
   onSelect: (user: MatchedContactUser) => void;
+  /** Opt-in only (web's contacts-fallback search is the one caller that
+   * passes this — see chats.tsx's `WebContactsSearch`): shows an "Invite
+   * to InvolveMe" row when a typed, complete-looking phone number resolves
+   * to no match, instead of just "No matches on InvolveMe yet." Omitted by
+   * every native call site (`NewChatModal`, the group add-members flow),
+   * which keep their existing behavior unchanged — inviting from inside
+   * "add members to an existing group" isn't a flow this app has today,
+   * and this component shouldn't grow one as a side effect of the web fix. */
+  onInviteNoMatch?: () => void;
 }
 
 /** WhatsApp-standard "search-as-you-type" member picker (punch-list item 1,
@@ -52,7 +61,12 @@ interface MemberSearchListProps {
  * it resets every piece of state (including the cached device-contacts
  * read) correctly by construction rather than needing its own
  * synchronize-to-a-prop effect. */
-export function MemberSearchList({ visible, excludeUserIds, onSelect }: MemberSearchListProps) {
+export function MemberSearchList({
+  visible,
+  excludeUserIds,
+  onSelect,
+  onInviteNoMatch,
+}: MemberSearchListProps) {
   const { colors, spacing, radius } = useTheme();
   const { status, error, sync } = useDeviceContacts();
   const findUsers = useFindUsersByPhones();
@@ -204,7 +218,7 @@ export function MemberSearchList({ visible, excludeUserIds, onSelect }: MemberSe
                 color="tertiary"
                 style={{ textAlign: 'center', marginTop: spacing.sm, marginBottom: spacing.md }}
               >
-                Contacts access is off — you can still add someone by their phone number.
+                Contacts access is off. You can still add someone by their phone number.
               </Text>
               <Button label="Open settings" onPress={() => void Linking.openSettings()} />
             </>
@@ -237,9 +251,16 @@ export function MemberSearchList({ visible, excludeUserIds, onSelect }: MemberSe
         </View>
       ) : visibleResults.length === 0 && !showPhoneMatch ? (
         <View style={searchStyles.empty}>
-          <Text variant="body" color="tertiary" style={{ textAlign: 'center' }}>
+          <Text
+            variant="body"
+            color="tertiary"
+            style={{ textAlign: 'center', marginBottom: onInviteNoMatch ? spacing.md : 0 }}
+          >
             No matches on InvolveMe yet.
           </Text>
+          {onInviteNoMatch && search.replace(/\D/g, '').length >= SEARCH_MIN_PHONE_DIGITS ? (
+            <Button label="Invite to InvolveMe" onPress={onInviteNoMatch} />
+          ) : null}
         </View>
       ) : (
         <FlatList

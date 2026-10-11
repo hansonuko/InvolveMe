@@ -33,6 +33,7 @@ import { AuthError, requireAuthenticatedUser, serviceRoleClient } from '../_shar
 import { loadKycHashPepper, loadPremblyConfig } from '../_shared/kyc-config.ts';
 import { parseBody } from '../_shared/validate.ts';
 import { createPremblyProvider } from '../../../packages/kyc/prembly.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 const TYPE_MSG = 'type must be "bvn" or "nin".';
 const NUMBER_MSG = 'number must be exactly 11 digits.';
@@ -62,7 +63,7 @@ async function hashWithPepper(value: string, pepper: string): Promise<string> {
     .join('');
 }
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -170,4 +171,15 @@ Deno.serve(async (req) => {
   }
 
   return json(200, { verified: true, tier: 1 });
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });

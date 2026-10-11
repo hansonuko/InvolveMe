@@ -1,11 +1,11 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createBrowserSupabaseClient } from '@/lib/supabase-browser';
 import { Turnstile } from '@/components/Turnstile';
 import { Modal } from '@/components/Modal';
-import { isPrelaunch, PRELAUNCH_SIGNUP_MESSAGE } from '@/lib/prelaunch';
+import { isPrelaunch, LAUNCH_DATE_LABEL, PRELAUNCH_SIGNUP_MESSAGE } from '@/lib/prelaunch';
 
 const E164_PATTERN = /^\+[1-9]\d{6,14}$/;
 
@@ -27,6 +27,18 @@ export function SignupForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prelaunchGateMessage, setPrelaunchGateMessage] = useState<string | null>(null);
+  // Starts false on both server and client so hydration always matches
+  // (same "mounted" gate ThemeToggle/CountdownTimer already use); corrected
+  // client-side a tick after mount so this static-exported page never
+  // bakes in a stale "signup opens on {date}" notice once that date has
+  // actually passed.
+  const [showPrelaunchNotice, setShowPrelaunchNotice] = useState(false);
+
+  useEffect(() => {
+    // Deferred one microtask out, not called directly in the effect body —
+    // same react-hooks/set-state-in-effect pattern PrelaunchPopup uses.
+    if (isPrelaunch()) queueMicrotask(() => setShowPrelaunchNotice(true));
+  }, []);
 
   async function handleSendCode(e: React.FormEvent) {
     e.preventDefault();
@@ -171,6 +183,11 @@ export function SignupForm() {
   return (
     <>
       {gateModal}
+      {showPrelaunchNotice ? (
+        <p className="mx-auto mb-3 max-w-sm text-caption text-muted">
+          Signup opens for our soft launch on {LAUNCH_DATE_LABEL}.
+        </p>
+      ) : null}
       <form onSubmit={handleSendCode} className="mx-auto flex max-w-sm flex-col gap-3">
         <input
           type="tel"

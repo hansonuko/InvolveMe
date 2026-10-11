@@ -16,6 +16,7 @@ import { E2eeEnvelopesArraySchema } from '../_shared/e2eeEnvelope.ts';
 import { loadOpenAiModerationConfig } from '../_shared/moderation-config.ts';
 import { parseBody } from '../_shared/validate.ts';
 import { createOpenAiModerationProvider } from '../../../packages/moderation/openai.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 interface EditMessageRequestBody {
   message_id?: string;
@@ -110,7 +111,7 @@ function mapEditMessageError(pgMessage: string): Response {
   return errorResponse(500, 'internal_error', 'Something went wrong.');
 }
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -241,4 +242,15 @@ Deno.serve(async (req) => {
     credits_charged: data.credits_charged,
     edited_at: data.edited_at,
   });
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });

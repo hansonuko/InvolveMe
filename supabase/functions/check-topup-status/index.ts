@@ -31,6 +31,7 @@ import { loadFlutterwaveConfig } from '../_shared/flutterwave-config.ts';
 import { notifyTopupConfirmed, runInBackground } from '../_shared/push.ts';
 import { parseBody, requiredString } from '../_shared/validate.ts';
 import { createFlutterwaveProvider } from '../../../packages/payments/flutterwave.ts';
+import { corsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -47,7 +48,7 @@ const CheckTopupStatusRequestSchema = z.object({
   topup_id: requiredString('topup_id'),
 });
 
-Deno.serve(async (req) => {
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return errorResponse(405, 'method_not_allowed', 'Use POST.');
   }
@@ -133,4 +134,15 @@ Deno.serve(async (req) => {
     // poll loop — it just tries again on the next tick.
     return json(200, { status: 'pending' });
   }
+}
+
+Deno.serve(async (req) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+  const res = await handleRequest(req);
+  const extra = corsHeaders(req);
+  if (Object.keys(extra).length === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 });

@@ -113,7 +113,7 @@ function WithdrawModal({
           ) : null}
           {withdraw.data ? (
             <Text variant="bodyMedium" color="success">
-              Withdrawal started — status: {withdraw.data.status}.
+              Withdrawal started. Status: {withdraw.data.status}.
             </Text>
           ) : (
             <Button
@@ -778,7 +778,7 @@ export default function WalletScreen() {
         {!bankAccount ? (
           <View style={{ marginTop: spacing.sm, gap: spacing.sm }}>
             <Text variant="caption" color="secondary">
-              No verified bank account linked yet — withdrawals are not available until that is set
+              No verified bank account linked yet. Withdrawals are not available until that is set
               up.
             </Text>
             {(kycTier ?? 0) >= 1 ? (

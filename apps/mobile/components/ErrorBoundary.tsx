@@ -99,8 +99,8 @@ function CrashFallback({ error }: { error: Error }) {
           Something went wrong
         </Text>
         <Text variant="body" color="secondary" style={{ textAlign: 'center' }}>
-          InvolveMe hit an unexpected error and needs to reload. Nothing you were doing caused this
-          — it&apos;s been logged so it can be fixed.
+          InvolveMe hit an unexpected error and needs to reload. Nothing you were doing caused this,
+          and it&apos;s been logged so it can be fixed.
         </Text>
         <Button
           label="Reload"

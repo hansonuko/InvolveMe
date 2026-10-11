@@ -45,7 +45,7 @@ export async function callEdgeFunction<TResponse>(
   // has already reported true, so there's no risk of the queued send being
   // silently blocked by its own trigger condition.
   if (!getIsOnline()) {
-    throw new EdgeFunctionError('offline', "You're offline — try again once you're connected.", 0);
+    throw new EdgeFunctionError('offline', "You're offline. Try again once you're connected.", 0);
   }
 
   const {
@@ -92,7 +92,7 @@ export async function callPublicEdgeFunction<TResponse>(
   body?: Record<string, unknown>,
 ): Promise<TResponse> {
   if (!getIsOnline()) {
-    throw new EdgeFunctionError('offline', "You're offline — try again once you're connected.", 0);
+    throw new EdgeFunctionError('offline', "You're offline. Try again once you're connected.", 0);
   }
 
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;

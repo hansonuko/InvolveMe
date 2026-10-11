@@ -167,7 +167,7 @@ function ReportUserModal({
       { reporterId, reportedUserId: found.id, reason, details: details.trim() || undefined },
       {
         onSuccess: () =>
-          showAlert('Reported', 'Thanks — our team will review this.', [
+          showAlert('Reported', 'Thanks, our team will review this.', [
             { text: 'OK', onPress: handleClose },
           ]),
       },

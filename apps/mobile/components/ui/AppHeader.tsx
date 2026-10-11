@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState, type ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Image, Modal, Pressable, StyleSheet, View } from 'react-native';
 
 import { useTheme } from '@/theme';
 import { Text } from './Text';
@@ -21,6 +21,11 @@ interface AppHeaderProps {
    * button) — for anything frequent enough that burying it in the overflow
    * menu would slow people down. */
   rightSlot?: ReactNode;
+  /** Shows the app icon mark next to the title — opt-in (default off) so
+   * the existing native tab headers (Chats included) are untouched; only
+   * involveme-web's own header uses this today, where a text-only wordmark
+   * read as less branded than a real, standalone web landing needs. */
+  logo?: boolean;
   /** Rare/secondary actions (Settings, etc.) behind a three-dot overflow —
    * only rendered when non-empty, so screens with nothing to put there
    * don't grow an empty button. */
@@ -63,10 +68,11 @@ interface AppHeaderProps {
 // unrelated, unrequested side effect.
 const HEADER_HEIGHT_TRIM = 6;
 
-export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps) {
+export function AppHeader({ title, brand, rightSlot, logo, menuItems }: AppHeaderProps) {
   const { colors, spacing, radius, layout } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const barHeight = layout.barHeight - HEADER_HEIGHT_TRIM;
+  const logoSize = layout.headerIconSize + 10;
 
   return (
     <View
@@ -82,14 +88,23 @@ export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps
       ]}
     >
       <View style={styles.content}>
-        {/* color="secondary" (not "brand") even for the wordmark — brandPrimary
-            is theme-invariant wine now (see tokens.ts), which would be
-            near-invisible against a dark canvas in dark mode. textSecondary
-            is the theme-adaptive accent role that's actually meant for
-            on-canvas content. */}
-        <Text variant={brand ? 'brand' : 'display'} color={brand ? 'secondary' : 'primary'}>
-          {title}
-        </Text>
+        <View style={[styles.titleRow, { gap: spacing.sm }]}>
+          {logo ? (
+            <Image
+              source={require('@/assets/images/icon.png')}
+              style={{ width: logoSize, height: logoSize, borderRadius: radius.card / 2 }}
+              accessibilityIgnoresInvertColors
+            />
+          ) : null}
+          {/* color="secondary" (not "brand") even for the wordmark — brandPrimary
+              is theme-invariant wine now (see tokens.ts), which would be
+              near-invisible against a dark canvas in dark mode. textSecondary
+              is the theme-adaptive accent role that's actually meant for
+              on-canvas content. */}
+          <Text variant={brand ? 'brand' : 'display'} color={brand ? 'secondary' : 'primary'}>
+            {title}
+          </Text>
+        </View>
 
         {/* Bigger gap than before — the icons themselves are bigger now too,
             so the old 24dp read as cramped next to them. */}
@@ -161,6 +176,7 @@ export function AppHeader({ title, brand, rightSlot, menuItems }: AppHeaderProps
 const styles = StyleSheet.create({
   row: { flexDirection: 'column' },
   content: { flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  titleRow: { flexDirection: 'row', alignItems: 'center' },
   actions: { flexDirection: 'row', alignItems: 'center' },
   backdrop: { flex: 1 },
   menu: { position: 'absolute', borderWidth: 1, minWidth: 160, overflow: 'hidden' },

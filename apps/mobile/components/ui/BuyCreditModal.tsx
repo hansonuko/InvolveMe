@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
+import { usePendingTopupStore } from '@/lib/pendingTopupStore';
 import { useTopupStatus, useBuyCredit } from '@/lib/queries/wallet';
 import { useTheme } from '@/theme';
 
@@ -22,8 +23,8 @@ function TopupCongrats({ onContinue }: { onContinue: () => void }) {
         Congratulations!
       </Text>
       <Text variant="body" color="secondary" style={{ textAlign: 'center' }}>
-        Your credit has landed — you can now start chatting with your loved ones, engage with
-        groups, and also earn from it.
+        Your credit has landed. You can now start chatting with your loved ones, engage with groups,
+        and also earn from it.
       </Text>
       <Button label="Go to wallet" onPress={onContinue} style={{ marginTop: spacing.lg }} />
     </View>
@@ -39,8 +40,26 @@ export function BuyCreditModal({ visible, onClose }: { visible: boolean; onClose
   const buyCredit = useBuyCredit();
   const { data: topupStatus } = useTopupStatus(buyCredit.data?.topup_id);
   const [amountNaira, setAmountNaira] = useState('1000');
+  const setPendingTopup = usePendingTopupStore((s) => s.setPendingTopup);
+  const clearPendingTopup = usePendingTopupStore((s) => s.clearPendingTopup);
+
+  // Durable bookmark for PendingTopupBanner (app/_layout.tsx) — see
+  // lib/pendingTopupStore.ts's own header comment for why this can't just
+  // live in `buyCredit.data` the way everything else here does: a reload
+  // while this modal is backgrounded (a real mobile-browser behavior, not
+  // a bug) wipes that in-memory mutation result completely, and nothing
+  // else records that a top-up was ever started.
+  useEffect(() => {
+    if (buyCredit.data) {
+      setPendingTopup(buyCredit.data.topup_id, buyCredit.data.amount_kobo_paid);
+    }
+  }, [buyCredit.data, setPendingTopup]);
 
   const handleClose = () => {
+    // Only clear the durable bookmark once this topup has actually
+    // resolved — closing while still 'pending' must leave it in place so
+    // PendingTopupBanner keeps tracking it even with this modal shut.
+    if (topupStatus && topupStatus !== 'pending') clearPendingTopup();
     buyCredit.reset();
     onClose();
   };
@@ -128,8 +147,8 @@ export function BuyCreditModal({ visible, onClose }: { visible: boolean; onClose
               Tap and hold the account number to copy it.
             </Text>
             <Text variant="caption" color="secondary">
-              Credits land automatically once the transfer is confirmed — this screen updates
-              itself, no need to back out and check.
+              Credits land automatically once the transfer is confirmed. This screen updates itself,
+              no need to back out and check.
             </Text>
           </View>
         )}

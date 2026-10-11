@@ -199,6 +199,11 @@ export const typography = {
   // heavier/larger than `display`, per docs/04-DESIGN-SYSTEM.md §2: the app
   // name should read as a wordmark, not just another screen title.
   brand: { fontSize: 30, fontWeight: '800' as const, letterSpacing: 0.2 },
+  // A single big, bold marketing-style headline — involveme-web's own
+  // landing hero ("big and generous" per the explicit ask), not used by any
+  // in-app screen. Bigger/heavier than `brand` on purpose: this is the one
+  // place this app reads as a pitch rather than a product surface.
+  hero: { fontSize: 44, fontWeight: '800' as const, letterSpacing: -0.5, lineHeight: 50 },
   display: { fontSize: 28, fontWeight: '700' as const },
   // Screen headers, thread name, a profile's own display name — bumped
   // 20/600 -> 22/700, matching WhatsApp's bolder, larger contact-name

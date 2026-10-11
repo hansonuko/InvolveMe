@@ -68,7 +68,7 @@ import {
   shouldShowE2eeNotice,
   markE2eeNoticeShown,
 } from '@/lib/e2ee/safetyNumberStore';
-import { nativeSodiumProvider as sodium } from '@/lib/e2ee/sodiumProviderNative';
+import { platformSodiumProvider as sodium } from '@/lib/e2ee/sodiumProviderPlatform';
 import { ONLINE_THRESHOLD_MS } from '@/lib/lastSeen';
 import { useIsOnline } from '@/lib/network';
 import { type OutboxItem, useOutboxStore } from '@/lib/outboxStore';
@@ -315,6 +315,26 @@ function formatMessageTime(iso: string) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+/** Translates `encryptForThread`/`decryptEnvelope`'s own internal error
+ * strings (session.ts) into copy a user can act on, for the rare cases
+ * that still reach them now that device setup auto-registers itself —
+ * a dropped connection mid-registration, or a recipient who has never
+ * opened the app on any device yet. Anything else (wallet/content
+ * failures from the server, already user-facing by design) passes
+ * through unchanged. */
+function friendlySendErrorMessage(message: string): string {
+  if (message.includes('this device has not completed E2EE setup')) {
+    return "Couldn't finish setting up secure messaging on this device. Check your connection and try sending again.";
+  }
+  if (
+    message.includes('recipient has no active E2EE device') ||
+    message.includes('no recipient device could be reached')
+  ) {
+    return "This contact hasn't set up secure messaging yet. Try again once they've opened InvolveMe.";
+  }
+  return message;
+}
+
 const REPORT_REASONS = [
   'Spam or scam',
   'Harassment or abuse',
@@ -394,7 +414,7 @@ function ThreadOverflowMenu({
     } catch (e) {
       const message =
         e instanceof EdgeFunctionError && e.code === 'partner_not_ready'
-          ? "The other person hasn't set up encryption on their device yet — this will work once they have."
+          ? "The other person hasn't set up encryption on their device yet. This will work once they have."
           : e instanceof Error
             ? e.message
             : 'Something went wrong.';
@@ -464,7 +484,7 @@ function ThreadOverflowMenu({
     onClose();
     showAlert(
       'Reset encryption session?',
-      'Use this if messages in this chat show "Message unavailable" and won\'t decrypt. This clears your device\'s saved encryption keys for this contact — the next message either of you sends starts a fresh, secure session. If it still happens afterward, ask the other person to do the same on their device.',
+      'Use this if messages in this chat show "Message unavailable" and won\'t decrypt. This clears your device\'s saved encryption keys for this contact. The next message either of you sends starts a fresh, secure session. If it still happens afterward, ask the other person to do the same on their device.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -526,7 +546,7 @@ function ThreadOverflowMenu({
         onSuccess: () => {
           setReportOpen(false);
           setReason(null);
-          showAlert('Reported', 'Thanks — our team will review this.');
+          showAlert('Reported', 'Thanks, our team will review this.');
         },
       },
     );
@@ -1034,7 +1054,7 @@ function PendingMessageBubble({ body }: { body: string }) {
       >
         <Text variant="body">{body}</Text>
         <Text variant="caption" color="secondary" style={{ marginTop: spacing.xs }}>
-          Pending — will send once you buy credit
+          Pending: will send once you buy credit
         </Text>
       </View>
     </View>
@@ -1313,6 +1333,7 @@ export default function ThreadScreen() {
   const { resolveContactName } = usePhoneContactNames();
   const partnerDisplayName = headerInfo
     ? resolveContactName({
+        id: headerInfo.partnerId,
         display_name: headerInfo.partnerName,
         phone: headerInfo.partnerPhone,
       })
@@ -1582,6 +1603,7 @@ export default function ThreadScreen() {
             });
           } else {
             setPendingSend(null); // a different failure — don't keep silently retrying
+            showAlert('Could not send', friendlySendErrorMessage(error.message));
           }
         },
       },
@@ -1630,7 +1652,7 @@ export default function ThreadScreen() {
             // failure (edit_would_increase_cost, message_not_editable,
             // edit_window_expired, content_blocked) is best surfaced
             // directly rather than silently retried.
-            showAlert('Could not save edit', error.message);
+            showAlert('Could not save edit', friendlySendErrorMessage(error.message));
           },
         },
       );
@@ -1666,10 +1688,11 @@ export default function ThreadScreen() {
       return;
     }
 
+    const isE2eeActive = headerInfo?.e2eeStatus === 'active';
+
     let mediaPath: string | undefined;
     let mediaType: string | undefined;
     let mediaKey: MediaKeyMaterial | undefined;
-    const isE2eeActive = headerInfo?.e2eeStatus === 'active';
     if (hasPickedMedia) {
       setIsUploadingMedia(true);
       try {
@@ -1766,6 +1789,7 @@ export default function ThreadScreen() {
           // acceptable, self-limiting cost (this app's own status pipeline
           // accepts the same class of orphan on delete failures), not
           // worth a cleanup call on an already-failing path.
+          showAlert('Could not send', friendlySendErrorMessage(error.message));
         },
       },
     );
@@ -1788,7 +1812,6 @@ export default function ThreadScreen() {
       showAlert('No connection', "Voice messages can't be sent while offline yet.");
       return;
     }
-
     setIsUploadingMedia(true);
     // Named per-stage, not just wrapped in one big try — a prior failure
     // here surfaced only "undefined is not a function" with no way to tell
@@ -1843,14 +1866,17 @@ export default function ThreadScreen() {
       const fallbackDetail =
         e && typeof e === 'object' && 'message' in e && typeof e.message === 'string'
           ? e.message
-          : `${typeof e} — ${JSON.stringify(e)}`;
+          : `${typeof e}: ${JSON.stringify(e)}`;
       const message =
         e instanceof EdgeFunctionError
           ? e.message
           : e instanceof Error
             ? e.message
             : `Unrecognized error shape: ${fallbackDetail}`;
-      showAlert('Could not send voice message', `While ${stage}: ${message}`);
+      showAlert(
+        'Could not send voice message',
+        `While ${stage}: ${friendlySendErrorMessage(message)}`,
+      );
     } finally {
       setIsUploadingMedia(false);
     }
@@ -2043,7 +2069,7 @@ export default function ThreadScreen() {
     if (failures > 0) {
       showAlert(
         'Some messages could not be deleted',
-        `${failures} of ${ids.length} failed — they may be outside the delete window or already removed.`,
+        `${failures} of ${ids.length} failed. They may be outside the delete window or already removed.`,
       );
     }
   };
@@ -2462,7 +2488,7 @@ export default function ThreadScreen() {
               style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.sm }}
             >
               <Text variant="caption" color="secondary">
-                Buy chat credit to start your conversation — your message will send automatically
+                Buy chat credit to start your conversation. Your message will send automatically
                 once it lands.
               </Text>
               <Button label="Buy credit" onPress={() => setBuyCreditVisible(true)} />
@@ -2470,7 +2496,7 @@ export default function ThreadScreen() {
           ) : sendMessage.isError ? (
             <View style={{ paddingHorizontal: spacing.lg }}>
               <Text variant="caption" color="danger">
-                {sendMessage.error.message}
+                {friendlySendErrorMessage(sendMessage.error.message)}
               </Text>
             </View>
           ) : null}

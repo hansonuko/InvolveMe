@@ -5,7 +5,7 @@ import { Card, Eyebrow, Section } from '@/components/Section';
 const STEPS = [
   {
     title: 'Top up Chat Credits',
-    body: 'Add Chat Credits to your balance any time, starting from just ₦100 and up — no subscription, no fixed plan.',
+    body: 'Add Chat Credits to your balance any time, starting from just ₦100 and up. No subscription, no fixed plan.',
   },
   {
     title: 'Spend them to message someone',
@@ -13,7 +13,7 @@ const STEPS = [
   },
   {
     title: 'They earn the moment they reply',
-    body: "Your credits are held safely until the other person replies, then released straight to their earnings. No reply, no charge — it's refunded to you automatically.",
+    body: "Your credits are held safely until the other person replies, then released straight to their earnings. No reply, no charge: it's refunded to you automatically.",
   },
 ];
 
@@ -27,7 +27,7 @@ export function ChatCreditsContent() {
             Get someone&apos;s time on chat, starting from ₦100
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-body text-muted">
-            Chat Credits are how you message someone on InvolveMe — a simple top-up, not a
+            Chat Credits are how you message someone on InvolveMe: a simple top-up, not a
             subscription. Buy as little or as much as you need, whenever you need it.
           </p>
         </AnimatedSection>
