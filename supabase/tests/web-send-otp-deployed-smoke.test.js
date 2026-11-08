@@ -44,11 +44,12 @@ async function main() {
       Origin: 'https://involvemechat.com',
     },
     // Unique per run for the same reason as web-send-otp-function.test.js:
-    // this assertion needs the request to get PAST the per-phone rate
-    // limiter to reach the captcha check, so a number shared with any other
-    // run in the same 10-minute window turns a captcha assertion into a 429.
+    // this assertion needs the request to get PAST the per-email rate
+    // limiter to reach the captcha check, so an address shared with any
+    // other run in the same 10-minute window turns a captcha assertion
+    // into a 429.
     body: JSON.stringify({
-      phone: `+234${Math.floor(Math.random() * 9_000_000_000 + 1_000_000_000)}`,
+      email: `web-send-otp-smoke-${Math.floor(Math.random() * 1_000_000_000)}@example.com`,
       turnstileToken: 'irrelevant',
     }),
   });

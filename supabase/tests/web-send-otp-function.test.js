@@ -11,11 +11,13 @@
 //
 // The final "captcha passes" case intentionally does not assert a 200 —
 // once past the captcha gate this function proxies to Supabase's real
-// /auth/v1/otp, and this project's real SMS provider (Termii) isn't wired
-// up yet (docs/00-SESSION-HANDOFF.md), so GoTrue itself may legitimately
-// reject the send. What this test proves is narrower and still
-// meaningful: a valid captcha genuinely reaches the GoTrue proxy step
-// (response is not one of this function's own captcha-stage errors).
+// /auth/v1/otp. GoTrue's email OTP generally does work out of the box
+// (unlike phone/SMS, which this project deliberately moved away from —
+// 2026-11-08), but this test still doesn't assert a 200: a shared mailer
+// rate limit or a not-yet-live project setting could legitimately reject
+// it too. What this test proves is narrower and still meaningful: a valid
+// captcha genuinely reaches the GoTrue proxy step (response is not one of
+// this function's own captcha-stage errors).
 
 const { spawn } = require('node:child_process');
 const path = require('node:path');
@@ -36,18 +38,18 @@ for (const [name, val] of Object.entries({
 // Cloudflare's published, public test constants — not secrets.
 const TURNSTILE_TEST_SECRET_ALWAYS_PASSES = '1x0000000000000000000000000000000AA';
 const TURNSTILE_TEST_SECRET_ALWAYS_FAILS = '2x0000000000000000000000000000000AA';
-// Unique per run, not a fixed number. web-send-otp rate-limits per phone
-// (`web-send-otp:phone:<phone>`) at OTP_PER_PHONE_MAX = 3 per 10 minutes,
+// Unique per run, not a fixed address. web-send-otp rate-limits per email
+// (`web-send-otp:email:<email>`) at OTP_PER_EMAIL_MAX = 3 per 10 minutes,
 // and exactly 3 of the calls below get far enough to consume that budget
-// (the rate-limit check sits after phone/token parsing but before captcha
+// (the rate-limit check sits after email/token parsing but before captcha
 // verification, so only the calls that carry a token reach it). One run
 // therefore fills the bucket exactly — which was fine in isolation and
 // flaky the moment a second run started inside the same 10-minute window,
 // as a local run and CI overlapping would do: the later run 429s on its
 // third captcha assertion and reports a captcha failure that is really a
-// rate-limit collision. A fresh number per run gives each run its own
+// rate-limit collision. A fresh address per run gives each run its own
 // bucket and keeps the assertions about captcha behavior.
-const TEST_PHONE = `+234${Math.floor(Math.random() * 9_000_000_000 + 1_000_000_000)}`;
+const TEST_EMAIL = `web-send-otp-test-${Math.floor(Math.random() * 1_000_000_000)}@example.com`;
 
 const FUNCTION_URL = 'http://127.0.0.1:8000';
 const FUNCTION_ENTRY = path.join(__dirname, '..', 'functions', 'web-send-otp', 'index.ts');
@@ -98,21 +100,21 @@ async function main() {
   try {
     await waitForFunctionReady(15000);
 
-    const missingPhone = await call({ turnstileToken: 'anything' });
+    const missingEmail = await call({ turnstileToken: 'anything' });
     log(
-      'missing/invalid phone -> 400 invalid_phone',
-      missingPhone.status === 400 && missingPhone.json?.error === 'invalid_phone',
-      JSON.stringify(missingPhone),
+      'missing/invalid email -> 400 invalid_email',
+      missingEmail.status === 400 && missingEmail.json?.error === 'invalid_email',
+      JSON.stringify(missingEmail),
     );
 
-    const missingToken = await call({ phone: TEST_PHONE });
+    const missingToken = await call({ email: TEST_EMAIL });
     log(
       'missing turnstileToken -> 400 missing_captcha',
       missingToken.status === 400 && missingToken.json?.error === 'missing_captcha',
       JSON.stringify(missingToken),
     );
 
-    const noSecretConfigured = await call({ phone: TEST_PHONE, turnstileToken: 'whatever' });
+    const noSecretConfigured = await call({ email: TEST_EMAIL, turnstileToken: 'whatever' });
     log(
       'TURNSTILE_SECRET_KEY unset -> fails CLOSED (503 captcha_not_configured), not silently open',
       noSecretConfigured.status === 503 &&
@@ -128,7 +130,7 @@ async function main() {
   try {
     await waitForFunctionReady(15000);
 
-    const badToken = await call({ phone: TEST_PHONE, turnstileToken: 'bogus-token' });
+    const badToken = await call({ email: TEST_EMAIL, turnstileToken: 'bogus-token' });
     log(
       'invalid captcha token -> 400 captcha_failed',
       badToken.status === 400 && badToken.json?.error === 'captcha_failed',
@@ -143,7 +145,7 @@ async function main() {
   try {
     await waitForFunctionReady(15000);
 
-    const goodToken = await call({ phone: TEST_PHONE, turnstileToken: 'any-token-accepted' });
+    const goodToken = await call({ email: TEST_EMAIL, turnstileToken: 'any-token-accepted' });
     const captchaStageErrors = ['missing_captcha', 'captcha_failed', 'captcha_not_configured'];
     log(
       'valid captcha reaches the GoTrue proxy step (not rejected at the captcha stage)',

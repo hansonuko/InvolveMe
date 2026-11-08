@@ -1,25 +1,19 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
-import { CountdownTimer } from '@/components/CountdownTimer';
 import { Card, Eyebrow, Section } from '@/components/Section';
-import { LAUNCH_DATE_LABEL } from '@/lib/prelaunch';
 
 export const metadata: Metadata = {
   title: 'What to Expect from InvolveMe',
   description:
-    'What ships on InvolveMe’s soft launch, the three ways to use it, and what makes it different from every other chat app.',
+    'What InvolveMe ships today, the three ways to use it, and what makes it different from every other chat app.',
 };
 
-// Linked from the homepage's PrelaunchPopup (and from the equivalent
-// announcement modal on app.involvemechat.com / web.involvemechat.com —
-// apps/mobile/components/PrelaunchAnnouncementModal.tsx) — the landing spot
-// for "tell me more" rather than cramming all of this into the popup
-// itself. Every specific claim below (escrow, the ledger, KYC-gated
-// withdrawals, optional E2EE, groups/status/voice notes, multi-device) is a
-// real, already-shipped mechanism described elsewhere on this site
-// (how-it-works, security, download) — nothing here is a roadmap promise
-// dressed up as a launch-day fact.
+// Every specific claim below (escrow, the ledger, KYC-gated withdrawals,
+// optional E2EE, groups/status/voice notes, multi-device) is a real,
+// already-shipped mechanism described elsewhere on this site (how-it-works,
+// security, download) — nothing here is a roadmap promise dressed up as a
+// launch-day fact.
 const LAUNCH_FEATURES = [
   {
     title: 'Pay-per-message chat',
@@ -94,21 +88,17 @@ export default function WhatToExpectPage() {
             What to Expect from InvolveMe
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-body text-muted">
-            We soft-launch on <strong className="text-foreground">{LAUNCH_DATE_LABEL}</strong>.
-            Here’s exactly what ships, how to get in on day one, and why InvolveMe isn’t just
-            another messaging app.
+            Here’s exactly what ships, how to get started, and why InvolveMe isn’t just another
+            messaging app.
           </p>
-          <div className="mt-8">
-            <CountdownTimer />
-          </div>
         </AnimatedSection>
       </Section>
 
       <Section className="pt-6">
         <AnimatedSection>
-          <Eyebrow>On launch day</Eyebrow>
+          <Eyebrow>Available now</Eyebrow>
           <h2 className="mt-3 max-w-2xl text-title font-extrabold text-foreground md:text-display">
-            What ships, day one
+            What ships, today
           </h2>
         </AnimatedSection>
         <div className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -170,13 +160,13 @@ export default function WhatToExpectPage() {
 
       <Section className="rounded-sheet bg-surface-alt text-center">
         <AnimatedSection>
-          <Eyebrow>Be here on day one</Eyebrow>
+          <Eyebrow>Get started</Eyebrow>
           <h2 className="mx-auto mt-3 max-w-2xl text-display font-extrabold text-foreground">
-            Sign up the moment we open, {LAUNCH_DATE_LABEL}
+            Sign up today
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-body text-muted">
-            Signup opens the moment we go live. Be one of the first to confirm your number and
-            you’ll get 100 non-withdrawable chat credits to start with, on us.
+            Signup is open now. Confirm your email and you’ll get 100 non-withdrawable chat credits
+            to start with, on us.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link

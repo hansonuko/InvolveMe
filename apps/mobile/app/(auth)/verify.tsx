@@ -14,7 +14,7 @@ import { useTheme } from '@/theme';
 export default function VerifyOtpScreen() {
   const { colors, spacing, radius } = useTheme();
   const router = useRouter();
-  const pendingPhone = useAuthFlowStore((s) => s.pendingPhone);
+  const pendingEmail = useAuthFlowStore((s) => s.pendingEmail);
   const termsAccepted = useAuthFlowStore((s) => s.termsAccepted);
 
   const [code, setCode] = useState('');
@@ -22,7 +22,7 @@ export default function VerifyOtpScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const handleVerify = async () => {
-    if (!pendingPhone) {
+    if (!pendingEmail) {
       router.replace('/(auth)');
       return;
     }
@@ -30,9 +30,9 @@ export default function VerifyOtpScreen() {
     setError(null);
     setIsSubmitting(true);
     const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
-      phone: pendingPhone,
+      email: pendingEmail,
       token: code,
-      type: 'sms',
+      type: 'email',
     });
     setIsSubmitting(false);
 
@@ -64,7 +64,7 @@ export default function VerifyOtpScreen() {
       <View>
         <Text variant="title">Enter the code</Text>
         <Text variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
-          Sent to {pendingPhone ?? 'your phone'}
+          Sent to {pendingEmail ?? 'your email'}
         </Text>
       </View>
 

@@ -1,7 +1,5 @@
 import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
-import { CountdownTimer } from '@/components/CountdownTimer';
-import { PrelaunchPopup } from '@/components/PrelaunchPopup';
 import { Card, Eyebrow, Section } from '@/components/Section';
 import { WhoItsFor } from '@/components/WhoItsFor';
 
@@ -23,17 +21,11 @@ const VALUE_PROPS = [
 export default function HomePage() {
   return (
     <>
-      <PrelaunchPopup />
-
       <Section className="pb-8 pt-12 text-center">
         <AnimatedSection>
-          <Eyebrow>Soft launch: November 20, 2026</Eyebrow>
-          <div className="mt-6">
-            <CountdownTimer />
-          </div>
+          <Eyebrow>Now open</Eyebrow>
           <p className="mx-auto mt-6 max-w-md text-caption text-muted">
-            Sign up the moment we open and get 100 non-withdrawable chat credits to start with, on
-            us. See the{' '}
+            Sign up today and get 100 non-withdrawable chat credits to start with, on us. See the{' '}
             <Link href="/guide" className="font-semibold text-foreground-accent hover:underline">
               full guide
             </Link>{' '}

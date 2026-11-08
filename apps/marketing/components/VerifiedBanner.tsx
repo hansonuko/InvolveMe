@@ -18,7 +18,7 @@ export function VerifiedBanner() {
 
   return (
     <p className="mx-auto mb-6 inline-block rounded-pill bg-surface-alt px-5 py-2 text-caption font-semibold text-success">
-      ✓ Your number is confirmed
+      ✓ Your email is confirmed
     </p>
   );
 }

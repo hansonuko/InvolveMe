@@ -4,7 +4,7 @@ import { SignupForm } from '@/components/SignupForm';
 
 export const metadata: Metadata = {
   title: 'Sign up',
-  description: 'Confirm your phone number to get started with InvolveMe.',
+  description: 'Confirm your email to get started with InvolveMe.',
 };
 
 // A dedicated, unblended page (docs/15-MARKETING-SITE-PWA-SCOPING.md §4) —
@@ -18,8 +18,8 @@ export default function SignupPage() {
         Create your account
       </h1>
       <p className="mx-auto mt-4 max-w-md text-body text-muted">
-        Confirm your phone number to get started. Once verified, we&apos;ll take you to the download
-        page to finish setting up in the app.
+        Confirm your email to get started. Once verified, we&apos;ll take you to the download page
+        to finish setting up in the app.
       </p>
       <Card className="mx-auto mt-10 max-w-md">
         <SignupForm />

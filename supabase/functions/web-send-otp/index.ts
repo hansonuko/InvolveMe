@@ -1,8 +1,14 @@
 // POST /functions/v1/web-send-otp
 //
 // The marketing site's ONLY auth-adjacent endpoint (docs/15-MARKETING-SITE-
-// PWA-SCOPING.md §4) — sends a phone OTP for the homepage signup form,
+// PWA-SCOPING.md §4) — sends an email OTP for the homepage signup form,
 // after verifying a Cloudflare Turnstile token server-side.
+//
+// Email, not phone (2026-11-08): phone-number signup is deferred to a
+// future pass — SMS delivery isn't reliably wired up yet, while email OTP
+// works out of the box via GoTrue's own mailer. The prelaunch date gate
+// that used to sit here (waiting for November 20) is gone too — signup is
+// open now.
 //
 // Why this exists instead of the marketing site calling
 // `supabase.auth.signInWithOtp` directly the way apps/mobile does
@@ -18,12 +24,7 @@
 //
 // FAILS CLOSED: if TURNSTILE_SECRET_KEY isn't configured, this returns 503
 // rather than silently skipping the captcha check. Never treat a missing
-// secret as "captcha not required." A real secret has been set via
-// `supabase secrets set` since 2026-10-08 (verified live: a bogus token
-// now gets a real 400 captcha_failed from Cloudflare's siteverify, not the
-// 503 this branch used to return before a real Cloudflare account/widget
-// existed) — this fail-closed path is now a defensive fallback for a
-// future misconfiguration, not the normal state.
+// secret as "captcha not required."
 //
 // Uses only the anon key to call GoTrue — no service_role needed, this is
 // exactly what an anonymous browser client is already allowed to do.
@@ -43,35 +44,22 @@ import { checkRateLimit } from '../_shared/rateLimit.ts';
 
 // docs/19-SECURITY-HARDENING-SCOPING.md §3 — this function's own header
 // comment already flagged the absence of this as a real gap (OTP-bombing a
-// single number, or hammering the endpoint generally) before it was closed.
-// Two dimensions: per-phone (the actual abuse target) tighter than per-IP
-// (a shared NAT/office network legitimately sends more than one signup).
-const OTP_PER_PHONE_MAX = 3;
-const OTP_PER_PHONE_WINDOW_SECONDS = 10 * 60;
+// single address, or hammering the endpoint generally) before it was
+// closed. Two dimensions: per-email (the actual abuse target) tighter than
+// per-IP (a shared NAT/office network legitimately sends more than one
+// signup).
+const OTP_PER_EMAIL_MAX = 3;
+const OTP_PER_EMAIL_WINDOW_SECONDS = 10 * 60;
 const OTP_PER_IP_MAX = 10;
 const OTP_PER_IP_WINDOW_SECONDS = 10 * 60;
 
-// Soft launch is 2026-11-20 — matches apps/marketing/lib/prelaunch.ts and
-// apps/mobile/lib/prelaunch.ts's own copy of this same date exactly (can't
-// share one module across these separately-deployed runtimes). This is the
-// fail-closed backstop: the marketing site's SignupForm already checks
-// this client-side and never calls this function before launch, but SMS
-// delivery genuinely isn't wired up yet (docs/00-SESSION-HANDOFF.md), so a
-// caller that reaches here before launch some other way (a stale page, a
-// direct API call) still gets a clear "not yet" rather than a real attempt
-// that fails downstream with a confusing error.
-const LAUNCH_DATE = new Date('2026-11-20T00:00:00');
-const PRELAUNCH_MESSAGE = 'Complete this signup from November 20 to start using the app.';
-
-const E164_PATTERN = /^\+[1-9]\d{6,14}$/;
-
 // Kept as two separately-parsed fields, not one parseBody() call
 // (docs/19-SECURITY-HARDENING-SCOPING.md §4's shared helper), because this
-// function's contract already distinguishes invalid_phone from
+// function's contract already distinguishes invalid_email from
 // missing_captcha as separate error codes — a client-visible distinction
 // (see web-send-otp-function.test.js), not an implementation detail to
 // collapse into one generic invalid_request just for consistency.
-const PhoneSchema = z.string().regex(E164_PATTERN);
+const EmailSchema = z.string().email();
 const TurnstileTokenSchema = z.string().min(1);
 
 function json(req: Request, status: number, payload: unknown): Response {
@@ -86,7 +74,7 @@ function errorResponse(req: Request, status: number, code: string, message: stri
 }
 
 interface WebSendOtpRequestBody {
-  phone?: string;
+  email?: string;
   turnstileToken?: string;
 }
 
@@ -125,12 +113,12 @@ Deno.serve(async (req) => {
     return errorResponse(req, 400, 'invalid_request', 'Body must be valid JSON.');
   }
 
-  const { phone: rawPhone, turnstileToken: rawTurnstileToken } = payload;
-  const phoneParsed = PhoneSchema.safeParse(rawPhone);
-  if (!phoneParsed.success) {
-    return errorResponse(req, 400, 'invalid_phone', 'phone must be E.164 (e.g. +2348012345678).');
+  const { email: rawEmail, turnstileToken: rawTurnstileToken } = payload;
+  const emailParsed = EmailSchema.safeParse(rawEmail);
+  if (!emailParsed.success) {
+    return errorResponse(req, 400, 'invalid_email', 'email must be a valid email address.');
   }
-  const phone = phoneParsed.data;
+  const email = emailParsed.data;
   const turnstileParsed = TurnstileTokenSchema.safeParse(rawTurnstileToken);
   if (!turnstileParsed.success) {
     return errorResponse(req, 400, 'missing_captcha', 'turnstileToken is required.');
@@ -147,18 +135,18 @@ Deno.serve(async (req) => {
     return errorResponse(req, 500, 'server_misconfigured', 'Server misconfigured.');
   }
 
-  const phoneAllowed = await checkRateLimit(
+  const emailAllowed = await checkRateLimit(
     db,
-    `web-send-otp:phone:${phone}`,
-    OTP_PER_PHONE_MAX,
-    OTP_PER_PHONE_WINDOW_SECONDS,
+    `web-send-otp:email:${email}`,
+    OTP_PER_EMAIL_MAX,
+    OTP_PER_EMAIL_WINDOW_SECONDS,
   );
-  if (!phoneAllowed) {
+  if (!emailAllowed) {
     return errorResponse(
       req,
       429,
       'rate_limited',
-      'Too many attempts for this number, try again later.',
+      'Too many attempts for this email, try again later.',
     );
   }
   if (remoteIp) {
@@ -194,16 +182,6 @@ Deno.serve(async (req) => {
     return errorResponse(req, 400, 'captcha_failed', 'Captcha verification failed.');
   }
 
-  // Placed after the captcha check, not before: a bogus/missing captcha
-  // should still get its own specific error right up until launch (that
-  // behavior is independently tested — web-send-otp-function.test.js,
-  // web-send-otp-deployed-smoke.test.js — and stays correct either way).
-  // Only a caller who's genuinely passed a human-verification check gets
-  // told "not yet" instead of something more generic.
-  if (Date.now() < LAUNCH_DATE.getTime()) {
-    return errorResponse(req, 403, 'prelaunch', PRELAUNCH_MESSAGE);
-  }
-
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
   if (!supabaseUrl || !anonKey) {
@@ -219,7 +197,7 @@ Deno.serve(async (req) => {
         Authorization: `Bearer ${anonKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ phone, create_user: true, channel: 'sms' }),
+      body: JSON.stringify({ email, create_user: true }),
     });
 
     if (!otpRes.ok) {

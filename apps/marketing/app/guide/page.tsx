@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { AnimatedSection } from '@/components/AnimatedSection';
 import { Card, Eyebrow, Section } from '@/components/Section';
-import { LAUNCH_DATE_LABEL } from '@/lib/prelaunch';
 
 export const metadata: Metadata = {
   title: 'Guide',
@@ -17,17 +16,18 @@ export const metadata: Metadata = {
 const STEPS = [
   {
     step: '1',
-    title: 'Sign up early',
+    title: 'Sign up today',
     body: (
       <>
-        Signup opens on our soft-launch day, {LAUNCH_DATE_LABEL}, on the{' '}
+        Signup is open now on the{' '}
         <Link href="/signup" className="font-semibold text-foreground-accent hover:underline">
           Sign up
         </Link>{' '}
-        page. Confirm your phone number that day and you&apos;ll get 100 non-withdrawable chat
-        credits to start with, a real commitment we&apos;re making for launch day, not a balance
-        that exists yet. &quot;Non-withdrawable&quot; means these credits let you try sending
-        messages, they can&apos;t be converted to cash.
+        page. Confirm your email and you&apos;ll get 100 non-withdrawable chat credits to start
+        with, a real commitment we&apos;re making, not a balance that exists yet.
+        &quot;Non-withdrawable&quot; means these credits let you try sending messages, they
+        can&apos;t be converted to cash. Signing up with a phone number instead is coming later —
+        email is how to get started today.
       </>
     ),
   },
@@ -36,11 +36,11 @@ const STEPS = [
     title: 'Download and finish setup',
     body: (
       <>
-        Once InvolveMe is live, install it from the{' '}
+        Install InvolveMe from the{' '}
         <Link href="/download" className="font-semibold text-foreground-accent hover:underline">
           Download
         </Link>{' '}
-        page and finish setting up your profile in the app. That&apos;s also where your phone
+        page and finish setting up your profile in the app. That&apos;s also where your email
         verification from step 1 gets tied to a real account.
       </>
     ),
@@ -104,8 +104,8 @@ export default function GuidePage() {
             Getting started with InvolveMe
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-body text-muted">
-            Everything you need to know before launch: signing up, how chat credits work, and how to
-            withdraw what you earn.
+            Everything you need to know to get started: signing up, how chat credits work, and how
+            to withdraw what you earn.
           </p>
         </AnimatedSection>
       </Section>
