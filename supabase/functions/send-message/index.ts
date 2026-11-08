@@ -57,6 +57,14 @@ interface SendMessageRequestBody {
   // on faith).
   media_path?: string;
   media_type?: string;
+  // Generic file/document attachments only (docs/16 §2's "its own scoping
+  // pass if wanted" follow-up, 20261011090000_chat_file_attachments.sql) —
+  // the original filename the user actually picked, display-only (never
+  // used to derive or authorize media_path itself, which stays server-
+  // derived exactly as before). Required and bounds-checked below when
+  // media_type is 'file'; meaningless for 'image'/'audio', which keep
+  // exactly one valid extension each and so never needed this.
+  media_filename?: string;
   // Voice notes only (docs/17 §3/§5) — display-only duration (never a
   // billing input; fn_send_message enforces the real max-duration cap
   // server-side) and the real recorded-amplitude waveform, bounds-checked
@@ -165,6 +173,13 @@ function mapSendMessageError(pgMessage: string): Response {
   if (pgMessage.startsWith('media_not_found')) {
     return errorResponse(400, 'media_not_found', 'That media was not found — try uploading again.');
   }
+  if (pgMessage.startsWith('invalid_media_filename')) {
+    return errorResponse(
+      400,
+      'invalid_media_filename',
+      'media_filename is required and must be at most 255 characters.',
+    );
+  }
   if (pgMessage.startsWith('invalid_duration')) {
     return errorResponse(
       400,
@@ -255,10 +270,33 @@ async function handleRequest(req: Request): Promise<Response> {
   if (payload.media_path !== undefined && typeof payload.media_path !== 'string') {
     return errorResponse(400, 'invalid_request', 'media_path must be a string.');
   }
-  if (hasMedia && payload.media_type !== 'image' && payload.media_type !== 'audio') {
+  if (
+    hasMedia &&
+    payload.media_type !== 'image' &&
+    payload.media_type !== 'audio' &&
+    payload.media_type !== 'file'
+  ) {
     return errorResponse(400, 'unsupported_media_type', 'Unsupported media type.');
   }
   const isAudio = hasMedia && payload.media_type === 'audio';
+  const isFile = hasMedia && payload.media_type === 'file';
+
+  // Redundant with fn_send_message's own check (CLAUDE.md rule #1 — the DB
+  // function is the actual authority), but rejecting a malformed request
+  // here is a better error than a raw Postgres one, same posture the audio
+  // duration/waveform checks right below already take.
+  if (isFile) {
+    if (typeof payload.media_filename !== 'string' || payload.media_filename.trim().length === 0) {
+      return errorResponse(400, 'invalid_media_filename', 'media_filename is required.');
+    }
+    if (payload.media_filename.length > 255) {
+      return errorResponse(
+        400,
+        'invalid_media_filename',
+        'media_filename must be at most 255 characters.',
+      );
+    }
+  }
 
   // Redundant with fn_send_message's own checks (CLAUDE.md rule #1 — the
   // DB function is the actual authority, not this), but rejecting a
@@ -487,6 +525,7 @@ async function handleRequest(req: Request): Promise<Response> {
       p_waveform_samples: isAudio ? (payload.waveform_samples ?? null) : null,
       p_reply_to_status_id: payload.reply_to_status_id ?? null,
       p_envelopes: envelopes,
+      p_media_filename: isFile ? payload.media_filename : null,
     })
     .single();
 
@@ -547,9 +586,11 @@ async function handleRequest(req: Request): Promise<Response> {
           : body
         : isAudio
           ? '🎤 Voice message'
-          : hasMedia
-            ? '📷 Photo'
-            : '';
+          : isFile
+            ? '📎 File'
+            : hasMedia
+              ? '📷 Photo'
+              : '';
 
     await sendPushToUser(db, recipientId, sender?.display_name ?? 'New message', pushBody, {
       type: 'new_message',
