@@ -2,6 +2,20 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Where we stopped (mobile-app half of the email-signup switch shipped via OTA — 2026-11-08) — start here next session
+
+**The ask**: ship this session's already-committed changes via OTA to live production.
+
+**Gap found before shipping**: the prior entry below ("prelaunch gate removed, signup switched from phone to email") committed and deployed the `web-send-otp` Edge Function half, but the matching `apps/mobile` app code (commit `a9a4fa5`: `EmailEntryScreen`, `verify.tsx`, `useAuthFlowStore.ts`, the deleted `PrelaunchAnnouncementModal.tsx`/`prelaunch.ts`) had never actually been pushed to a real device — no OTA update had been published since update group `5b5087b2` (4 weeks prior, the prelaunch-gate-popup feature). Confirmed via `eas channel:view preview` before touching anything.
+
+**There is no separate `production` EAS channel/branch** — checked directly (`eas channel:list --json`, `eas build:list --json`): every build and update this project has ever shipped (8 builds, all update groups referenced throughout this doc's history) used the `preview` build profile/channel, internal distribution. The app has never been submitted to an app store (no production build, no App Store/Play Store listing), so `preview` is, in practice, the only "live" surface real testers run — "ship to production" in this project today means publishing to `preview`.
+
+**Verified clean before publishing**: confirmed no native/config changes in `a9a4fa5` or `373b5a8` (`git diff` on `package.json`/`app.json`/`app.config.js` — empty), so this stays an OTA-eligible JS-only change, no new build needed. `tsc --noEmit` and `expo lint` both clean on `apps/mobile`.
+
+**Shipped**: `eas update --branch preview --environment preview` published update group `96126362-8463-4e39-b30b-7424a68644b3` (runtime `0.1.0`, android+ios, commit `f600c15`). Confirmed landed via `eas channel:view preview` showing the new group as the branch's current head. Took one attempt this time (no [[eas-update-fingerprint-hang]] retry needed), though the fingerprint-computation step did print its "taking longer than expected" warning before completing.
+
+**Not yet done**: real-device confirmation that a tester's app actually picks up this update and that email signup works end to end on-device (same gap noted in the entry below — only HTTP/CLI-layer checks have run so far, nothing clicked through on a real phone). The `sbp_fc917f70...` token revocation question from the entry below is also still unconfirmed.
+
 ## Where we stopped (prelaunch gate removed, signup switched from phone to email — 2026-11-08) — start here next session
 
 **The ask**: stop waiting for the November 20 soft launch — open signup now — and make signup work with email instead of phone for the time being (phone-number signup is a deferred future pass, not removed capability).
