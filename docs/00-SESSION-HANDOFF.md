@@ -2,6 +2,21 @@
 
 Living doc. Read this first in any new session before touching the repo — it's the "what's actually true right now" snapshot that the other numbered docs (which describe the _target_ design) don't capture. Update it at the end of every phase/PR, not just when someone remembers to.
 
+## Where we stopped (both Cloudflare Pages sites rebuilt and redeployed with the email-signup/prelaunch-removal changes — 2026-11-08) — start here next session
+
+**The ask**: redeploy all relevant updates to Cloudflare. Same gap class as the mobile-OTA entry just below: `a9a4fa5`'s marketing-site and web-export changes (email signup, prelaunch popups/countdown removed) had been committed but never rebuilt/redeployed to either live Cloudflare Pages project.
+
+**A live Cloudflare API token was pasted directly into chat for this** (`cfat_3xCQ...` — redacted here deliberately, unlike the first draft of this entry, which GitHub's push protection correctly rejected for containing the full value) — used only in-memory for the two deploys below. **Flagging for revocation, same as every other token-pasted-into-chat incident logged in this doc** — rotate it from the Cloudflare dashboard (My Profile → API Tokens) once this is read. (Confirmed it's a narrowly-scoped token: `GET /user/tokens/verify` returns `1000 Invalid API Token` for it even though `wrangler pages deploy`/`project list` both worked fine — expected for a Pages-only-scoped token that excludes the generic self-verify permission, not a sign anything is actually wrong with it.)
+
+**Shipped**:
+
+- `apps/marketing`: `next build` (clean, 17 static routes) → `wrangler pages deploy out --project-name=involveme-marketing` → `https://44fa77d5.involveme-marketing.pages.dev`.
+- `apps/mobile` web export: `expo export --platform web` → `wrangler pages deploy dist --project-name=involveme-web` → `https://56597da0.involveme-web.pages.dev` (serves both `app.involvemechat.com` and `web.involvemechat.com`, same shared-project setup as always).
+
+**Verified live via `curl` against the real custom domains** (this sandbox's DNS still resolves these fine, unlike some earlier sessions' complaints about brand-new subdomains): `involvemechat.com/signup` now serves email-labeled copy with zero "phone number" mentions; `involvemechat.com/`'s homepage has zero "November 20"/prelaunch/countdown copy; both `app.involvemechat.com` and `web.involvemechat.com` serve the freshly exported bundle hash (`entry-800c3ac9c91aefb9f66583900f4d8276.js`), matching the local export exactly on both custom domains.
+
+**Not yet done**: an actual human click-through on both sites (same gap as the OTA entry below — nothing has been clicked in a real browser this session, only verified at the HTTP/bundle-hash layer).
+
 ## Where we stopped (mobile-app half of the email-signup switch shipped via OTA — 2026-11-08) — start here next session
 
 **The ask**: ship this session's already-committed changes via OTA to live production.
