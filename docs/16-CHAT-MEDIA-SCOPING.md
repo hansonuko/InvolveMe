@@ -27,7 +27,7 @@ Scoping only, per explicit instruction — nothing in this document is built yet
 **Explicitly out of v1 scope (a follow-up, not an oversight):**
 
 - **Video.** Same reasoning as status: no heavy client-side transcoding dependency without a real product decision to add one. If this is wanted later, scope it as its own pass — it's a genuinely different engineering problem (transcoding, longer uploads, preview generation), not a checkbox on this one.
-- Voice notes, documents/files, multiple-photo-per-message (albums), and location — none of these were asked for; each is its own scoping pass if wanted.
+- Voice notes (built — see `docs/17-VOICE-NOTES-SCOPING.md`), documents/files (built — `20261011090000_chat_file_attachments.sql`, `message_file_credits`, `send-message`'s `media_type: 'file'`; see `docs/00-SESSION-HANDOFF.md`'s 2026-11-08 entry), multiple-photo-per-message (albums), and location — the first two have since gotten their own follow-up pass; albums/location have not.
 - Media search/gallery view beyond the existing shared-links panel (`useThreadSharedLinks` already exists for links; a media-grid equivalent is a natural but separate follow-up).
 - Forwarding a media message — `ForwardMessageModal` exists today for text; extending it to carry an attachment is additional scope, not assumed here.
 

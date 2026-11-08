@@ -35,6 +35,8 @@ Response now includes `thread_id` — required so the client can continue the co
 
 **Push notification side effect (added 2026-09-14):** after a successful send, the recipient gets a best-effort Expo push notification (`_shared/push.ts`'s `sendPushToUser`, fired via `EdgeRuntime.waitUntil` so it can never delay or fail this response) with the sender's `display_name` as title and a truncated message preview as body. Silently a no-op if the recipient has no row in `push_tokens` (no dedicated notification-preference flag exists — see that table's note in `docs/02-DATA-MODEL.md`).
 
+**Generic file/document attachments (added 2026-11-08, `docs/16-CHAT-MEDIA-SCOPING.md` §2's deferred follow-up):** `media_path`/`media_type` (also `'image'`/`'audio'`, built earlier and likewise undocumented here) now accept `media_type: "file"`, paired with a required `media_filename` (the original filename the user picked, ≤255 chars, display-only — never used to derive the real Storage path). Billed via the flat `message_file_credits` surcharge on top of the word-count formula, same additive pattern `message_media_credits`/`message_audio_credits` already use. New error code: `invalid_media_filename` (400, missing or over 255 chars).
+
 ### `POST /functions/v1/edit-message`
 
 ```jsonc
